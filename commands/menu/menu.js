@@ -1,9 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ⏱️ uptime bonito
 function formatUptime(seconds) {
@@ -15,7 +11,6 @@ function formatUptime(seconds) {
   return `${s}s`;
 }
 
-// 🎨 Emojis por categoría
 const CAT_ICON = {
   menu: "📜",
   music: "🎵",
@@ -28,19 +23,21 @@ const CAT_ICON = {
   default: "✨",
 };
 
-function getCatIcon(cat) {
-  return CAT_ICON[cat] || CAT_ICON.default;
-}
-
-// Normaliza texto
 function norm(s) {
   return String(s || "").trim().toLowerCase();
 }
+function icon(cat) {
+  return CAT_ICON[cat] || CAT_ICON.default;
+}
 
-// Construye la estructura { cat -> Set(comandos) }
+// límites típicos de WhatsApp (mejor truncar para evitar errores)
+function cut(str, max) {
+  const s = String(str || "");
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
 function buildCategories(comandos) {
-  const categorias = new Map();
-
+  const categorias = new Map(); // cat -> Set(cmd)
   for (const cmd of new Set(comandos.values())) {
     if (!cmd?.category || !cmd?.command) continue;
 
@@ -56,66 +53,50 @@ function buildCategories(comandos) {
       set.add(name);
     }
   }
-
   return categorias;
 }
 
-function buildHeader({ botName, prefix, uptime, totalCats, totalCmds }) {
-  return (
+function buildTextMenu({ botName, prefix, uptime, categorias }) {
+  const cats = [...categorias.keys()].sort();
+  let totalCmds = 0;
+  for (const set of categorias.values()) totalCmds += set.size;
+
+  let out =
     `╭══════════════════════╮\n` +
     `│ ✦ *${botName}* ✦\n` +
     `╰══════════════════════╯\n\n` +
     `▸ _prefijo_ : *${prefix}*\n` +
     `▸ _estado_  : *online*\n` +
     `▸ _uptime_  : *${uptime}*\n` +
-    `▸ _categorías_ : *${totalCats}*\n` +
+    `▸ _categorías_ : *${cats.length}*\n` +
     `▸ _comandos_   : *${totalCmds}*\n\n` +
     `┌──────────────────────┐\n` +
     `│ ✧ *MENÚ DE COMANDOS* ✧\n` +
-    `└──────────────────────┘\n`
-  );
-}
+    `└──────────────────────┘\n`;
 
-function buildFooter(prefix) {
-  return (
-    `\n┌──────────────────────┐\n` +
-    `│ ✦ _bot premium activo_ ✦\n` +
-    `└──────────────────────┘\n` +
-    `💡 Tips:\n` +
-    `• *${prefix}menu music*  (solo música)\n` +
-    `• *${prefix}menu all*    (todo completo)\n` +
-    `• *${prefix}play <texto>* (buscar y descargar)\n` +
-    `_artoria bot vip_\n`
-  );
-}
-
-function buildCategoryBlock({ cat, cmds, prefix, maxPerCat }) {
-  const icon = getCatIcon(cat);
-  const sorted = [...cmds].sort();
-  const total = sorted.length;
-
-  let block =
-    `\n╭─ ${icon} *${cat.toUpperCase()}*  _(${total})_\n` +
-    `│`;
-
-  const shown = maxPerCat ? sorted.slice(0, maxPerCat) : sorted;
-
-  for (const c of shown) {
-    block += `\n│  • \`${prefix}${c}\``;
+  const MAX_PER_CAT = 6;
+  for (const c of cats) {
+    const cmds = [...categorias.get(c)].sort();
+    out += `\n╭─ ${icon(c)} *${c.toUpperCase()}* _(${cmds.length})_\n│`;
+    cmds.slice(0, MAX_PER_CAT).forEach(x => (out += `\n│  • \`${prefix}${x}\``));
+    if (cmds.length > MAX_PER_CAT) out += `\n│  • … y *${cmds.length - MAX_PER_CAT}* más`;
+    out += `\n╰──────────────────────`;
   }
 
-  if (maxPerCat && total > maxPerCat) {
-    block += `\n│  • … y *${total - maxPerCat}* más`;
-  }
+  out += `\n\n💡 Usa: *${prefix}menu <categoría>*  o  *${prefix}menu* (interactivo)\n`;
+  return out;
+}
 
-  block += `\n╰──────────────────────`;
-  return block;
+async function sendList(sock, from, payload, msg) {
+  // Baileys acepta este formato directo
+  // { text, footer, title, buttonText, sections }
+  return sock.sendMessage(from, payload, msg ? { quoted: msg } : undefined);
 }
 
 export default {
   command: ["menu"],
   category: "menu",
-  description: "Menú principal con diseño premium",
+  description: "Menú interactivo premium (listas y secciones)",
 
   run: async ({ sock, msg, from, settings, comandos, args = [] }) => {
     try {
@@ -128,86 +109,126 @@ export default {
       const prefix = settings?.prefix || ".";
       const uptime = formatUptime(process.uptime());
 
-      // 🎥 video menú
-      const videoPath = path.join(process.cwd(), "videos", "menu-video.mp4");
-      const hasVideo = fs.existsSync(videoPath);
-
-      // 📂 armar categorías
       const categorias = buildCategories(comandos);
       const catsSorted = [...categorias.keys()].sort();
 
-      // totals
-      let totalCmds = 0;
-      for (const set of categorias.values()) totalCmds += set.size;
-
-      // 🔎 modo de menú
-      const arg = norm(args?.[0] || "");
-      const showAll = arg === "all";
-      const filterCat = arg && arg !== "all" ? arg : null;
-
-      // Si pidió una categoría específica y no existe:
-      if (filterCat && !categorias.has(filterCat)) {
-        const available = catsSorted.slice(0, 12).map(c => `${getCatIcon(c)} ${c}`).join(", ");
-        return sock.sendMessage(
-          from,
-          {
-            text:
-              headerBox("MENU") +
-              `\n\n⚠️ Categoría no encontrada: *${filterCat}*\n\n` +
-              `✅ Ejemplos:\n` +
-              `• ${prefix}menu music\n` +
-              `• ${prefix}menu descarga\n` +
-              `• ${prefix}menu all\n\n` +
-              `📂 Disponibles: ${available}` +
-              (catsSorted.length > 12 ? " …" : ""),
-          },
-          { quoted: msg }
-        );
+      // ✅ Si piden menu texto completo
+      const firstArg = norm(args[0]);
+      if (firstArg === "texto" || firstArg === "text" || firstArg === "all") {
+        const menuTxt = buildTextMenu({ botName, prefix, uptime, categorias });
+        return sock.sendMessage(from, { text: menuTxt }, { quoted: msg });
       }
 
-      // ✅ construir menú
-      const totalCats = catsSorted.length;
-      let menu = buildHeader({ botName, prefix, uptime, totalCats, totalCmds });
+      // ✅ Si piden una categoría => lista de comandos interactiva
+      if (firstArg) {
+        const cat = firstArg;
 
-      const MAX_PER_CAT = showAll ? null : 6;
+        if (!categorias.has(cat)) {
+          return sock.sendMessage(
+            from,
+            {
+              text:
+                `⚠️ Categoría no encontrada: *${cat}*\n\n` +
+                `Ejemplo: *${prefix}menu music*\n` +
+                `O usa *${prefix}menu* para ver categorías.`,
+            },
+            { quoted: msg }
+          );
+        }
 
-      if (filterCat) {
-        // solo una categoría
-        menu += buildCategoryBlock({
-          cat: filterCat,
-          cmds: categorias.get(filterCat),
-          prefix,
-          maxPerCat: null, // en vista por categoría: muestro TODO
+        const cmds = [...categorias.get(cat)].sort();
+
+        // Construir filas (cada fila ejecuta el comando)
+        const rows = cmds.slice(0, 40).map((c) => ({
+          title: cut(`${prefix}${c}`, 24),
+          description: cut(`Ejecutar comando ${prefix}${c}`, 72),
+          rowId: `${prefix}${c}`, // al tocar, envía este texto al chat
+        }));
+
+        // Agregar opciones extra
+        rows.push({
+          title: cut("⬅️ Volver categorías", 24),
+          description: cut("Regresar al menú principal", 72),
+          rowId: `${prefix}menu`,
         });
-      } else {
-        // menú general
-        for (const cat of catsSorted) {
-          menu += buildCategoryBlock({
-            cat,
-            cmds: categorias.get(cat),
-            prefix,
-            maxPerCat: MAX_PER_CAT,
-          });
+        rows.push({
+          title: cut("📄 Menú texto", 24),
+          description: cut("Ver menú completo en texto", 72),
+          rowId: `${prefix}menu texto`,
+        });
+
+        const payload = {
+          text: `📂 *Categoría:* ${icon(cat)} *${cat.toUpperCase()}*\n⏱ Uptime: ${uptime}`,
+          footer: `${botName} • ${prefix}menu`,
+          title: `${botName} — Comandos`,
+          buttonText: "Ver comandos",
+          sections: [
+            {
+              title: `Comandos (${cmds.length})`,
+              rows,
+            },
+          ],
+        };
+
+        // Intentar enviar lista; si falla => fallback texto
+        try {
+          await sendList(sock, from, payload, msg);
+          return;
+        } catch (e) {
+          const fallback =
+            `📂 *${cat.toUpperCase()}* (${cmds.length})\n\n` +
+            cmds.map((x) => `• ${prefix}${x}`).join("\n") +
+            `\n\n💡 Volver: ${prefix}menu`;
+          return sock.sendMessage(from, { text: fallback }, { quoted: msg });
         }
       }
 
-      menu += buildFooter(prefix);
+      // ✅ Menú principal (categorías) interactivo
+      // Construimos secciones con categorías (máx 10-15 secciones suele ser seguro)
+      // Si tienes MUCHAS categorías, lo agrupamos en 2 secciones.
+      const rows = catsSorted.map((c) => {
+        const total = categorias.get(c)?.size || 0;
+        return {
+          title: cut(`${icon(c)} ${c.toUpperCase()}`, 24),
+          description: cut(`Ver ${total} comandos`, 72),
+          rowId: `${prefix}menu ${c}`, // al tocar, manda ".menu music" por ejemplo
+        };
+      });
 
-      // 🚀 Enviar (video si existe, si no texto)
-      if (hasVideo) {
-        await sock.sendMessage(
-          from,
+      // Añadir accesos rápidos
+      rows.push({
+        title: cut("📄 Menú texto", 24),
+        description: cut("Ver menú completo en texto", 72),
+        rowId: `${prefix}menu texto`,
+      });
+
+      const payload = {
+        text:
+          `👋 *${botName}*\n` +
+          `⏱ Uptime: *${uptime}*\n\n` +
+          `Toca una categoría 👇`,
+        footer: `Prefijo: ${prefix}`,
+        title: `${botName} — Menú`,
+        buttonText: "Abrir categorías",
+        sections: [
           {
-            video: fs.createReadStream(videoPath),
-            mimetype: "video/mp4",
-            gifPlayback: true,
-            caption: menu.trim(),
+            title: "Categorías",
+            rows: rows.slice(0, 45), // límite seguro
           },
-          { quoted: msg }
-        );
-      } else {
-        await sock.sendMessage(from, { text: menu.trim() }, { quoted: msg });
+        ],
+      };
+
+      // Intentar enviar lista; si falla => fallback texto
+      try {
+        await sendList(sock, from, payload, msg);
+      } catch (e) {
+        const menuTxt = buildTextMenu({ botName, prefix, uptime, categorias });
+        await sock.sendMessage(from, { text: menuTxt }, { quoted: msg });
       }
     } catch (err) {
       console.error("MENU ERROR:", err);
-      await sock.sendMessage(from, { text: "❌ err
+      await sock.sendMessage(from, { text: "❌ error al mostrar el menú" }, { quoted: msg });
+    }
+  },
+};
+
