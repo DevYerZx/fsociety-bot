@@ -1,4 +1,3 @@
-
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -16,7 +15,7 @@ function formatUptime(seconds) {
   return `${s}s`;
 }
 
-// Prefijo bonito (string/array/sin prefijo)
+// Prefijo bonito
 function getPrefixLabel(settings) {
   if (settings?.noPrefix === true) return "SIN PREFIJO";
   const p = settings?.prefix;
@@ -38,19 +37,26 @@ export default {
         return sock.sendMessage(from, { text: "❌ error interno" }, { quoted: msg });
       }
 
-      // 🎥 video menú
+      const botName = settings?.botName || "DVYER BOT";
+      const prefixLabel = getPrefixLabel(settings);
+      const uptime = formatUptime(process.uptime());
+
+      // 🎥 video menú (VALIDAR BIEN)
       const videoPath = path.join(process.cwd(), "videos", "menu-video.mp4");
+
       if (!fs.existsSync(videoPath)) {
+        return sock.sendMessage(from, { text: "❌ video del menú no encontrado" }, { quoted: msg });
+      }
+
+      const stat = fs.statSync(videoPath);
+      if (!stat.isFile() || stat.size <= 1024) {
+        // si pesa menos de 1KB casi seguro está corrupto/vacío
         return sock.sendMessage(
           from,
-          { text: "❌ video del menú no encontrado" },
+          { text: "❌ el video del menú está vacío o corrupto. Vuelve a subirlo." },
           { quoted: msg }
         );
       }
-
-      const uptime = formatUptime(process.uptime());
-      const botName = settings?.botName || "DVYER BOT";
-      const prefixLabel = getPrefixLabel(settings);
 
       // 📂 agrupar comandos (sin duplicados)
       const categorias = {};
@@ -73,7 +79,7 @@ export default {
       let totalCmds = 0;
       for (const c of cats) totalCmds += categorias[c].size;
 
-      // 🎨 MENÚ ULTRA DISEÑO (mejorado)
+      // 🎨 Diseño mejorado (compacto, pro)
       let menu =
 `╭══════════════════════╮
 │ ✦ *${botName}* ✦
@@ -89,7 +95,7 @@ export default {
 │ ✧ *MENÚ DE COMANDOS* ✧
 └──────────────────────┘`;
 
-      // Limitar comandos por categoría para que no sea infinito
+      // Limitar comandos por categoría (para que no sea infinito)
       const MAX_PER_CAT = 10;
 
       for (const cat of cats) {
@@ -121,24 +127,30 @@ export default {
 💡 Tip: Usa *${prefixLabel}play <texto>* para buscar música
 _artoria bot vip_`;
 
-      // 🚀 enviar como gif (stream, no readFileSync)
+      // ✅ ENVIAR VIDEO COMO BUFFER (más compatible con Baileys)
+      const videoBuffer = fs.readFileSync(videoPath);
+      if (!videoBuffer || !videoBuffer.length) {
+        return sock.sendMessage(
+          from,
+          { text: "❌ no se pudo leer el video del menú (buffer vacío)." },
+          { quoted: msg }
+        );
+      }
+
       await sock.sendMessage(
         from,
         {
-          video: fs.createReadStream(videoPath),
+          video: videoBuffer,
           mimetype: "video/mp4",
           gifPlayback: true,
           caption: menu.trim(),
         },
         { quoted: msg }
       );
+
     } catch (err) {
       console.error("MENU ERROR:", err);
-      await sock.sendMessage(
-        from,
-        { text: "❌ error al mostrar el menú" },
-        { quoted: msg }
-      );
+      await sock.sendMessage(from, { text: "❌ error al mostrar el menú" }, { quoted: msg });
     }
   },
 };
