@@ -2,11 +2,10 @@ import axios from "axios";
 import yts from "yt-search";
 
 const API_URL = "https://nexevo-api.vercel.app/download/y2";
-const COOLDOWN_TIME = 15000;
-const MAX_BYTES = 85 * 1024 * 1024; // 85MB seguro
+const COOLDOWN_TIME = 15000; // 15 segundos
+const MAX_MB = 85; // límite seguro para WhatsApp
 
 const cooldowns = new Map();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export default {
   command: ["ytmp4"],
@@ -17,8 +16,8 @@ export default {
     const msg = ctx.m || ctx.msg || null;
     const messageKey = msg?.key || null;
 
-    const now = Date.now();
     const userId = from;
+    const now = Date.now();
 
     // 🔒 Cooldown
     const cooldown = cooldowns.get(userId);
@@ -49,27 +48,28 @@ export default {
       let query = args.join(" ").trim();
       let videoUrl = query;
 
-      // 🔎 Si no es link, buscar
+      // 🔎 Buscar si no es enlace
       if (!/^https?:\/\//i.test(query)) {
         const search = await yts(query);
-        if (!search?.videos?.length)
+        if (!search?.videos?.length) {
           throw new Error("No se encontraron resultados.");
+        }
         videoUrl = search.videos[0].url;
       }
 
-      // 🔥 Llamada API
+      // 🔥 Llamada a tu API
       const { data } = await axios.get(
         `${API_URL}?url=${encodeURIComponent(videoUrl)}`,
         { timeout: 25000 }
       );
 
       if (!data?.status || !data?.result?.url) {
-        throw new Error("La API no devolvió un video válido.");
+        throw new Error("La API no devolvió un enlace válido.");
       }
 
       const mp4Url = data.result.url;
 
-      // 🚀 Descargar como STREAM con headers tipo navegador
+      // 🚀 Abrir stream correctamente
       const videoResponse = await axios.get(mp4Url, {
         responseType: "stream",
         timeout: 120000,
@@ -85,19 +85,19 @@ export default {
         videoResponse.headers["content-length"] || 0
       );
 
-      if (contentLength && contentLength > MAX_BYTES) {
+      if (contentLength && contentLength > MAX_MB * 1024 * 1024) {
         throw new Error(
           `El video pesa ${Math.ceil(
             contentLength / (1024 * 1024)
-          )}MB y supera el límite permitido.`
+          )}MB y supera el límite permitido (${MAX_MB}MB).`
         );
       }
 
-      // 📤 Enviar stream directo
+      // 📤 Enviar como STREAM correcto
       await sock.sendMessage(
         from,
         {
-          video: videoResponse.data,
+          video: { stream: videoResponse.data },
           mimetype: "video/mp4",
           caption: `🎬 Calidad: ${data.result.quality || "360p"}`,
         },
@@ -122,3 +122,7 @@ export default {
     }
   },
 };
+
+// 🔥 Protección extra
+process.on("uncaughtException", (e) => console.error("Uncaught:", e));
+process.on("unhandledRejection", (e) => console.error("Unhandled:", e));
