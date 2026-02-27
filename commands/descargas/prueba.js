@@ -1,4 +1,5 @@
-import axios from 'axios';  // Necesitas instalar axios usando `npm install axios`
+import axios from 'axios'; // Asegúrate de tener axios instalado
+import yts from 'yt-search';  // Asegúrate de tener yt-search instalado
 import fs from 'fs';
 import path from 'path';
 
@@ -18,35 +19,29 @@ export default {
 
     if (!args.length) {
       return sock.sendMessage(from, {
-        text: "❌ Usa el comando con un link de YouTube: .ytmp1 <link>",
+        text: "❌ Usa el comando con un link de YouTube o el nombre del video: .ytmp1 <link o nombre del video>",
         ...global.channelInfo,
       });
     }
 
-    const url = args[0];
+    const query = args.join(' ');  // Obtenemos el nombre o el link del video
 
     try {
-      // 1) Obtener el video en formato mp4 desde la URL de YouTube
-      const response = await axios.post(
-        'https://api-sky.ultraplus.click/youtube-mp4',
-        { url },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': API_KEY,
-          },
-        }
-      );
-
-      if (!response.data?.url) {
-        throw new Error('No se pudo obtener la URL del video');
+      // Usamos yt-search para buscar el video
+      const search = await yts(query);
+      if (!search.videos.length) {
+        throw new Error('No se encontró el video');
       }
 
-      // 2) Obtener el enlace de descarga en calidad 360p
+      // Tomamos el primer resultado de la búsqueda
+      const video = search.videos[0];
+      const videoUrl = video.url;  // URL del video de YouTube
+
+      // 1) Obtener el enlace de descarga en calidad 360p
       const resolveResponse = await axios.post(
         'https://api-sky.ultraplus.click/youtube-mp4/resolve',
         {
-          url: response.data.url,
+          url: videoUrl,
           type: 'video',
           quality: '360', // Solicitamos calidad 360p
         },
@@ -63,7 +58,7 @@ export default {
         throw new Error('No se pudo obtener el enlace de descarga');
       }
 
-      // 3) Descargar el archivo
+      // 2) Descargar el archivo
       const videoFilePath = path.join(TMP_DIR, 'video_360p.mp4');
       const writer = fs.createWriteStream(videoFilePath);
 
@@ -82,7 +77,7 @@ export default {
           {
             video: fs.readFileSync(videoFilePath),
             mimetype: 'video/mp4',
-            caption: `🎬 Video descargado en 360p`,
+            caption: `🎬 Video descargado en 360p: ${video.title}`,
             ...global.channelInfo,
           },
           msg?.key ? { quoted: msg } : undefined
