@@ -10,9 +10,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const cooldowns = new Map();
 
-const TMP_DIR = path.join(process.cwd(), "tmp");
-if (!fs.existsSync(TMP_DIR)) {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
+// Nueva carpeta "ytmp4" para los archivos temporales
+const YTMP4_DIR = path.join(process.cwd(), "ytmp4");
+if (!fs.existsSync(YTMP4_DIR)) {
+  fs.mkdirSync(YTMP4_DIR, { recursive: true });
 }
 
 export default {
@@ -51,9 +52,9 @@ export default {
       let videoUrl;
       let title = "video";
 
-      // Aquí definimos los nombres fijos para los archivos
-      rawMp4 = path.join(TMP_DIR, "video.mp4");
-      finalMp4 = path.join(TMP_DIR, "video_final.mp4");
+      // Definir las rutas para los archivos en la carpeta "ytmp4"
+      rawMp4 = path.join(YTMP4_DIR, "video.mp4");
+      finalMp4 = path.join(YTMP4_DIR, "video_final.mp4");
 
       // 🔍 BUSCAR SI NO ES LINK
       if (!/^https?:\/\//.test(query)) {
@@ -147,11 +148,13 @@ export default {
       });
 
     } finally {
-      // 🧹 LIMPIAR TMP
+      // 🧹 LIMPIAR CARPETA YTMP4 DESPUÉS DE ENVIAR
       try {
         if (rawMp4 && fs.existsSync(rawMp4)) fs.unlinkSync(rawMp4);
         if (finalMp4 && fs.existsSync(finalMp4)) fs.unlinkSync(finalMp4);
-      } catch {}
+      } catch (error) {
+        console.error("Error al eliminar archivos temporales:", error);
+      }
     }
   }
 };
