@@ -10,9 +10,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const cooldowns = new Map();
 
-// Usamos la carpeta temporal del sistema (usualmente con más espacio disponible)
 const TMP_DIR = path.join(process.cwd(), "tmp");
-
 if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
 }
@@ -26,14 +24,14 @@ export default {
     const msg = ctx.m || ctx.msg || null;
 
     const userId = from;
-    let rawMp4;
+    let rawMp4, finalMp4;
 
     // 🔒 COOLDOWN
     if (cooldowns.has(userId)) {
       const wait = cooldowns.get(userId) - Date.now();
       if (wait > 0) {
         return sock.sendMessage(from, {
-          text: `⏳ Espera ${Math.ceil(wait / 1000)}s`,
+          text: `⏳ Espera ${Math.ceil(wait / 1000)}s`
         });
       }
     }
@@ -43,7 +41,7 @@ export default {
       if (!args.length) {
         cooldowns.delete(userId);
         return sock.sendMessage(from, {
-          text: "❌ Escribe el nombre o link del video",
+          text: "❌ Escribe el nombre o link del video"
         });
       }
 
@@ -52,6 +50,7 @@ export default {
       let title = "video";
 
       rawMp4 = path.join(TMP_DIR, `${Date.now()}_raw.mp4`);
+      finalMp4 = path.join(TMP_DIR, `${Date.now()}_final.mp4`);
 
       // 🔍 BUSCAR SI NO ES LINK
       if (!/^https?:\/\//.test(query)) {
@@ -59,7 +58,7 @@ export default {
         if (!search.videos.length) {
           cooldowns.delete(userId);
           return sock.sendMessage(from, {
-            text: "❌ No se encontró el video",
+            text: "❌ No se encontró el video"
           });
         }
 
@@ -72,7 +71,7 @@ export default {
       }
 
       await sock.sendMessage(from, {
-        text: `🎬 *VIDEO*\n📹 ${title}\n⏳ Descargando…`,
+        text: `🎬 *VIDEO*\n📹 ${title}\n⏳ Descargando…`
       });
 
       // 🔥 LLAMADA API
@@ -90,7 +89,7 @@ export default {
           const res = await axios.get(data.result.url, {
             responseType: "stream",
             timeout: 60000,
-            headers: { "User-Agent": "Mozilla/5.0" },
+            headers: { "User-Agent": "Mozilla/5.0" }
           });
 
           const writer = fs.createWriteStream(rawMp4);
@@ -113,13 +112,21 @@ export default {
 
       if (!ok) throw new Error("Fallo descarga");
 
-      // 📤 ENVIAR EL VIDEO SIN CONVERSIÓN (sin usar ffmpeg)
+      // 🎞️ NORMALIZAR CON FFMPEG (IMPORTANTE PARA WHATSAPP)
+      await new Promise((resolve, reject) => {
+        exec(
+          `ffmpeg -y -loglevel error -i "${rawMp4}" -map 0:v -map 0:a? -movflags +faststart -c:v copy -c:a copy "${finalMp4}"`,
+          (err) => (err ? reject(err) : resolve())
+        );
+      });
+
+      // 📤 ENVIAR
       await sock.sendMessage(
         from,
         {
-          video: fs.readFileSync(rawMp4),
+          video: fs.readFileSync(finalMp4),
           mimetype: "video/mp4",
-          caption: `🎬 ${title}`,
+          caption: `🎬 ${title}`
         },
         msg?.key ? { quoted: msg } : undefined
       );
@@ -129,16 +136,15 @@ export default {
       cooldowns.delete(userId);
 
       await sock.sendMessage(from, {
-        text: "❌ Error al procesar el video",
+        text: "❌ Error al procesar el video"
       });
 
     } finally {
       // 🧹 LIMPIAR TMP
       try {
         if (rawMp4 && fs.existsSync(rawMp4)) fs.unlinkSync(rawMp4);
-      } catch (err) {
-        console.error("Error al limpiar los archivos temporales:", err);
-      }
+        if (finalMp4 && fs.existsSync(finalMp4)) fs.unlinkSync(finalMp4);
+      } catch {}
     }
-  },
+  }
 };
