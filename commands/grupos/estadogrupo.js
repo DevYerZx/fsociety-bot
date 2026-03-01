@@ -36,45 +36,49 @@ export default {
   adminOnly: true,
 
   run: async ({ sock, msg, from }) => {
-    // Archivos (si alguno no existe, lo toma como OFF)
+    // Archivos (si alguno no existe, lo toma como OFF/TEMP)
     const welcomeFile = path.join(DB_DIR, "welcome.json");
     const modoAdmiFile = path.join(DB_DIR, "modoadmi.json");
+
     const antilinkFile = path.join(DB_DIR, "antilink.json"); // si usas persistente
     const antispamFile = path.join(DB_DIR, "antispam.json"); // persistente
+
+    // NUEVO: Anti-Tóxicos
+    const antitoxicosFile = path.join(DB_DIR, "antitoxicos_groups.json");
 
     const welcomeSet = readSetFromFile(welcomeFile);
     const modoAdmiSet = readSetFromFile(modoAdmiFile);
     const antilinkSet = readSetFromFile(antilinkFile);
     const antispamSet = readSetFromFile(antispamFile);
+    const antitoxicosSet = readSetFromFile(antitoxicosFile);
 
     const welcomeOn = welcomeSet.has(from);
     const modoAdmiOn = modoAdmiSet.has(from);
 
     const antilinkExists = fs.existsSync(antilinkFile);
-    const antilinkLabel = antilinkExists
-      ? onOff(antilinkSet.has(from))
-      : "TEMP ♻️ (no guardado)";
+    const antilinkLabel = antilinkExists ? onOff(antilinkSet.has(from)) : "TEMP ♻️ (no guardado)";
 
     const antispamOn = antispamSet.has(from);
+    const antitoxicosOn = antitoxicosSet.has(from);
 
     const caption =
       `🧩 *ESTADO DEL GRUPO*\n\n` +
       `• Welcome: ${onOff(welcomeOn)}\n` +
       `• ModoAdmin: ${onOff(modoAdmiOn)}\n` +
       `• Antilink: ${antilinkLabel}\n` +
-      `• Antispam: ${onOff(antispamOn)}\n\n` +
+      `• Antispam: ${onOff(antispamOn)}\n` +
+      `• Anti-Tóxicos: ${onOff(antitoxicosOn)}\n\n` +
       `👮 Solo admins pueden usar este comando.`;
 
-    // Intentar obtener la foto del grupo y enviarla
+    // Foto del grupo + caption
     try {
-      const ppUrl = await sock.profilePictureUrl(from, "image"); // group pp
+      const ppUrl = await sock.profilePictureUrl(from, "image");
       return sock.sendMessage(
         from,
         { image: { url: ppUrl }, caption, ...global.channelInfo },
         { quoted: msg }
       );
-    } catch (e) {
-      // Si el grupo no tiene foto o WA bloquea el acceso, manda solo texto
+    } catch {
       return sock.sendMessage(
         from,
         { text: caption, ...global.channelInfo },
