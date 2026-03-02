@@ -2,7 +2,6 @@ import fs from "fs";
 import path from "path";
 import axios from "axios";
 import yts from "yt-search";
-import { exec } from "child_process";
 
 const API_URL = "https://mayapi.ooguy.com/ytdl";
 const API_KEY = "may-5d597e52";
@@ -10,9 +9,9 @@ const API_KEY = "may-5d597e52";
 const COOLDOWN_TIME = 15 * 1000;
 const TMP_DIR = path.join(process.cwd(), "tmp");
 
-// 🔥 NUEVOS LIMITES
-const MAX_VIDEO_BYTES = 70 * 1024 * 1024;    // 70MB como video normal
-const MAX_DOC_BYTES = 500 * 1024 * 1024;     // 500MB como documento
+// LIMITES
+const MAX_VIDEO_BYTES = 70 * 1024 * 1024;     // 70MB video normal
+const MAX_DOC_BYTES = 500 * 1024 * 1024;      // 500MB documento
 
 const DEFAULT_QUALITY = "360p";
 const cooldowns = new Map();
@@ -91,15 +90,6 @@ async function downloadToFile(directUrl, outPath) {
   }
 }
 
-async function ffmpegFaststart(inPath, outPath) {
-  await new Promise((resolve, reject) => {
-    exec(
-      `ffmpeg -y -loglevel error -i "${inPath}" -map 0:v -map 0:a? -movflags +faststart -c:v copy -c:a copy "${outPath}"`,
-      (err) => (err ? reject(err) : resolve())
-    );
-  });
-}
-
 export default {
   command: ["ytmp4"],
   category: "descarga",
@@ -109,7 +99,7 @@ export default {
     const msg = ctx.m || ctx.msg || null;
 
     const userId = from;
-    let rawMp4, finalMp4;
+    let finalMp4;
 
     // COOLDOWN
     const until = cooldowns.get(userId);
@@ -140,8 +130,7 @@ export default {
       let title = "video";
       let thumbnail = null;
 
-      rawMp4 = path.join(TMP_DIR, `${Date.now()}_raw.mp4`);
-      finalMp4 = path.join(TMP_DIR, `${Date.now()}_final.mp4`);
+      finalMp4 = path.join(TMP_DIR, `${Date.now()}.mp4`);
 
       // Buscar si no es link
       if (!isHttpUrl(query)) {
@@ -171,7 +160,7 @@ export default {
         }
       }
 
-      // Mensaje único con imagen
+      // Mensaje único con miniatura
       await sock.sendMessage(
         from,
         {
@@ -186,9 +175,8 @@ export default {
       const info = await fetchDirectMediaUrl({ videoUrl, quality });
       title = safeFileName(info.title);
 
-      // Descarga
-      await downloadToFile(info.directUrl, rawMp4);
-      await ffmpegFaststart(rawMp4, finalMp4);
+      // Descargar directo al archivo final (SIN DUPLICAR)
+      await downloadToFile(info.directUrl, finalMp4);
 
       const size = fs.existsSync(finalMp4)
         ? fs.statSync(finalMp4).size
@@ -236,8 +224,9 @@ export default {
       });
     } finally {
       try {
-        if (rawMp4 && fs.existsSync(rawMp4)) fs.unlinkSync(rawMp4);
-        if (finalMp4 && fs.existsSync(finalMp4)) fs.unlinkSync(finalMp4);
+        if (finalMp4 && fs.existsSync(finalMp4)) {
+          fs.unlinkSync(finalMp4);
+        }
       } catch {}
     }
   },
