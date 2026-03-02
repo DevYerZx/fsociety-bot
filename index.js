@@ -4,14 +4,26 @@
 // =========================
 
 import * as baileys from "@whiskeysockets/baileys";
-const makeWASocket = baileys.default; // ✅ FIX: asegura que sea función en ESM
+
+// ✅ Agarra makeWASocket venga como venga (named / default)
+const makeWASocket =
+  (typeof baileys.makeWASocket === "function" && baileys.makeWASocket) ||
+  (typeof baileys.default === "function" && baileys.default) ||
+  (baileys.default && typeof baileys.default.makeWASocket === "function" && baileys.default.makeWASocket);
+
+if (typeof makeWASocket !== "function") {
+  console.error("❌ Baileys exports keys:", Object.keys(baileys));
+  console.error("❌ baileys.default type:", typeof baileys.default);
+  console.error("❌ baileys.makeWASocket type:", typeof baileys.makeWASocket);
+  throw new Error("makeWASocket no es función. Baileys no está exportando correctamente en este entorno.");
+}
+
 const {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   DisconnectReason,
   fetchLatestBaileysVersion,
 } = baileys;
-
 import pino from "pino";
 import chalk from "chalk";
 import readline from "readline";
