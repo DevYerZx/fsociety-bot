@@ -22,20 +22,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ================= NEWSLETTER CONFIG =================
-global.channelInfo = settings.newsletter?.enabled
-  ? {
-      contextInfo: {
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-          newsletterJid: settings.newsletter.jid,
-          newsletterName: settings.newsletter.name,
-          serverMessageId: -1,
-        },
-      },
-    }
-  : {};
+const nl = settings.newsletter || {};
 
+// Solo aplicar newsletter a todos los mensajes si lo pides explícitamente
+global.channelInfo =
+  nl.enabled && nl.applyToAllMessages
+    ? {
+        contextInfo: {
+          forwardingScore: 999,
+          isForwarded: true,
+          forwardedNewsletterMessageInfo: {
+            newsletterJid: nl.jid,
+            newsletterName: nl.name,
+            serverMessageId: -1,
+          },
+        },
+      }
+    : {};
 // Carpeta TMP para descargas
 const TMP_DIR = path.join(process.cwd(), "tmp");
 
