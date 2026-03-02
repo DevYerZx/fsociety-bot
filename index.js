@@ -1,36 +1,10 @@
-// =========================
-// DVYER BOT - INDEX (STABLE + COMPAT)
-// Baileys v6.17.16 + ESM
-// Mantiene tu lógica original de vinculación
-// + Fix makeWASocket en hosting
-// + Helpers lista/botones
-// =========================
-
-import * as baileys from "@whiskeysockets/baileys";
-
-// ✅ Mantener compatibilidad con TODOS los hostings:
-// - algunos entregan makeWASocket como named export
-// - otros como default export
-// - otros como default.makeWASocket
-const makeWASocket =
-  (typeof baileys.makeWASocket === "function" && baileys.makeWASocket) ||
-  (typeof baileys.default === "function" && baileys.default) ||
-  (baileys.default && typeof baileys.default.makeWASocket === "function" && baileys.default.makeWASocket);
-
-if (typeof makeWASocket !== "function") {
-  console.error("❌ Baileys exports keys:", Object.keys(baileys));
-  console.error("❌ baileys.default type:", typeof baileys.default);
-  console.error("❌ baileys.makeWASocket type:", typeof baileys.makeWASocket);
-  throw new Error("makeWASocket is not a function (export no compatible en este hosting).");
-}
-
-// Named exports (tal cual tu index original)
-const {
+import makeWASocket, {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   DisconnectReason,
   fetchLatestBaileysVersion,
-} = baileys;
+} from "@whiskeysockets/baileys";
+
 import pino from "pino";
 import chalk from "chalk";
 import readline from "readline";
@@ -44,16 +18,6 @@ const logger = pino({ level: "silent" });
 const settings = JSON.parse(fs.readFileSync("./settings/settings.json", "utf-8"));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// ================= TMPDIR FIX (ENOSPC) =================
-// ✅ No cambia tu socket, solo evita errores de temp/espacio en hosting/termux
-const TMP_DIR = path.join(process.cwd(), "tmp");
-try {
-  if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
-} catch {}
-process.env.TMPDIR = TMP_DIR;
-process.env.TMP = TMP_DIR;
-process.env.TEMP = TMP_DIR;
 
 // ================= ✅ FIX RECONEXIÓN (ANTI 2+ SOCKETS) =================
 let sockGlobal = null;        // referencia al socket actual
@@ -74,6 +38,9 @@ global.channelInfo = settings.newsletter?.enabled
       },
     }
   : {};
+
+// Carpeta TMP para descargas
+const TMP_DIR = path.join(process.cwd(), "tmp");
 
 // Readline
 let rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -323,54 +290,6 @@ async function enviarConsola(sock, from, n = 30) {
   await sock.sendMessage(from, { text });
 }
 
-// ================= Helpers: LISTA (categorías) + BOTONES =================
-// ✅ List Message (categorías) - lo más compatible
-global.enviarLista = async (sock, jid, opts) => {
-  const {
-    title = "Menú",
-    text = "Elige una opción:",
-    footer = settings.botName || "Bot",
-    buttonText = "Ver opciones",
-    sections = [],
-    quoted,
-  } = opts || {};
-
-  return sock.sendMessage(
-    jid,
-    {
-      title,
-      text,
-      footer,
-      buttonText,
-      sections,
-      ...global.channelInfo,
-    },
-    quoted
-  );
-};
-
-// ✅ Botones quick reply (depende del cliente)
-global.enviarBotones = async (sock, jid, opts) => {
-  const {
-    text = "Elige:",
-    footer = settings.botName || "Bot",
-    buttons = [],
-    quoted,
-  } = opts || {};
-
-  return sock.sendMessage(
-    jid,
-    {
-      text,
-      footer,
-      buttons,
-      headerType: 1,
-      ...global.channelInfo,
-    },
-    quoted
-  );
-};
-
 // ================= INICIAR BOT =================
 async function iniciarBot() {
   // ✅ Candado: evita iniciarBot() duplicado (2+ sockets)
@@ -395,7 +314,6 @@ async function iniciarBot() {
     const { state, saveCreds } = await useMultiFileAuthState(CARPETA_AUTH);
     const { version } = await fetchLatestBaileysVersion();
 
-    // ✅ OJO: aquí NO tocamos tu config del socket (para no romper vinculación)
     sockGlobal = makeWASocket({
       version,
       logger,
@@ -421,6 +339,9 @@ async function iniciarBot() {
       console.log(chalk.greenBright("\n🔐 CÓDIGO DE VINCULACIÓN:\n"));
       console.log(chalk.white.bold.underline(codigo));
       console.log(chalk.yellow("WhatsApp > Dispositivos vinculados > Vincular con código\n"));
+
+      // NO cerramos rl aquí para evitar problemas en reinicios
+      // rl.close();
     }
 
     sock.ev.on("creds.update", saveCreds);
