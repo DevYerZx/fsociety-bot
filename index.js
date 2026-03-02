@@ -24,6 +24,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
 } = baileys;
+
 import pino from "pino";
 import chalk from "chalk";
 import readline from "readline";
@@ -317,7 +318,6 @@ async function enviarConsola(sock, from, n = 30) {
 }
 
 // ================= Helpers: LISTA (categorías) + BOTONES =================
-// ✅ Lista tipo “categorías” (List Message): la opción más compatible
 global.enviarLista = async (sock, jid, opts) => {
   const {
     title = "Menú",
@@ -327,9 +327,6 @@ global.enviarLista = async (sock, jid, opts) => {
     sections = [],
     quoted,
   } = opts || {};
-
-  // sections ejemplo:
-  // [{ title: "Descargas", rows: [{ title:"YouTube MP4", description:"...", rowId: ".ytmp4 ..." }] }]
 
   return sock.sendMessage(
     jid,
@@ -345,12 +342,11 @@ global.enviarLista = async (sock, jid, opts) => {
   );
 };
 
-// ✅ Botones “quick reply”: depende del cliente, pero se intenta.
 global.enviarBotones = async (sock, jid, opts) => {
   const {
     text = "Elige:",
     footer = settings.botName || "Bot",
-    buttons = [], // [{ buttonId: ".menu", buttonText: { displayText: "Menú" }, type: 1 }]
+    buttons = [],
     quoted,
   } = opts || {};
 
@@ -369,19 +365,16 @@ global.enviarBotones = async (sock, jid, opts) => {
 
 // ================= INICIAR BOT =================
 async function iniciarBot() {
-  // ✅ Candado: evita iniciarBot() duplicado (2+ sockets)
   if (conectando) return;
   conectando = true;
 
   try {
-    // ✅ cerrar socket anterior si existía (evita conexiones duplicadas)
     try {
       sockGlobal?.end?.();
     } catch {}
 
     limpiarTMP();
 
-    // ✅ solo la primera vez: barra + comandos
     if (!inicializado) {
       await barraCarga();
       await cargarComandos();
@@ -396,30 +389,34 @@ async function iniciarBot() {
     sockGlobal = makeWASocket({
       version,
       logger,
-      printQRInTerminal: true, // ✅ terminal QR (más simple). Si usas pairing code, igual sirve.
+      printQRInTerminal: false, // pairing code
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
-      // puedes agregar browser si quieres:
-      // browser: ["DVYER", "Chrome", "1.0.0"],
+
+      // ✅ opciones recomendadas para compatibilidad
+      browser: ["DVYER-BOT", "Chrome", "1.0.0"],
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+      generateHighQualityLinkPreview: false,
     });
 
     const sock = sockGlobal;
 
-    // Pairing code (si lo usas)
     if (!state.creds.registered) {
       console.log(chalk.yellowBright("📲 Bot no vinculado"));
 
-      // Si el rl fue cerrado en un intento anterior, recrearlo
       try {
         if (rl?.closed) {
           rl = readline.createInterface({ input: process.stdin, output: process.stdout });
         }
       } catch {}
 
-      const numero = await preguntar("👉 Ingresa tu número (ej: 519XXXXXXXX): ");
-      const codigo = await sock.requestPairingCode(numero.trim());
+      const numeroRaw = await preguntar("👉 Ingresa tu número (ej: 519XXXXXXXX): ");
+      const numero = numeroRaw.replace(/[^\d]/g, ""); // ✅ solo dígitos
+
+      const codigo = await sock.requestPairingCode(numero);
 
       console.log(chalk.greenBright("\n🔐 CÓDIGO DE VINCULACIÓN:\n"));
       console.log(chalk.white.bold.underline(codigo));
@@ -428,7 +425,6 @@ async function iniciarBot() {
 
     sock.ev.on("creds.update", saveCreds);
 
-    // ✅ reconexión segura + borrar sesión si 401
     sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
       if (connection === "open") {
         console.log(chalk.bgGreen.black("\n ✅ DVYER BOT CONECTADO ✅ \n"));
@@ -439,7 +435,6 @@ async function iniciarBot() {
         const code = lastDisconnect?.error?.output?.statusCode;
         console.log(chalk.bgRed.black(` ❌ Conexión cerrada (${code}) ❌ `));
 
-        // ✅ 401 / loggedOut => borrar dvyer-session y volver a vincular
         if (code === 401 || code === DisconnectReason.loggedOut) {
           console.log(chalk.redBright("🔐 Sesión inválida (401). Borrando dvyer-session para volver a vincular..."));
           try {
@@ -449,7 +444,6 @@ async function iniciarBot() {
           }
         }
 
-        // ✅ reconexión controlada
         setTimeout(() => iniciarBot(), 1500);
       }
     });
@@ -490,13 +484,11 @@ async function iniciarBot() {
 
       mostrarBanner();
 
-      // ================= 🔥 EVENTOS AUTOMÁTICOS =================
       const esGrupo = from.endsWith("@g.us");
       const esPrivado = from.endsWith("@s.whatsapp.net");
 
       const sender = msg.key.participant || from;
 
-      // ✅ FIX OWNER
       const numeroSender = normalizarNumero(sender);
 
       const owners = Array.isArray(settings.ownerNumbers)
