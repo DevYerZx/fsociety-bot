@@ -18,12 +18,6 @@ export default {
     }
 
     try {
-      await sock.sendMessage(
-        from,
-        { text: "🤖 Pensando...", ...global.channelInfo },
-        { quoted: msg }
-      );
-
       const url = `https://api.soymaycol.icu/api/ai/gpt5?prompt=${encodeURIComponent(prompt)}`;
       const { data } = await axios.get(url, { timeout: 60000 });
 
@@ -37,13 +31,14 @@ export default {
 
       const respuesta = data.response || "Sin respuesta.";
 
-      // WhatsApp tiene límites: recorta si es demasiado largo
+      // Límite de WhatsApp
       const MAX = 6000;
-      const textoFinal = respuesta.length > MAX ? respuesta.slice(0, MAX) + "\n\n(Recortado…)" : respuesta;
+      const textoFinal =
+        respuesta.length > MAX ? respuesta.slice(0, MAX) + "\n\n(Recortado…)" : respuesta;
 
       await sock.sendMessage(
         from,
-        { text: `🤖 *GPT5:*\n\n${textoFinal}`, ...global.channelInfo },
+        { text: textoFinal, ...global.channelInfo },
         { quoted: msg }
       );
     } catch (e) {
