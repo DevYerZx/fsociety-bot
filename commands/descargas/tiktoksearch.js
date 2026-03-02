@@ -2,7 +2,7 @@ import axios from "axios";
 
 export default {
   name: "ttsearch",
-  command: ["ttsearch", "tiktok", "tt"],
+  command: ["ttsearch", "tts"],
   category: "descargas",
   desc: "Busca videos de TikTok y envía 2 resultados",
 
