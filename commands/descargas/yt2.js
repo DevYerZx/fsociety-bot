@@ -49,8 +49,9 @@ async function downloadToFile(url, filePath) {
   const response = await axios({
     url,
     method: "GET",
-    responseType: "stream",
+    responseType: "arraybuffer",
     maxRedirects: 5,
+    timeout: 60000,
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       "Accept": "*/*",
@@ -60,22 +61,26 @@ async function downloadToFile(url, filePath) {
     }
   });
 
-  const writer = fs.createWriteStream(filePath);
-  response.data.pipe(writer);
+  const buffer = Buffer.from(response.data);
 
-  await new Promise((resolve, reject) => {
-    writer.on("finish", resolve);
-    writer.on("error", reject);
-  });
+  // 🔎 Validar tamaño mínimo
+  if (buffer.length < 500000) {
+    throw new Error("Archivo demasiado pequeño o incompleto");
+  }
 
-  // 🔎 Verificación anti-HTML
-  const buffer = fs.readFileSync(filePath);
-  const header = buffer.slice(0, 50).toString();
-
-  if (header.includes("<!DOCTYPE") || header.includes("<html")) {
-    fs.unlinkSync(filePath);
+  // 🔎 Detectar HTML
+  const textHeader = buffer.slice(0, 50).toString();
+  if (textHeader.includes("<!DOCTYPE") || textHeader.includes("<html")) {
     throw new Error("La API devolvió HTML en vez de video");
   }
+
+  // 🔎 Validar que sea MP4 real
+  const header = buffer.slice(0, 20).toString();
+  if (!header.includes("ftyp")) {
+    throw new Error("El archivo descargado no es un MP4 válido");
+  }
+
+  fs.writeFileSync(filePath, buffer);
 }
 
 export default {
@@ -127,10 +132,6 @@ export default {
 
       const size = fs.statSync(outFile).size;
 
-      if (size < 500000) {
-        throw new Error("Archivo demasiado pequeño, posible error de descarga");
-      }
-
       if (size <= MAX_VIDEO_BYTES) {
         await sock.sendMessage(from, {
           video: fs.readFileSync(outFile),
@@ -151,7 +152,7 @@ export default {
     } catch (err) {
       console.error("ERROR yt2:", err.message);
       await sock.sendMessage(from, {
-        text: "❌ Error al procesar el video.\n⚠ Puede que la API haya bloqueado la descarga."
+        text: "❌ Error al procesar el video.\n⚠ La API puede estar bloqueando el servidor."
       });
     } finally {
       if (outFile && fs.existsSync(outFile)) {
