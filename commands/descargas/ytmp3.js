@@ -1,4 +1,4 @@
-//```javascript
+
 import axios from "axios"
 import yts from "yt-search"
 
@@ -50,6 +50,7 @@ caption:`🎵 *${video.title}*\n⏱️ ${video.timestamp}\n\n⬇️ Descargando 
 ...channelInfo
 },{quoted: msg})
 
+// llamar a tu API
 const apiUrl = `${API}?url=${encodeURIComponent(video.url)}`
 
 const {data} = await axios.get(apiUrl,{
@@ -62,8 +63,15 @@ throw new Error("API sin audio")
 
 const audioUrl = data.download
 
+// descargar audio para evitar 403
+const audioData = await axios.get(audioUrl,{
+responseType:"arraybuffer",
+timeout:30000
+})
+
+// enviar audio como buffer
 await sock.sendMessage(from,{
-audio:{url: audioUrl},
+audio: Buffer.from(audioData.data),
 mimetype:"audio/mpeg",
 fileName: safeFileName(video.title)+".mp3",
 ...channelInfo
