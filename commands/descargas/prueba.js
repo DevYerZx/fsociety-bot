@@ -2,7 +2,7 @@ import axios from "axios"
 import yts from "yt-search"
 
 export default {
-name: "prueba",
+name: "prueba1",
 alias: ["yt","video"],
 
 async run(client, message, args){
