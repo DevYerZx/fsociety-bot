@@ -1,83 +1,141 @@
 import axios from "axios"
-import yts from "yt-search"
 
 export default {
+command: ['yt2'],
+run: async ({ m, conn, args }) => {
 
-command:["yt2"],
+if (!args[0]) return m.reply("❌ Usa:\nyt2 <link youtube>")
 
-async run({ sock, from, args }){
+let url = args[0]
 
-try{
+const apis = [
 
-if(!args.length){
-return sock.sendMessage(from,{
-text:"❌ Ejemplo:\n.yt2 bad bunny"
+async () => {
+let { data } = await axios.get(`https://api.vevioz.com/api/button/mp4/${url}`)
+return { url: data }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.douyin.wtf/api/youtube?url=${url}`)
+return { url: data.download }
+},
+
+async () => {
+let { data } = await axios.get(`https://ytdownloader.irepo.space/api/youtube/video?url=${url}`)
+return { url: data.download }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.cobalt.tools/api/json`, {
+method: "POST",
+data: { url }
 })
+return { url: data.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.akuari.my.id/downloader/youtube?link=${url}`)
+return { url: data.respon.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.lolhuman.xyz/api/ytdownloader?apikey=GataDios&url=${url}`)
+return { url: data.result.video }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.neoxr.eu/api/youtube?url=${url}`)
+return { url: data.data.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.zahwazein.xyz/downloader/ytmp4?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.botcahx.eu.org/api/dowloader/yt?url=${url}`)
+return { url: data.result.video }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.ryzendesu.vip/api/downloader/ytmp4?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.siputzx.my.id/api/d/ytmp4?url=${url}`)
+return { url: data.data.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.fgmods.xyz/api/downloader/ytmp4?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.agatz.xyz/api/ytmp4?url=${url}`)
+return { url: data.data.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.itzpire.com/download/youtube?url=${url}`)
+return { url: data.data.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.vreden.my.id/api/ytmp4?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.nekorinn.my.id/downloader/youtube?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.dhamzxploit.my.id/api/ytmp4?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.ryzumi.vip/api/downloader/ytmp4?url=${url}`)
+return { url: data.result.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.akuari.my.id/downloader/ytmp4?link=${url}`)
+return { url: data.respon.url }
+},
+
+async () => {
+let { data } = await axios.get(`https://api.xyroinee.xyz/api/youtube?url=${url}`)
+return { url: data.result.url }
 }
 
-const query = args.join(" ")
+]
 
-await sock.sendMessage(from,{text:"🔎 Buscando..."})
+let success = null
 
-const search = await yts(query)
-const video = search.videos[0]
-
-if(!video){
-return sock.sendMessage(from,{text:"❌ No encontrado"})
-}
-
-const yt = video.url
-
-await sock.sendMessage(from,{text:"⏳ Enviando a Loader..."})
-
-const convert = await axios.get(
-`https://loader.to/ajax/download.php?format=mp4&url=${encodeURIComponent(yt)}`
-)
-
-const id = convert.data.id
-
-if(!id){
-return sock.sendMessage(from,{text:"❌ Error iniciando descarga"})
-}
-
-let link = null
-
-for(let i=0;i<15;i++){
-
-await new Promise(r=>setTimeout(r,2000))
-
-const progress = await axios.get(
-`https://loader.to/ajax/progress.php?id=${id}`
-)
-
-if(progress.data.download_url){
-
-link = progress.data.download_url
+for (let i = 0; i < apis.length; i++) {
+try {
+let res = await apis[i]()
+if (res?.url) {
+success = res.url
+console.log("API FUNCIONANDO:", i + 1)
 break
-
+}
+} catch (e) {
+console.log("API FALLÓ:", i + 1)
+}
 }
 
-}
+if (!success) return m.reply("❌ Ninguna API funcionó")
 
-if(!link){
-return sock.sendMessage(from,{text:"❌ No se pudo obtener el video"})
-}
-
-await sock.sendMessage(from,{
-video:{url:link},
-caption:`🎬 ${video.title}`
-})
-
-}catch(e){
-
-console.error("YT2 ERROR:",e)
-
-sock.sendMessage(from,{
-text:"❌ Error descargando"
-})
+await conn.sendMessage(m.chat, {
+video: { url: success },
+caption: "✅ Descargado con API fallback"
+}, { quoted: m })
 
 }
-
-}
-
 }
