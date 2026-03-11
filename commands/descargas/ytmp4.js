@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API_BASE = "https://dv-yer-api.online";
-const API_VIDEO_URL = `${API_BASE}/ytmp4`;
+const API_VIDEO_URL = `${API_BASE}/ytdlmp4`;
 const API_SEARCH_URL = `${API_BASE}/ytsearch`;
 
 const COOLDOWN_TIME = 15 * 1000;
