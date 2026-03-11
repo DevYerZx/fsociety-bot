@@ -1,6 +1,6 @@
+
 // =========================
 // DVYER BOT - INDEX (STABLE)
-// Baileys recomendado: 6.7.21
 // =========================
 
 import * as baileys from "@whiskeysockets/baileys";
@@ -11,8 +11,6 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
-// ================= BAILEYS SAFE IMPORT =================
-
 const makeWASocket =
   (typeof baileys.makeWASocket === "function" && baileys.makeWASocket) ||
   (typeof baileys.default === "function" && baileys.default) ||
@@ -21,7 +19,7 @@ const makeWASocket =
     baileys.default.makeWASocket);
 
 if (typeof makeWASocket !== "function") {
-  throw new Error("makeWASocket no compatible con esta version/hosting");
+  throw new Error("makeWASocket no compatible con este hosting");
 }
 
 const {
@@ -61,10 +59,10 @@ global.channelInfo = settings?.newsletter?.enabled
     }
   : {};
 
-// ================= TMP / STORE =================
+// ================= TMP DIR =================
 
 const TMP_DIR = path.join(process.cwd(), "tmp");
-const STORE_FILE = path.join(TMP_DIR, "baileys-store.json");
+const STORE_FILE = path.join(TMP_DIR, "baileys_store.json");
 
 try {
   if (!fs.existsSync(TMP_DIR)) {
@@ -76,29 +74,11 @@ process.env.TMPDIR = TMP_DIR;
 process.env.TMP = TMP_DIR;
 process.env.TEMP = TMP_DIR;
 
-const store =
-  typeof makeInMemoryStore === "function"
-    ? makeInMemoryStore({ logger })
-    : null;
-
-try {
-  if (store?.readFromFile && fs.existsSync(STORE_FILE)) {
-    store.readFromFile(STORE_FILE);
-  }
-} catch {}
-
-if (store?.writeToFile) {
-  setInterval(() => {
-    try {
-      store.writeToFile(STORE_FILE);
-    } catch {}
-  }, 10000).unref();
-}
-
 // ================= VARIABLES =================
 
 let sockGlobal = null;
 let conectando = false;
+let pairingSolicitado = false;
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -118,6 +98,27 @@ const mensajesPorTipo = {
   Privado: 0,
   Desconocido: 0,
 };
+
+// ================= STORE =================
+
+const store =
+  typeof makeInMemoryStore === "function"
+    ? makeInMemoryStore({ logger })
+    : null;
+
+try {
+  if (store?.readFromFile && fs.existsSync(STORE_FILE)) {
+    store.readFromFile(STORE_FILE);
+  }
+} catch {}
+
+if (store?.writeToFile) {
+  setInterval(() => {
+    try {
+      store.writeToFile(STORE_FILE);
+    } catch {}
+  }, 10000).unref();
+}
 
 // ================= CONSOLA =================
 
@@ -146,7 +147,7 @@ function pushConsole(level, args) {
   }
 }
 
-function shouldIgnoreErrorText(value) {
+function shouldIgnoreError(value) {
   const txt = String(value || "");
   return (
     txt.includes("Bad MAC") ||
@@ -158,8 +159,8 @@ function shouldIgnoreErrorText(value) {
 }
 
 const log = console.log;
-const warn = console.warn;
 const error = console.error;
+const warn = console.warn;
 
 console.log = (...a) => {
   pushConsole("LOG", a);
@@ -172,9 +173,7 @@ console.warn = (...a) => {
 };
 
 console.error = (...a) => {
-  const txt = String(a[0] || "");
-  if (shouldIgnoreErrorText(txt)) return;
-
+  if (shouldIgnoreError(a[0])) return;
   pushConsole("ERROR", a);
   error(chalk.red("[ERROR]"), ...a);
 };
@@ -182,12 +181,12 @@ console.error = (...a) => {
 // ================= ANTI CRASH =================
 
 process.on("unhandledRejection", (reason) => {
-  if (shouldIgnoreErrorText(reason)) return;
+  if (shouldIgnoreError(reason)) return;
   console.error(reason);
 });
 
 process.on("uncaughtException", (err) => {
-  if (shouldIgnoreErrorText(err?.message || err)) return;
+  if (shouldIgnoreError(err?.message || err)) return;
   console.error(err);
 });
 
@@ -199,142 +198,76 @@ function tipoChat(jid = "") {
   return "Desconocido";
 }
 
-function shouldIgnoreJid(jid = "") {
-  return (
-    !jid ||
-    jid === "status@broadcast" ||
-    jid.endsWith("@newsletter") ||
-    jid.endsWith("@broadcast")
-  );
-}
-
-function normalizeMessageContent(message = {}) {
-  let content = message;
-
-  while (true) {
-    if (content?.ephemeralMessage?.message) {
-      content = content.ephemeralMessage.message;
-      continue;
-    }
-    if (content?.viewOnceMessage?.message) {
-      content = content.viewOnceMessage.message;
-      continue;
-    }
-    if (content?.viewOnceMessageV2?.message) {
-      content = content.viewOnceMessageV2.message;
-      continue;
-    }
-    if (content?.viewOnceMessageV2Extension?.message) {
-      content = content.viewOnceMessageV2Extension.message;
-      continue;
-    }
-    if (content?.documentWithCaptionMessage?.message) {
-      content = content.documentWithCaptionMessage.message;
-      continue;
-    }
-    if (content?.editedMessage?.message) {
-      content = content.editedMessage.message;
-      continue;
-    }
-    break;
-  }
-
-  return content || {};
-}
-
 function obtenerTexto(message) {
-  const msg = normalizeMessageContent(message);
+  if (!message) return "";
+
+  const msg =
+    message?.ephemeralMessage?.message ||
+    message?.viewOnceMessage?.message ||
+    message?.viewOnceMessageV2?.message ||
+    message;
 
   return (
-    msg.conversation ||
-    msg.extendedTextMessage?.text ||
-    msg.imageMessage?.caption ||
-    msg.videoMessage?.caption ||
-    msg.documentMessage?.caption ||
-    msg.buttonsResponseMessage?.selectedDisplayText ||
-    msg.buttonsResponseMessage?.selectedButtonId ||
-    msg.templateButtonReplyMessage?.selectedDisplayText ||
-    msg.templateButtonReplyMessage?.selectedId ||
-    msg.listResponseMessage?.title ||
-    msg.listResponseMessage?.singleSelectReply?.selectedRowId ||
-    msg.interactiveResponseMessage?.body?.text ||
+    msg?.conversation ||
+    msg?.extendedTextMessage?.text ||
+    msg?.imageMessage?.caption ||
+    msg?.videoMessage?.caption ||
+    msg?.documentMessage?.caption ||
+    msg?.buttonsResponseMessage?.selectedDisplayText ||
+    msg?.buttonsResponseMessage?.selectedButtonId ||
+    msg?.templateButtonReplyMessage?.selectedId ||
+    msg?.listResponseMessage?.title ||
+    msg?.listResponseMessage?.singleSelectReply?.selectedRowId ||
     ""
   );
 }
 
-function getContextInfo(message = {}) {
-  const normalized = normalizeMessageContent(message);
-  const type = Object.keys(normalized)[0];
+function getQuoted(msg) {
+  const contextInfo =
+    msg?.message?.extendedTextMessage?.contextInfo ||
+    msg?.message?.imageMessage?.contextInfo ||
+    msg?.message?.videoMessage?.contextInfo ||
+    msg?.message?.documentMessage?.contextInfo ||
+    {};
 
-  if (!type) return {};
-  const node = normalized[type];
-
-  if (node && typeof node === "object" && node.contextInfo) {
-    return node.contextInfo;
-  }
-
-  return {};
-}
-
-function serializeMessage(raw, depth = 0) {
-  if (!raw) return null;
-
-  const from = raw.key?.remoteJid || "";
-  const sender = raw.key?.participant || raw.key?.remoteJid || "";
-  const isGroup = from.endsWith("@g.us");
-  const normalizedMessage = normalizeMessageContent(raw.message || {});
-  const text = String(obtenerTexto(normalizedMessage) || "").trim();
-  const contextInfo = getContextInfo(raw.message || {});
-
-  let quoted = null;
-
-  if (depth < 1 && contextInfo?.quotedMessage) {
-    quoted = serializeMessage(
-      {
-        key: {
-          remoteJid: from,
-          fromMe: false,
-          id: contextInfo.stanzaId || "",
-          participant: contextInfo.participant || sender,
-        },
-        message: contextInfo.quotedMessage,
-      },
-      depth + 1
-    );
-  }
+  if (!contextInfo?.quotedMessage) return null;
 
   return {
-    ...raw,
-    m: raw,
-    chat: from,
-    from,
-    sender,
-    isGroup,
-    text,
-    body: text,
-    pushName: raw.pushName || "",
-    message: normalizedMessage,
-    quoted,
+    key: {
+      remoteJid: msg.key.remoteJid,
+      fromMe: false,
+      id: contextInfo.stanzaId || "",
+      participant: contextInfo.participant || msg.key.participant || msg.key.remoteJid,
+    },
+    message: contextInfo.quotedMessage,
   };
 }
 
-async function getBaileysVersionSafe() {
+function serializarMensaje(msg) {
+  const text = obtenerTexto(msg.message);
+  const quotedRaw = getQuoted(msg);
+
+  return {
+    ...msg,
+    text,
+    body: text,
+    quoted: quotedRaw
+      ? {
+          ...quotedRaw,
+          text: obtenerTexto(quotedRaw.message),
+          body: obtenerTexto(quotedRaw.message),
+        }
+      : null,
+  };
+}
+
+async function getVersionSafe() {
   try {
-    if (typeof fetchLatestBaileysVersion !== "function") {
-      return undefined;
-    }
-    const result = await fetchLatestBaileysVersion();
-    return result?.version;
+    const data = await fetchLatestBaileysVersion();
+    return data?.version;
   } catch {
     return undefined;
   }
-}
-
-function browserConfig() {
-  try {
-    if (Browsers?.ubuntu) return Browsers.ubuntu("DVYER BOT");
-  } catch {}
-  return undefined;
 }
 
 async function cachedGroupMetadata(jid) {
@@ -385,8 +318,7 @@ async function cargarComandos() {
       if (!a.name.endsWith(".js")) continue;
 
       try {
-        const fileUrl = pathToFileURL(ruta).href;
-        const mod = await import(fileUrl);
+        const mod = await import(pathToFileURL(ruta).href);
         const cmd = mod.default;
 
         if (!cmd || typeof cmd.run !== "function") continue;
@@ -406,7 +338,7 @@ async function cargarComandos() {
 
         console.log("✓ Comando cargado:", nombres.join(", "));
       } catch (e) {
-        console.error("Error cargando comando:", ruta, e);
+        console.error("Error cargando comando", e);
       }
     }
   }
@@ -424,16 +356,16 @@ async function iniciarBot() {
     banner();
 
     const { state, saveCreds } = await useMultiFileAuthState(CARPETA_AUTH);
-    const version = await getBaileysVersionSafe();
+    const version = await getVersionSafe();
 
-    const config = {
+    pairingSolicitado = false;
+
+    sockGlobal = makeWASocket({
+      version,
       logger,
       printQRInTerminal: false,
       markOnlineOnConnect: false,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000,
-      browser: browserConfig(),
+      browser: Browsers?.ubuntu ? Browsers.ubuntu("DVYER BOT") : undefined,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -448,33 +380,12 @@ async function iniciarBot() {
         }
       },
       cachedGroupMetadata,
-    };
+    });
 
-    if (version) {
-      config.version = version;
-    }
-
-    sockGlobal = makeWASocket(config);
     const sock = sockGlobal;
 
     if (store?.bind) {
       store.bind(sock.ev);
-    }
-
-    if (!state.creds.registered) {
-      console.log("📲 Bot no vinculado");
-
-      let numero = await preguntar("Numero: ");
-      numero = String(numero || "").replace(/\D/g, "");
-
-      if (!numero) {
-        throw new Error("Numero invalido para pairing code");
-      }
-
-      const codigo = await sock.requestPairingCode(numero);
-
-      console.log("\nCODIGO DE VINCULACION:\n");
-      console.log(chalk.greenBright(codigo));
     }
 
     sock.ev.on("creds.update", saveCreds);
@@ -497,49 +408,69 @@ async function iniciarBot() {
       } catch {}
     });
 
-    sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
-      if (connection === "open") {
-        console.log(chalk.green("✅ DVYER BOT CONECTADO"));
-      }
+    sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
+      try {
+        if (qr && !sock.authState.creds.registered && !pairingSolicitado) {
+          pairingSolicitado = true;
 
-      if (connection === "close") {
-        const code =
-          lastDisconnect?.error?.output?.statusCode ||
-          lastDisconnect?.error?.data?.statusCode ||
-          0;
+          console.log("📲 Bot no vinculado");
+          let numero = await preguntar("Numero con codigo de pais: ");
+          numero = String(numero || "").replace(/\D/g, "");
 
-        console.log("Conexion cerrada:", code);
+          if (!numero) {
+            console.log("Numero invalido");
+            pairingSolicitado = false;
+            return;
+          }
 
-        const loggedOut =
-          code === DisconnectReason.loggedOut || code === 401;
+          const codigo = await sock.requestPairingCode(numero);
 
-        if (loggedOut) {
-          try {
-            fs.rmSync(CARPETA_AUTH, { recursive: true, force: true });
-          } catch {}
+          console.log("\nCODIGO DE VINCULACION:\n");
+          console.log(chalk.greenBright(codigo));
+          console.log(
+            chalk.yellow(
+              "Abre WhatsApp > Dispositivos vinculados > Vincular con numero de telefono"
+            )
+          );
         }
 
-        sockGlobal = null;
+        if (connection === "open") {
+          console.log(chalk.green("✅ DVYER BOT CONECTADO"));
+        }
 
-        setTimeout(() => {
-          iniciarBot();
-        }, loggedOut ? 2500 : 2000);
+        if (connection === "close") {
+          const code = lastDisconnect?.error?.output?.statusCode;
+
+          console.log("Conexion cerrada:", code);
+
+          if (code === 401 || code === DisconnectReason.loggedOut) {
+            try {
+              fs.rmSync(CARPETA_AUTH, { recursive: true, force: true });
+            } catch {}
+          }
+
+          setTimeout(() => {
+            iniciarBot();
+          }, 2000);
+        }
+      } catch (e) {
+        pairingSolicitado = false;
+        console.error("Error en connection.update:", e);
       }
     });
 
     // ================= MENSAJES =================
 
     sock.ev.on("messages.upsert", async ({ messages }) => {
-      for (const msg of messages || []) {
+      for (const raw of messages || []) {
         try {
-          if (!msg?.message) continue;
-          if (msg.key?.fromMe) continue;
+          if (!raw?.message || raw.key.fromMe) continue;
 
-          const from = msg.key?.remoteJid || "";
-          if (shouldIgnoreJid(from)) continue;
+          const from = raw.key.remoteJid || "";
+          if (!from || from === "status@broadcast") continue;
 
-          const m = serializeMessage(msg);
-          const texto = m?.text || "";
+          const msg = serializarMensaje(raw);
+          const texto = msg.text;
 
           if (!texto) continue;
 
@@ -548,15 +479,16 @@ async function iniciarBot() {
           const tipo = tipoChat(from);
           mensajesPorTipo[tipo] = (mensajesPorTipo[tipo] || 0) + 1;
 
+          const txt = texto.trim();
           const prefijo = settings.prefix || ".";
-          if (!texto.startsWith(prefijo)) continue;
 
-          const body = texto.slice(prefijo.length).trim();
+          if (!txt.startsWith(prefijo)) continue;
+
+          const body = txt.slice(prefijo.length).trim();
           if (!body) continue;
 
-          const parts = body.split(/\s+/);
-          const comando = String(parts.shift() || "").toLowerCase();
-          const args = parts;
+          const args = body.split(/\s+/);
+          const comando = args.shift()?.toLowerCase();
 
           const cmd = comandos.get(comando);
           if (!cmd) continue;
@@ -565,24 +497,15 @@ async function iniciarBot() {
 
           await cmd.run({
             sock,
-            m,
+            m: msg,
             msg,
             from,
-            chat: from,
-            sender: m.sender,
-            isGroup: m.isGroup,
-            text: m.text,
-            body: m.body,
-            quoted: m.quoted,
             args,
-            command: comando,
+            text: msg.text,
+            body: msg.body,
+            quoted: msg.quoted,
             settings,
             comandos,
-            stats: {
-              totalMensajes,
-              totalComandos,
-              mensajesPorTipo,
-            },
           });
         } catch (e) {
           console.error("Error comando:", e);
@@ -603,17 +526,11 @@ async function start() {
 
 start();
 
-process.on("SIGINT", async () => {
+process.on("SIGINT", () => {
   try {
     rl.close();
   } catch {}
 
-  try {
-    if (sockGlobal?.end) {
-      sockGlobal.end(undefined);
-    }
-  } catch {}
-
   console.log("Bot apagado");
-  process.exit(0);
+  process.exit();
 });
