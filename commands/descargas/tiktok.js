@@ -3,6 +3,7 @@ import path from "path";
 import os from "os";
 import axios from "axios";
 import { pipeline } from "stream/promises";
+import { randomUUID } from "crypto";
 
 const API_BASE = "https://dv-yer-api.online";
 const API_TIKTOK_URL = `${API_BASE}/ttdlmp4`;
@@ -12,12 +13,44 @@ const VIDEO_QUALITY = "hd";
 const API_LANG = "es";
 const REQUEST_TIMEOUT = 60000;
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
+const VIDEO_AS_DOCUMENT_THRESHOLD = 40 * 1024 * 1024;
+const TMP_DIR = path.join(os.tmpdir(), "dvyer-tiktok");
+const TMP_FILE_PREFIX = "dvyer-tt-";
+const TMP_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 const cooldowns = new Map();
-const TMP_DIR = path.join(os.tmpdir(), "dvyer-tiktok");
 
 if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
+}
+
+cleanupOldTempFiles();
+
+function cleanupOldTempFiles() {
+  try {
+    const now = Date.now();
+    const files = fs.readdirSync(TMP_DIR);
+
+    for (const file of files) {
+      if (!file.startsWith(TMP_FILE_PREFIX)) continue;
+
+      const fullPath = path.join(TMP_DIR, file);
+      const stat = fs.statSync(fullPath);
+
+      if (!stat.isFile()) continue;
+      if (now - stat.mtimeMs > TMP_MAX_AGE_MS) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+  } catch {}
+}
+
+function deleteFileSafe(filePath) {
+  try {
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {}
 }
 
 function safeFileName(name) {
@@ -49,18 +82,6 @@ function extractApiError(data, status) {
     data?.error?.message ||
     data?.message ||
     (status ? `HTTP ${status}` : "Error de API")
-  );
-}
-
-function pickDownloadUrl(data) {
-  return (
-    data?.download_url_full ||
-    data?.download_url ||
-    data?.url ||
-    data?.result?.download_url_full ||
-    data?.result?.download_url ||
-    data?.result?.url ||
-    ""
   );
 }
 
@@ -108,6 +129,37 @@ function resolveTikTokUrl(ctx) {
   return extractTikTokUrl(directText) || extractTikTokUrl(quotedText) || "";
 }
 
+function parseContentDispositionFileName(headerValue) {
+  const text = String(headerValue || "");
+  const utfMatch = text.match(/filename\*=UTF-8''([^;]+)/i);
+
+  if (utfMatch?.[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1]).replace(/["']/g, "").trim();
+    } catch {}
+  }
+
+  const normalMatch = text.match(/filename="?([^"]+)"?/i);
+  if (normalMatch?.[1]) {
+    return normalMatch[1].trim();
+  }
+
+  return "";
+}
+
+async function readStreamToText(stream) {
+  return await new Promise((resolve, reject) => {
+    let data = "";
+
+    stream.on("data", (chunk) => {
+      data += chunk.toString();
+    });
+
+    stream.on("end", () => resolve(data));
+    stream.on("error", reject);
+  });
+}
+
 async function apiGet(url, params, timeout = REQUEST_TIMEOUT) {
   const response = await axios.get(url, {
     timeout,
@@ -128,39 +180,8 @@ async function apiGet(url, params, timeout = REQUEST_TIMEOUT) {
   return data;
 }
 
-async function resolveRedirectTarget(url) {
-  let lastError = "No se pudo resolver la redirección final.";
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const response = await axios.get(url, {
-        timeout: REQUEST_TIMEOUT,
-        maxRedirects: 0,
-        validateStatus: () => true,
-      });
-
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers?.location;
-        if (location) return location;
-      }
-
-      if (response.status >= 200 && response.status < 300) {
-        return url;
-      }
-
-      lastError = extractApiError(response.data, response.status);
-    } catch (error) {
-      lastError = error?.message || "redirect failed";
-    }
-
-    await sleep(700 * attempt);
-  }
-
-  throw new Error(lastError);
-}
-
-async function requestTikTokLink(videoUrl) {
-  let lastError = "No se pudo obtener el video de TikTok.";
+async function requestTikTokMeta(videoUrl) {
+  let lastError = "No se pudo obtener metadata del video de TikTok.";
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -171,12 +192,6 @@ async function requestTikTokLink(videoUrl) {
         url: videoUrl,
       });
 
-      const redirectUrl = pickDownloadUrl(data);
-      if (!redirectUrl) {
-        throw new Error("La API no devolvió download_url.");
-      }
-
-      const directUrl = await resolveRedirectTarget(redirectUrl);
       const title = safeFileName(data?.title || data?.result?.title || "tiktok");
       const fileName = normalizeMp4Name(
         data?.filename || data?.file_name || title || "tiktok"
@@ -185,7 +200,6 @@ async function requestTikTokLink(videoUrl) {
       return {
         title,
         fileName,
-        directUrl,
       };
     } catch (error) {
       lastError = error?.message || "Error desconocido";
@@ -196,24 +210,68 @@ async function requestTikTokLink(videoUrl) {
   throw new Error(lastError);
 }
 
-async function downloadVideoToTemp(directUrl, fileName) {
+async function downloadTikTokViaApi(videoUrl, fileName) {
   const finalName = normalizeMp4Name(fileName || "tiktok.mp4");
-  const tempPath = path.join(TMP_DIR, `${Date.now()}-${finalName}`);
+  const tempPath = path.join(
+    TMP_DIR,
+    `${TMP_FILE_PREFIX}${Date.now()}-${randomUUID()}-${finalName}`
+  );
 
-  const response = await axios.get(directUrl, {
+  const response = await axios.get(API_TIKTOK_URL, {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
     maxRedirects: 5,
+    params: {
+      mode: "file",
+      quality: VIDEO_QUALITY,
+      lang: API_LANG,
+      url: videoUrl,
+    },
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
       Accept: "*/*",
-      Referer: "https://www.tiktok.com/",
+      Referer: `${API_BASE}/`,
     },
-    validateStatus: (status) => status >= 200 && status < 400,
+    validateStatus: () => true,
   });
 
-  await pipeline(response.data, fs.createWriteStream(tempPath));
+  if (response.status >= 400) {
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(errorText);
+    } catch {}
+
+    throw new Error(
+      extractApiError(
+        parsed || { message: errorText || "Error al descargar el video." },
+        response.status
+      )
+    );
+  }
+
+  const contentLength = Number(response.headers?.["content-length"] || 0);
+  if (contentLength && contentLength > MAX_VIDEO_BYTES) {
+    throw new Error("El video es demasiado grande para enviarlo por WhatsApp.");
+  }
+
+  let downloaded = 0;
+
+  response.data.on("data", (chunk) => {
+    downloaded += chunk.length;
+    if (downloaded > MAX_VIDEO_BYTES) {
+      response.data.destroy(new Error("El video es demasiado grande para enviarlo por WhatsApp."));
+    }
+  });
+
+  try {
+    await pipeline(response.data, fs.createWriteStream(tempPath));
+  } catch (error) {
+    deleteFileSafe(tempPath);
+    throw error;
+  }
 
   if (!fs.existsSync(tempPath)) {
     throw new Error("No se pudo guardar el video.");
@@ -222,27 +280,42 @@ async function downloadVideoToTemp(directUrl, fileName) {
   const size = fs.statSync(tempPath).size;
 
   if (!size || size < 100000) {
-    try {
-      fs.unlinkSync(tempPath);
-    } catch {}
+    deleteFileSafe(tempPath);
     throw new Error("El archivo descargado es inválido.");
   }
 
   if (size > MAX_VIDEO_BYTES) {
-    try {
-      fs.unlinkSync(tempPath);
-    } catch {}
+    deleteFileSafe(tempPath);
     throw new Error("El video es demasiado grande para enviarlo por WhatsApp.");
   }
+
+  const downloadedName = parseContentDispositionFileName(
+    response.headers?.["content-disposition"]
+  );
 
   return {
     tempPath,
     size,
-    fileName: finalName,
+    fileName: normalizeMp4Name(downloadedName || finalName),
   };
 }
 
-async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title }) {
+async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title, size }) {
+  if (size > VIDEO_AS_DOCUMENT_THRESHOLD) {
+    await sock.sendMessage(
+      from,
+      {
+        document: { url: filePath },
+        mimetype: "video/mp4",
+        fileName,
+        caption: `api dvyer\n\n🎬 ${title}\n📦 Enviado como documento`,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+    return "document";
+  }
+
   try {
     await sock.sendMessage(
       from,
@@ -250,7 +323,7 @@ async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title }
         video: { url: filePath },
         mimetype: "video/mp4",
         fileName,
-        caption: `api dvyer\n\n${title}`,
+        caption: `api dvyer\n\n🎬 ${title}`,
         ...global.channelInfo,
       },
       quoted
@@ -265,7 +338,7 @@ async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title }
         document: { url: filePath },
         mimetype: "video/mp4",
         fileName,
-        caption: `api dvyer\n\n${title}`,
+        caption: `api dvyer\n\n🎬 ${title}\n📦 Enviado como documento`,
         ...global.channelInfo,
       },
       quoted
@@ -275,14 +348,14 @@ async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title }
 }
 
 export default {
-  command: ["tiktok"],
+  command: ["tiktok", "ttdlmp4"],
   category: "descarga",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
     const msg = ctx.m || ctx.msg || null;
     const quoted = msg?.key ? { quoted: msg } : undefined;
-    const userId = from;
+    const userId = `${from}:tiktok`;
 
     let tempPath = null;
 
@@ -310,21 +383,21 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `⬇️ Preparando TikTok...\n\n🎬 api dvyer`,
+          text: `⬇️ Preparando TikTok...\n\n🎬 api dvyer\n🌐 ${API_BASE}`,
           ...global.channelInfo,
         },
         quoted
       );
 
-      const info = await requestTikTokLink(videoUrl);
-
-      const downloaded = await downloadVideoToTemp(info.directUrl, info.fileName);
+      const meta = await requestTikTokMeta(videoUrl);
+      const downloaded = await downloadTikTokViaApi(videoUrl, meta.fileName);
       tempPath = downloaded.tempPath;
 
       await sendTikTokVideo(sock, from, quoted, {
         filePath: downloaded.tempPath,
         fileName: downloaded.fileName,
-        title: info.title,
+        title: meta.title,
+        size: downloaded.size,
       });
     } catch (err) {
       console.error("TIKTOK ERROR:", err?.message || err);
@@ -335,11 +408,8 @@ export default {
         ...global.channelInfo,
       });
     } finally {
-      try {
-        if (tempPath && fs.existsSync(tempPath)) {
-          fs.unlinkSync(tempPath);
-        }
-      } catch {}
+      deleteFileSafe(tempPath);
     }
   },
 };
+
