@@ -11,7 +11,7 @@ const API_SEARCH_URL = `${API_BASE}/ytsearch`;
 const COOLDOWN_TIME = 15 * 1000;
 const AUDIO_QUALITY = "128k";
 const REQUEST_TIMEOUT = 120000;
-const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 100 * 1024 * 1024;
 const TMP_DIR = path.join(process.cwd(), "tmp");
 
 const cooldowns = new Map();
@@ -188,6 +188,7 @@ async function downloadAudioFromApi(videoUrl, outputPath) {
   }
 
   const size = fs.statSync(outputPath).size;
+
   if (!size || size < 100000) {
     throw new Error("Audio inválido");
   }
@@ -339,11 +340,11 @@ export default {
         thumbnail
           ? {
               image: { url: thumbnail },
-              caption: `🎵 Preparando audio...\n\n🎧 ${title}\n🎚️ Calidad: ${AUDIO_QUALITY}\n🌐 api dvyer`,
+              caption: `🎵 Preparando audio...\n\n🎧 ${title}\n🎚️ Calidad: ${AUDIO_QUALITY}\n🌐 ${API_BASE}`,
               ...global.channelInfo,
             }
           : {
-              text: `🎵 Preparando audio...\n\n🎧 ${title}\n🎚️ Calidad: ${AUDIO_QUALITY}\n🌐 api dvyer`,
+              text: `🎵 Preparando audio...\n\n🎧 ${title}\n🎚️ Calidad: ${AUDIO_QUALITY}\n🌐 ${API_BASE}`,
               ...global.channelInfo,
             },
         quoted
