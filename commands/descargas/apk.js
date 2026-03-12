@@ -28,6 +28,24 @@ function safeFileName(name) {
   );
 }
 
+function normalizePackageFileName(name, format) {
+  const raw = String(name || "").trim();
+  const ext =
+    /\.xapk$/i.test(raw) || String(format || "").toLowerCase() === "xapk"
+      ? "xapk"
+      : "apk";
+
+  const base = safeFileName(raw.replace(/\.(apk|xapk)$/i, "") || "app");
+  return `${base}.${ext}`;
+}
+
+function mimeFromFileName(fileName) {
+  const lower = String(fileName || "").toLowerCase();
+  if (lower.endsWith(".xapk")) return "application/xapk-package-archive";
+  if (lower.endsWith(".apk")) return "application/vnd.android.package-archive";
+  return "application/octet-stream";
+}
+
 function getCooldownRemaining(untilMs) {
   return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
 }
@@ -65,12 +83,18 @@ function resolveUserInput(ctx) {
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
   const quotedMessage = getQuotedMessage(ctx, msg);
   const quotedText = extractTextFromMessage(quotedMessage);
-
   return argsText || quotedText || "";
 }
 
 function isApkPureUrl(value) {
   return /^https?:\/\/(?:www\.)?apkpure\.com\//i.test(String(value || "").trim());
+}
+
+function buildApiParams(input, mode) {
+  const params = { mode, prefer: "auto" };
+  if (isApkPureUrl(input)) params.url = input;
+  else params.q = input;
+  return params;
 }
 
 function extractApiError(data, status) {
@@ -80,13 +104,6 @@ function extractApiError(data, status) {
     data?.message ||
     (status ? `HTTP ${status}` : "Error de API")
   );
-}
-
-function mimeFromFileName(fileName) {
-  const lower = String(fileName || "").toLowerCase();
-  if (lower.endsWith(".apk")) return "application/vnd.android.package-archive";
-  if (lower.endsWith(".xapk")) return "application/xapk-package-archive";
-  return "application/octet-stream";
 }
 
 function parseContentDispositionFileName(headerValue) {
@@ -115,6 +132,19 @@ function deleteFileSafe(filePath) {
   } catch {}
 }
 
+async function readStreamToText(stream) {
+  return await new Promise((resolve, reject) => {
+    let data = "";
+
+    stream.on("data", (chunk) => {
+      data += chunk.toString();
+    });
+
+    stream.on("end", () => resolve(data));
+    stream.on("error", reject);
+  });
+}
+
 async function apiGet(url, params, timeout = REQUEST_TIMEOUT) {
   const response = await axios.get(url, {
     timeout,
@@ -136,39 +166,25 @@ async function apiGet(url, params, timeout = REQUEST_TIMEOUT) {
 }
 
 async function requestApkInfo(input) {
-  const params = {
-    mode: "link",
-    prefer: "auto",
-  };
-
-  if (isApkPureUrl(input)) params.url = input;
-  else params.q = input;
-
-  const data = await apiGet(API_APK_URL, params, REQUEST_TIMEOUT);
+  const data = await apiGet(API_APK_URL, buildApiParams(input, "link"));
 
   return {
     title: safeFileName(data?.title || data?.package_name || "app"),
-    fileName: safeFileName(data?.filename || "app.apk"),
+    fileName: normalizePackageFileName(
+      data?.filename || "app.apk",
+      data?.format || "apk"
+    ),
     packageName: data?.package_name || null,
     version: data?.version || null,
-    format: String(data?.format || "").toLowerCase() || null,
-    icon: data?.icon || null,
+    format: String(data?.format || "").toLowerCase() || "apk",
   };
 }
 
-async function downloadApkFromApi(input, outputPath) {
-  const params = {
-    mode: "file",
-    prefer: "auto",
-  };
-
-  if (isApkPureUrl(input)) params.url = input;
-  else params.q = input;
-
+async function downloadApkFromApi(input, outputPath, suggestedFileName, format) {
   const response = await axios.get(API_APK_URL, {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
-    params,
+    params: buildApiParams(input, "file"),
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
@@ -180,7 +196,10 @@ async function downloadApkFromApi(input, outputPath) {
   });
 
   if (response.status >= 400) {
-    throw new Error(`No se pudo descargar el archivo. HTTP ${response.status}`);
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    throw new Error(
+      extractApiError({ message: errorText || "No se pudo descargar el archivo." }, response.status)
+    );
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
@@ -219,14 +238,20 @@ async function downloadApkFromApi(input, outputPath) {
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
 
-  const contentDisposition = response.headers?.["content-disposition"];
-  const detectedName = parseContentDispositionFileName(contentDisposition) || path.basename(outputPath);
+  const detectedName = parseContentDispositionFileName(
+    response.headers?.["content-disposition"]
+  );
+
+  const finalFileName = normalizePackageFileName(
+    detectedName || suggestedFileName || "app.apk",
+    format || "apk"
+  );
 
   return {
     tempPath: outputPath,
     size,
-    fileName: safeFileName(detectedName),
-    mime: mimeFromFileName(detectedName),
+    fileName: finalFileName,
+    mime: mimeFromFileName(finalFileName),
   };
 }
 
@@ -241,7 +266,7 @@ async function sendApkDocument(sock, from, quoted, { filePath, fileName, mime, t
       document: { url: filePath },
       mimetype: mime,
       fileName,
-      caption: `api dvyer\n\n${title}${extra.length ? `\n${extra.join("\n")}` : ""}`,
+      caption: `api dvyer\n\n📲 ${title}${extra.length ? `\n${extra.join("\n")}` : ""}`,
       ...global.channelInfo,
     },
     quoted
@@ -292,20 +317,17 @@ export default {
 
       const info = await requestApkInfo(userInput);
 
-      if (info.icon) {
-        await sock.sendMessage(
-          from,
-          {
-            image: { url: info.icon },
-            caption: `📲 ${info.title}${info.version ? `\n🏷️ ${info.version}` : ""}${info.packageName ? `\n📦 ${info.packageName}` : ""}`,
-            ...global.channelInfo,
-          },
-          quoted
-        );
-      }
+      tempPath = path.join(
+        TMP_DIR,
+        `${Date.now()}-${normalizePackageFileName(info.fileName, info.format)}`
+      );
 
-      tempPath = path.join(TMP_DIR, `${Date.now()}-${safeFileName(info.fileName || "app.apk")}`);
-      const downloaded = await downloadApkFromApi(userInput, tempPath);
+      const downloaded = await downloadApkFromApi(
+        userInput,
+        tempPath,
+        info.fileName,
+        info.format
+      );
 
       await sendApkDocument(sock, from, quoted, {
         filePath: downloaded.tempPath,
@@ -328,3 +350,4 @@ export default {
     }
   },
 };
+
