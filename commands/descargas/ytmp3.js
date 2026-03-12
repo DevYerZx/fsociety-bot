@@ -30,6 +30,57 @@ function safeFileName(name) {
   );
 }
 
+function parseContentDispositionFileName(headerValue) {
+  const text = String(headerValue || "");
+  const utfMatch = text.match(/filename\*=UTF-8''([^;]+)/i);
+
+  if (utfMatch?.[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1]).replace(/["']/g, "").trim();
+    } catch {}
+  }
+
+  const normalMatch = text.match(/filename="?([^"]+)"?/i);
+  if (normalMatch?.[1]) {
+    return normalMatch[1].trim();
+  }
+
+  return "";
+}
+
+function normalizeAudioFileName(name, fallbackBase = "audio", fallbackExt = "mp3") {
+  const parsed = path.parse(String(name || "").trim());
+  const ext = String(parsed.ext || `.${fallbackExt}`).replace(/^\./, "").toLowerCase() || fallbackExt;
+  const base = safeFileName(parsed.name || fallbackBase);
+  return `${base}.${ext}`;
+}
+
+function buildAudioMeta(fileName, contentType, fallbackBase = "audio") {
+  const normalizedType = String(contentType || "").split(";")[0].trim().toLowerCase();
+  const rawName = String(fileName || "").trim();
+  const ext = path.extname(rawName).replace(/^\./, "").toLowerCase();
+
+  let finalExt = ext || "bin";
+  let mimetype = normalizedType || "application/octet-stream";
+
+  if (normalizedType.includes("audio/mpeg") || ext === "mp3") {
+    finalExt = "mp3";
+    mimetype = "audio/mpeg";
+  } else if (normalizedType.includes("audio/mp4") || ext === "m4a" || ext === "mp4") {
+    finalExt = "m4a";
+    mimetype = "audio/mp4";
+  } else if (normalizedType.includes("audio/aac") || ext === "aac") {
+    finalExt = "aac";
+    mimetype = "audio/aac";
+  }
+
+  return {
+    fileName: normalizeAudioFileName(rawName, fallbackBase, finalExt),
+    mimetype,
+    isMp3: finalExt === "mp3",
+  };
+}
+
 function isHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || ""));
 }
@@ -197,7 +248,22 @@ async function downloadAudioFromApi(videoUrl, outputPath) {
     throw new Error("Audio demasiado grande");
   }
 
-  return outputPath;
+  const detectedName = parseContentDispositionFileName(
+    response.headers?.["content-disposition"]
+  );
+  const audioMeta = buildAudioMeta(
+    detectedName || path.basename(outputPath),
+    response.headers?.["content-type"],
+    "audio"
+  );
+
+  return {
+    path: outputPath,
+    size,
+    fileName: audioMeta.fileName,
+    mimetype: audioMeta.mimetype,
+    isMp3: audioMeta.isMp3,
+  };
 }
 
 async function convertToMp3(inputPath, outputPath) {
@@ -250,15 +316,15 @@ async function convertToMp3(inputPath, outputPath) {
   });
 }
 
-async function sendAudioFile(sock, from, quoted, { filePath, title }) {
+async function sendAudioFile(sock, from, quoted, { filePath, fileName, mimetype, title }) {
   try {
     await sock.sendMessage(
       from,
       {
         audio: { url: filePath },
-        mimetype: "audio/mpeg",
+        mimetype,
         ptt: false,
-        fileName: `${title}.mp3`,
+        fileName,
         ...global.channelInfo,
       },
       quoted
@@ -271,8 +337,8 @@ async function sendAudioFile(sock, from, quoted, { filePath, title }) {
       from,
       {
         document: { url: filePath },
-        mimetype: "audio/mpeg",
-        fileName: `${title}.mp3`,
+        mimetype,
+        fileName,
         caption: `api dvyer\n\n🎵 ${title}`,
         ...global.channelInfo,
       },
@@ -354,13 +420,31 @@ export default {
       sourceFile = path.join(TMP_DIR, `${stamp}-source.bin`);
       finalMp3 = path.join(TMP_DIR, `${stamp}-audio.mp3`);
 
-      await downloadAudioFromApi(videoUrl, sourceFile);
-      await convertToMp3(sourceFile, finalMp3);
-
       const finalTitle = safeFileName(title || "audio");
+      const downloadedAudio = await downloadAudioFromApi(videoUrl, sourceFile);
+
+      let filePathToSend = downloadedAudio.path;
+      let fileNameToSend = downloadedAudio.fileName;
+      let mimeToSend = downloadedAudio.mimetype;
+
+      if (!downloadedAudio.isMp3) {
+        try {
+          await convertToMp3(sourceFile, finalMp3);
+          filePathToSend = finalMp3;
+          fileNameToSend = `${finalTitle}.mp3`;
+          mimeToSend = "audio/mpeg";
+        } catch (convertError) {
+          console.warn(
+            "YTMP3 conversion fallback:",
+            convertError?.message || convertError
+          );
+        }
+      }
 
       await sendAudioFile(sock, from, quoted, {
-        filePath: finalMp3,
+        filePath: filePathToSend,
+        fileName: fileNameToSend,
+        mimetype: mimeToSend,
         title: finalTitle,
       });
     } catch (err) {

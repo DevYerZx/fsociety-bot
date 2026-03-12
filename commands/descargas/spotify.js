@@ -6,11 +6,14 @@ import { pipeline } from "stream/promises";
 
 const API_BASE = "https://dv-yer-api.online";
 const API_SPOTIFY_URL = `${API_BASE}/spotify`;
+const API_YTSEARCH_URL = `${API_BASE}/ytsearch`;
+const API_AUDIO_URL = `${API_BASE}/ytdlmp3`;
 
 const COOLDOWN_TIME = 15 * 1000;
 const REQUEST_TIMEOUT = 120000;
 const MAX_AUDIO_BYTES = 120 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 60 * 1024 * 1024;
+const FALLBACK_AUDIO_QUALITY = "128k";
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-spotify");
 
 const cooldowns = new Map();
@@ -32,6 +35,38 @@ function safeFileName(name) {
 function normalizeMp3Name(name) {
   const clean = safeFileName(String(name || "spotify").replace(/\.mp3$/i, ""));
   return `${clean || "spotify"}.mp3`;
+}
+
+function normalizeAudioFileName(name, fallbackBase = "spotify", fallbackExt = "mp3") {
+  const parsed = path.parse(String(name || "").trim());
+  const ext = String(parsed.ext || `.${fallbackExt}`).replace(/^\./, "").toLowerCase() || fallbackExt;
+  const base = safeFileName(parsed.name || fallbackBase);
+  return `${base}.${ext}`;
+}
+
+function buildAudioMeta(fileName, contentType, fallbackBase = "spotify") {
+  const normalizedType = String(contentType || "").split(";")[0].trim().toLowerCase();
+  const rawName = String(fileName || "").trim();
+  const ext = path.extname(rawName).replace(/^\./, "").toLowerCase();
+
+  let finalExt = ext || "bin";
+  let mimetype = normalizedType || "application/octet-stream";
+
+  if (normalizedType.includes("audio/mpeg") || ext === "mp3") {
+    finalExt = "mp3";
+    mimetype = "audio/mpeg";
+  } else if (normalizedType.includes("audio/mp4") || ext === "m4a" || ext === "mp4") {
+    finalExt = "m4a";
+    mimetype = "audio/mp4";
+  } else if (normalizedType.includes("audio/aac") || ext === "aac") {
+    finalExt = "aac";
+    mimetype = "audio/aac";
+  }
+
+  return {
+    fileName: normalizeAudioFileName(rawName, fallbackBase, finalExt),
+    mimetype,
+  };
 }
 
 function getCooldownRemaining(untilMs) {
@@ -195,7 +230,50 @@ async function requestSpotifyInfo(input) {
   };
 }
 
-async function downloadAudioFromInternalLink(downloadUrl, outputPath) {
+async function requestYoutubeFallbackInfo(query) {
+  const searchData = await apiGet(
+    API_YTSEARCH_URL,
+    { q: query, limit: 1 },
+    REQUEST_TIMEOUT
+  );
+
+  const first = searchData?.results?.[0];
+  if (!first?.url) {
+    throw new Error("No encontrÃ© un audio alternativo en YouTube.");
+  }
+
+  const audioData = await apiGet(
+    API_AUDIO_URL,
+    {
+      mode: "link",
+      quality: FALLBACK_AUDIO_QUALITY,
+      url: first.url,
+    },
+    REQUEST_TIMEOUT
+  );
+
+  const downloadUrl = normalizeApiUrl(
+    audioData?.stream_url_full ||
+      audioData?.download_url_full ||
+      audioData?.stream_url ||
+      audioData?.download_url ||
+      audioData?.url
+  );
+
+  if (!downloadUrl) {
+    throw new Error("No se pudo preparar el audio alternativo.");
+  }
+
+  return {
+    title: safeFileName(audioData?.title || first.title || query || "audio"),
+    artist: String(first?.channel || "YouTube").trim() || "YouTube",
+    thumbnail: first.thumbnail || null,
+    fileName: normalizeMp3Name(audioData?.filename || "audio.mp3"),
+    downloadUrl,
+  };
+}
+
+async function downloadAudioFromInternalLink(downloadUrl, outputPath, suggestedFileName = "audio.mp3") {
   const response = await axios.get(downloadUrl, {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
@@ -258,21 +336,27 @@ async function downloadAudioFromInternalLink(downloadUrl, outputPath) {
   const detectedName = parseContentDispositionFileName(
     response.headers?.["content-disposition"]
   );
+  const audioMeta = buildAudioMeta(
+    detectedName || suggestedFileName || path.basename(outputPath),
+    response.headers?.["content-type"],
+    "audio"
+  );
 
   return {
     tempPath: outputPath,
     size,
-    fileName: normalizeMp3Name(detectedName || path.basename(outputPath)),
+    fileName: audioMeta.fileName,
+    mimetype: audioMeta.mimetype,
   };
 }
 
-async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, title, artist, size }) {
+async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, mimetype, title, artist, size, sourceLabel }) {
   if (size > AUDIO_AS_DOCUMENT_THRESHOLD) {
     await sock.sendMessage(
       from,
       {
         document: { url: filePath },
-        mimetype: "audio/mpeg",
+        mimetype,
         fileName,
         caption: `api dvyer\n\n🎵 ${title}\n🎤 ${artist}\n📦 Enviado como documento`,
         ...global.channelInfo,
@@ -287,7 +371,7 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, title,
       from,
       {
         audio: { url: filePath },
-        mimetype: "audio/mpeg",
+        mimetype,
         ptt: false,
         fileName,
         ...global.channelInfo,
@@ -312,7 +396,7 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, title,
       from,
       {
         document: { url: filePath },
-        mimetype: "audio/mpeg",
+        mimetype,
         fileName,
         caption: `api dvyer\n\n🎵 ${title}\n🎤 ${artist}\n📦 Enviado como documento`,
         ...global.channelInfo,
@@ -380,14 +464,52 @@ export default {
       }
 
       tempPath = path.join(TMP_DIR, `${Date.now()}-${info.fileName}`);
-      const downloaded = await downloadAudioFromInternalLink(info.downloadUrl, tempPath);
+      let downloaded = null;
+      let sourceLabel = "Spotify";
+
+      try {
+        downloaded = await downloadAudioFromInternalLink(
+          info.downloadUrl,
+          tempPath,
+          info.fileName
+        );
+      } catch (primaryError) {
+        deleteFileSafe(tempPath);
+        tempPath = null;
+
+        console.warn("SPOTIFY fallback:", primaryError?.message || primaryError);
+
+        await sock.sendMessage(
+          from,
+          {
+            text: "âš ï¸ Spotify directo fallÃ³. Intento con tu ruta de audio por YouTube...",
+            ...global.channelInfo,
+            text: "Spotify directo fallo. Intento con tu ruta de audio por YouTube...",
+          },
+          quoted
+        );
+
+        const fallbackInfo = await requestYoutubeFallbackInfo(
+          `${info.title} ${info.artist}`.trim()
+        );
+
+        sourceLabel = "Fallback YouTube";
+        tempPath = path.join(TMP_DIR, `${Date.now()}-${fallbackInfo.fileName}`);
+        downloaded = await downloadAudioFromInternalLink(
+          fallbackInfo.downloadUrl,
+          tempPath,
+          fallbackInfo.fileName
+        );
+      }
 
       await sendSpotifyAudio(sock, from, quoted, {
         filePath: downloaded.tempPath,
         fileName: downloaded.fileName,
+        mimetype: downloaded.mimetype,
         title: info.title,
-        artist: info.artist,
+        artist: sourceLabel === "Spotify" ? info.artist : `${info.artist} (${sourceLabel})`,
         size: downloaded.size,
+        sourceLabel,
       });
     } catch (err) {
       console.error("SPOTIFY ERROR:", err?.message || err);
