@@ -87,7 +87,6 @@ function resolveUserInput(ctx) {
 
   return {
     args,
-    combinedText: directText || quotedText || "",
     url: extractInstagramUrl(directText) || extractInstagramUrl(quotedText) || "",
   };
 }
@@ -247,15 +246,13 @@ async function downloadInstagramFile(postUrl, pick, outputPath) {
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
 
-  const contentType = String(response.headers?.["content-type"] || "").toLowerCase();
   return {
     tempPath: outputPath,
     size,
-    contentType,
   };
 }
 
-async function normalizeVideoWithFfmpeg(inputPath, outputPath) {
+async function convertVideoForWhatsApp(inputPath, outputPath) {
   return await new Promise((resolve, reject) => {
     const ffmpeg = spawn(
       "ffmpeg",
@@ -267,8 +264,24 @@ async function normalizeVideoWithFfmpeg(inputPath, outputPath) {
         "0:v:0",
         "-map",
         "0:a?",
-        "-c",
-        "copy",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "main",
+        "-level",
+        "4.0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-ar",
+        "44100",
         "-movflags",
         "+faststart",
         "-loglevel",
@@ -299,7 +312,7 @@ async function normalizeVideoWithFfmpeg(inputPath, outputPath) {
         resolve(true);
         return;
       }
-      reject(new Error(errorText.trim() || "El archivo no pasó la verificación de video."));
+      reject(new Error(errorText.trim() || "No se pudo convertir el video para WhatsApp."));
     });
   });
 }
@@ -440,7 +453,7 @@ export default {
 
       if (info.mediaType === "video") {
         finalPath = path.join(TMP_DIR, `${Date.now()}-final-${normalizeMediaFileName(info.fileName, "video")}`);
-        await normalizeVideoWithFfmpeg(downloaded.tempPath, finalPath);
+        await convertVideoForWhatsApp(downloaded.tempPath, finalPath);
 
         if (!fs.existsSync(finalPath)) {
           throw new Error("No se pudo preparar el video final.");
@@ -450,7 +463,7 @@ export default {
         sendSize = fs.statSync(finalPath).size;
 
         if (!sendSize || sendSize < 100000) {
-          throw new Error("El video verificado es inválido.");
+          throw new Error("El video convertido es inválido.");
         }
       }
 
