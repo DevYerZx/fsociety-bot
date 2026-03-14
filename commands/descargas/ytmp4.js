@@ -7,6 +7,7 @@ import { spawn } from "child_process";
 const API_BASE = "https://dv-yer-api.online";
 const API_VIDEO_URL = `${API_BASE}/ytdlmp4`;
 const API_VIDEO_LEGACY_URL = `${API_BASE}/ytmp4`;
+const API_VIDEO_ALT_URL = `${API_BASE}/ytaltmp4`;
 const API_SEARCH_URL = `${API_BASE}/ytsearch`;
 
 const COOLDOWN_TIME = 15 * 1000;
@@ -205,7 +206,7 @@ async function requestVideoLink(videoUrl, endpointUrl, sourceLabel) {
 
   const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
   if (!downloadUrl) {
-    throw new Error(`La ruta ${sourceLabel} no devolvio enlace de descarga.`);
+    throw new Error(`La ruta ${sourceLabel} no devolvió enlace de descarga.`);
   }
 
   return {
@@ -223,6 +224,7 @@ async function resolveFastestVideoLink(videoUrl) {
     return await Promise.any([
       requestVideoLink(videoUrl, API_VIDEO_URL, "principal"),
       requestVideoLink(videoUrl, API_VIDEO_LEGACY_URL, "legacy"),
+      requestVideoLink(videoUrl, API_VIDEO_ALT_URL, "alterna"),
     ]);
   } catch (error) {
     const messages = Array.isArray(error?.errors)
@@ -233,7 +235,7 @@ async function resolveFastestVideoLink(videoUrl) {
 
     throw new Error(
       messages[0] ||
-        "No se pudo obtener un enlace de descarga desde la ruta principal ni la legacy."
+        "No se pudo obtener un enlace de descarga desde las rutas internas."
     );
   }
 }
@@ -394,12 +396,6 @@ async function normalizeVideoForWhatsApp(inputPath, outputPath) {
         stdio: ["ignore", "ignore", "pipe"],
       }
     );
-
-    let errorText = "";
-
-    ffmpeg.stderr.on("data", (chunk) => {
-      errorText += chunk.toString();
-    });
 
     ffmpeg.on("error", (error) => {
       if (error?.code === "ENOENT") {
@@ -607,3 +603,4 @@ export default {
     }
   },
 };
+
