@@ -13,6 +13,7 @@
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.21",
     "axios": "^1.6.0",
+    "baileys_helper": "^1.0.6",
     "chalk": "^4.1.2",
     "figlet": "^1.9.3",
     "fluent-ffmpeg": "^2.1.2",
