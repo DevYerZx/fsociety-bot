@@ -2282,6 +2282,8 @@ async function iniciarInstanciaBot(config) {
 
           const loggedOut =
             code === 401 || code === DisconnectReason.loggedOut;
+          const connectionReplaced =
+            code === 440 || code === DisconnectReason.connectionReplaced;
 
           if (loggedOut) {
             removeAuthFolder(config.authFolder);
@@ -2297,6 +2299,17 @@ async function iniciarInstanciaBot(config) {
               closeSocket: false,
               resetAuthFolder: false,
             });
+            return;
+          }
+
+          if (connectionReplaced) {
+            console.log(
+              chalk.yellow(
+                `${getBotTag(botState)} Sesion reemplazada (440). ` +
+                `No voy a reconectar en bucle. Revisa si ese numero esta abierto ` +
+                `en otro VPS, hosting o dispositivo vinculado.`
+              )
+            );
             return;
           }
 
