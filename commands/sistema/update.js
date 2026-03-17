@@ -372,6 +372,28 @@ function restoreProtectedLocalFiles(backups = new Map()) {
   return restored;
 }
 
+async function getChangedProtectedLocalPaths() {
+  const changed = [];
+
+  for (const filePath of PROTECTED_LOCAL_PATHS) {
+    try {
+      const result = await runCommand("git", [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        filePath,
+      ]);
+
+      if (toLines(result.stdout).length) {
+        changed.push(filePath);
+      }
+    } catch {}
+  }
+
+  return uniquePaths(changed);
+}
+
 async function resetProtectedLocalFilesToHead(filePaths = []) {
   const targets = uniquePaths(filePaths).filter((filePath) => isProtectedLocalPath(filePath));
   if (!targets.length) {
@@ -577,9 +599,7 @@ export default {
     let stashLabel = "";
     let stashCreated = false;
     let stashRestored = false;
-    let stashPaths = [];
     let protectedPaths = [];
-    let nonProtectedPaths = [];
     let protectedBackups = new Map();
 
     try {
@@ -618,17 +638,16 @@ export default {
 
       const status = await getRepoStatus(settings);
       if (status.blockingLines.length) {
-        stashPaths = uniquePaths(status.blockingLines.map((line) => extractGitStatusPath(line)));
-        protectedPaths = stashPaths.filter((filePath) => isProtectedLocalPath(filePath));
-        nonProtectedPaths = stashPaths.filter((filePath) => !isProtectedLocalPath(filePath));
+        protectedPaths = await getChangedProtectedLocalPaths();
         protectedBackups = backupProtectedLocalFiles(protectedPaths);
 
         if (protectedPaths.length) {
           await resetProtectedLocalFilesToHead(protectedPaths);
         }
 
-        if (nonProtectedPaths.length) {
-          const stash = await stashWorkspaceIfNeeded("workspace", nonProtectedPaths);
+        const remainingStatus = await getRepoStatus(settings);
+        if (remainingStatus.blockingLines.length) {
+          const stash = await stashWorkspaceIfNeeded("workspace");
           stashLabel = stash.label;
           stashCreated = stash.created;
         }
@@ -686,7 +705,6 @@ export default {
 
       if (stashCreated) {
         await restoreWorkspaceFromStash(stashLabel, {
-          filePaths: nonProtectedPaths,
           protectedBackups,
         });
         stashRestored = true;
@@ -754,7 +772,6 @@ export default {
       if (stashCreated && !stashRestored && stashLabel) {
         try {
           await restoreWorkspaceFromStash(stashLabel, {
-            filePaths: nonProtectedPaths,
             protectedBackups,
           });
           stashRestored = true;
