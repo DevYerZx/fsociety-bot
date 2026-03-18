@@ -61,6 +61,7 @@ const PROCESS_RESTART_DELAY_MS = 3000;
 const SETTINGS_SYNC_INTERVAL_MS = 4000;
 const BOT_RUNTIME_STATE_TTL_MS = 20_000;
 const REMOTE_PAIRING_WAIT_MS = 18_000;
+const SESSION_REPLACED_BLOCK_MS = 15 * 60 * 1000;
 const logger = pino({ level: "silent" });
 const FIXED_BROWSER = ["Windows", "Chrome", "114.0.5735.198"];
 
@@ -1246,6 +1247,8 @@ function ensureBotState(config) {
     lastPairingAt: 0,
     replacementBlocked: false,
     replacementBlockedAt: 0,
+    replacementBlockedUntil: 0,
+    reconnectAttempts: 0,
     reconnectTimer: null,
     groupCache: new Map(),
     store: createStoreForBot(config.id),
@@ -1261,16 +1264,58 @@ function clearReplacementBlock(botState) {
   if (!botState) return;
   botState.replacementBlocked = false;
   botState.replacementBlockedAt = 0;
+  botState.replacementBlockedUntil = 0;
 }
 
 function markReplacementBlocked(botState) {
   if (!botState) return;
   botState.replacementBlocked = true;
   botState.replacementBlockedAt = Date.now();
+  botState.replacementBlockedUntil = botState.replacementBlockedAt + SESSION_REPLACED_BLOCK_MS;
 }
 
 function isReplacementBlocked(botState) {
-  return Boolean(botState?.replacementBlocked);
+  if (!botState?.replacementBlocked) {
+    return false;
+  }
+
+  const blockedUntil = Number(botState?.replacementBlockedUntil || 0);
+  if (!blockedUntil || Date.now() < blockedUntil) {
+    return true;
+  }
+
+  clearReplacementBlock(botState);
+  return false;
+}
+
+function readRawPersistedBotRuntimeState(botId) {
+  try {
+    const state = safeReadJson(getBotRuntimeStateFile(botId), null);
+    return state && typeof state === "object" ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPersistedReplacementBlocked(botId) {
+  const persisted = readRawPersistedBotRuntimeState(botId);
+  if (!persisted?.replacementBlocked) {
+    return false;
+  }
+
+  const blockedUntil = Number(persisted?.replacementBlockedUntil || 0);
+  return Boolean(blockedUntil && Date.now() < blockedUntil);
+}
+
+function getReconnectDelay(botState, loggedOut = false) {
+  if (loggedOut) {
+    botState.reconnectAttempts = 0;
+    return 4000;
+  }
+
+  const attempts = Math.max(1, Math.min(8, Number(botState?.reconnectAttempts || 0) + 1));
+  botState.reconnectAttempts = attempts;
+  return Math.min(30_000, 2500 * 2 ** (attempts - 1));
 }
 
 function refreshBotConfigCache() {
@@ -1872,6 +1917,10 @@ function scheduleReconnect(botState, ms = 2500) {
     return;
   }
 
+  if (isReplacementBlocked(botState)) {
+    return;
+  }
+
   clearReconnectTimer(botState);
   botState.reconnectTimer = setTimeout(() => {
     botState.reconnectTimer = null;
@@ -2163,6 +2212,7 @@ function summarizeBotState(botState) {
     pairingPending: Boolean(botState?.pairingRequested),
     replacementBlocked: Boolean(botState?.replacementBlocked),
     replacementBlockedAt: Number(botState?.replacementBlockedAt || 0),
+    replacementBlockedUntil: Number(botState?.replacementBlockedUntil || 0),
     cachedPairingCode: cachedPairing?.code || "",
     cachedPairingNumber: cachedPairing?.number || "",
     cachedPairingExpiresInMs: cachedPairing?.expiresInMs || 0,
@@ -2394,6 +2444,10 @@ function shouldManagedProcessStartBot(config = {}) {
 
   const botState = botStates.get(config.id);
   if (isReplacementBlocked(botState)) {
+    return false;
+  }
+
+  if (isPersistedReplacementBlocked(config.id)) {
     return false;
   }
 
@@ -3167,6 +3221,7 @@ async function iniciarInstanciaBot(config) {
           }
 
           clearReplacementBlock(botState);
+          botState.reconnectAttempts = 0;
           botState.connectedAt = Date.now();
           botState.lastDisconnectAt = 0;
           resetPairingCache(botState);
@@ -3214,6 +3269,7 @@ async function iniciarInstanciaBot(config) {
 
           if (connectionReplaced) {
             markReplacementBlocked(botState);
+            botState.reconnectAttempts = 0;
             clearReconnectTimer(botState);
             writePersistedBotRuntimeState(botState);
             console.log(
@@ -3226,7 +3282,7 @@ async function iniciarInstanciaBot(config) {
             return;
           }
 
-          scheduleReconnect(botState, loggedOut ? 4000 : 2500);
+          scheduleReconnect(botState, getReconnectDelay(botState, loggedOut));
         }
       } catch (err) {
         resetPairingCache(botState);
