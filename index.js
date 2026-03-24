@@ -1,5 +1,6 @@
 // =========================
 // FSOCIETY BOT - INDEX (MULTI BOT)
+//OWNDER DVYER 
 // =========================
 
 import * as baileys from "@whiskeysockets/baileys";
