@@ -1289,6 +1289,9 @@ async function preguntarSeguro(question) {
 
 const comandos = new Map();
 const commandModules = new Set();
+const messageHookModules = [];
+const groupUpdateHookModules = [];
+const messageDeleteHookModules = [];
 const botStates = new Map();
 
 let totalMensajes = 0;
@@ -1338,13 +1341,32 @@ function readPersistedBotRuntimeState(botId) {
 }
 
 function clearPersistedBotRuntimeState(botId) {
+  const botState = botStates.get(botId);
+
+  if (botState) {
+    clearPersistedBotRuntimeStateWriteTimer(botState);
+    botState.persistedStateWritePending = false;
+  }
+
   try {
     fs.rmSync(getBotRuntimeStateFile(botId), { force: true });
   } catch {}
 }
 
-function writePersistedBotRuntimeState(botState) {
+function clearPersistedBotRuntimeStateWriteTimer(botState) {
+  if (!botState?.persistedStateWriteTimer) return;
+
+  try {
+    clearTimeout(botState.persistedStateWriteTimer);
+  } catch {}
+
+  botState.persistedStateWriteTimer = null;
+}
+
+function writePersistedBotRuntimeStateNow(botState) {
   if (!botState?.config?.id || !ownsBotInThisProcess(botState.config.id)) return;
+
+  botState.persistedStateWritePending = false;
 
   try {
     const summary = summarizeBotState(botState);
@@ -1358,6 +1380,32 @@ function writePersistedBotRuntimeState(botState) {
   } catch {}
 }
 
+function writePersistedBotRuntimeState(botState, options = {}) {
+  if (!botState?.config?.id || !ownsBotInThisProcess(botState.config.id)) return;
+
+  const delayMs = Math.max(
+    0,
+    Number(options?.delayMs ?? BOT_RUNTIME_STATE_WRITE_DEBOUNCE_MS) || 0
+  );
+
+  if (options?.immediate === true || delayMs === 0) {
+    clearPersistedBotRuntimeStateWriteTimer(botState);
+    writePersistedBotRuntimeStateNow(botState);
+    return;
+  }
+
+  botState.persistedStateWritePending = true;
+
+  if (botState.persistedStateWriteTimer) return;
+
+  botState.persistedStateWriteTimer = setTimeout(() => {
+    botState.persistedStateWriteTimer = null;
+    writePersistedBotRuntimeStateNow(botState);
+  }, delayMs);
+
+  botState.persistedStateWriteTimer.unref?.();
+}
+
 function flushManagedBotRuntimeStates() {
   for (const config of getManagedProcessBotConfigs()) {
     const botState = ensureBotState(config);
@@ -1365,7 +1413,7 @@ function flushManagedBotRuntimeStates() {
       ...botState.config,
       ...config,
     };
-    writePersistedBotRuntimeState(botState);
+    writePersistedBotRuntimeState(botState, { immediate: true });
   }
 }
 
@@ -1439,6 +1487,18 @@ let dashboardState = {
   port: DASHBOARD_AUTO_PORT,
   host: DASHBOARD_AUTO_HOST,
 };
+const BOT_RUNTIME_STATE_WRITE_DEBOUNCE_MS = Math.max(
+  150,
+  parseNumberEnv("BOT_RUNTIME_STATE_WRITE_DEBOUNCE_MS", 1200) || 1200
+);
+const GROUP_METADATA_CACHE_TTL_MS = Math.max(
+  60_000,
+  parseNumberEnv("GROUP_METADATA_CACHE_TTL_MS", 5 * 60 * 1000) || 5 * 60 * 1000
+);
+const GROUP_METADATA_CACHE_MAX_ENTRIES = Math.max(
+  50,
+  parseNumberEnv("GROUP_METADATA_CACHE_MAX_ENTRIES", 250) || 250
+);
 
 function scheduleUsageStatsSave() {
   if (usageStatsSaveTimer) return;
@@ -1989,6 +2049,8 @@ function ensureBotState(config) {
     store: createStoreForBot(config.id),
     activeDownloadJobs: new Map(),
     downloadQueueCounter: 0,
+    persistedStateWriteTimer: null,
+    persistedStateWritePending: false,
   };
 
   botStates.set(config.id, state);
@@ -2129,7 +2191,81 @@ function saveSubbotSlotConfig(slotNumber, updates = {}) {
 }
 
 function cachedGroupMetadata(botState, jid) {
-  return botState.groupCache.get(jid) || undefined;
+  if (!(botState?.groupCache instanceof Map)) {
+    return undefined;
+  }
+
+  const entry = botState.groupCache.get(jid);
+  if (!entry) return undefined;
+
+  if (
+    entry &&
+    typeof entry === "object" &&
+    Object.prototype.hasOwnProperty.call(entry, "metadata")
+  ) {
+    const cachedAt = Number(entry.cachedAt || 0);
+
+    if (cachedAt > 0 && Date.now() - cachedAt > GROUP_METADATA_CACHE_TTL_MS) {
+      botState.groupCache.delete(jid);
+      return undefined;
+    }
+
+    return entry.metadata || undefined;
+  }
+
+  return entry || undefined;
+}
+
+function pruneGroupMetadataCache(botState) {
+  if (!(botState?.groupCache instanceof Map) || !botState.groupCache.size) {
+    return;
+  }
+
+  const now = Date.now();
+
+  for (const [jid, entry] of botState.groupCache) {
+    if (!entry) {
+      botState.groupCache.delete(jid);
+      continue;
+    }
+
+    if (
+      entry &&
+      typeof entry === "object" &&
+      Object.prototype.hasOwnProperty.call(entry, "metadata")
+    ) {
+      const cachedAt = Number(entry.cachedAt || 0);
+
+      if (cachedAt > 0 && now - cachedAt > GROUP_METADATA_CACHE_TTL_MS) {
+        botState.groupCache.delete(jid);
+      }
+    }
+  }
+
+  while (botState.groupCache.size > GROUP_METADATA_CACHE_MAX_ENTRIES) {
+    const oldestKey = botState.groupCache.keys().next().value;
+    if (!oldestKey) break;
+    botState.groupCache.delete(oldestKey);
+  }
+}
+
+function cacheGroupMetadata(botState, jid, metadata) {
+  if (!jid || !metadata) return metadata;
+
+  if (!(botState?.groupCache instanceof Map)) {
+    botState.groupCache = new Map();
+  }
+
+  if (botState.groupCache.has(jid)) {
+    botState.groupCache.delete(jid);
+  }
+
+  botState.groupCache.set(jid, {
+    metadata,
+    cachedAt: Date.now(),
+  });
+  pruneGroupMetadataCache(botState);
+  return metadata;
 }
 
 function getQuoteOptions(message) {
@@ -2357,7 +2493,7 @@ async function getMessageExecutionInfo(botState, sock, message) {
   if (!metadata) {
     try {
       metadata = await sock.groupMetadata(message.from);
-      botState.groupCache.set(message.from, metadata);
+      cacheGroupMetadata(botState, message.from, metadata);
     } catch {}
   }
 
@@ -2368,13 +2504,25 @@ async function getMessageExecutionInfo(botState, sock, message) {
   const participants = Array.isArray(metadata.participants)
     ? metadata.participants
     : [];
+  const normalizedBotUserId = normalizeJidUser(sock?.user?.id);
+  let participant = null;
+  let botParticipant = null;
 
-  const participant = participants.find(
-    (value) => normalizeJidUser(value?.id) === senderId
-  );
-  const botParticipant = participants.find(
-    (value) => normalizeJidUser(value?.id) === normalizeJidUser(sock?.user?.id)
-  );
+  for (const value of participants) {
+    const normalizedParticipantId = normalizeJidUser(value?.id);
+
+    if (!participant && normalizedParticipantId === senderId) {
+      participant = value;
+    }
+
+    if (!botParticipant && normalizedParticipantId === normalizedBotUserId) {
+      botParticipant = value;
+    }
+
+    if (participant && botParticipant) {
+      break;
+    }
+  }
 
   const esAdmin = Boolean(participant?.admin);
   const esBotAdmin = Boolean(botParticipant?.admin);
@@ -2390,9 +2538,7 @@ async function getMessageExecutionInfo(botState, sock, message) {
 }
 
 async function runMessageHooks(botState, context) {
-  for (const cmd of commandModules) {
-    if (typeof cmd?.onMessage !== "function") continue;
-
+  for (const cmd of messageHookModules) {
     try {
       const blocked = await runTaskWithTimeout(
         `${getBotTag(botState)} hook onMessage ${cmd?.name || "anonimo"}`,
@@ -2409,9 +2555,7 @@ async function runMessageHooks(botState, context) {
 }
 
 async function runGroupUpdateHooks(botState, sock, update) {
-  for (const cmd of commandModules) {
-    if (typeof cmd?.onGroupUpdate !== "function") continue;
-
+  for (const cmd of groupUpdateHookModules) {
     try {
       await runTaskWithTimeout(
         `${getBotTag(botState)} hook onGroupUpdate ${cmd?.name || "anonimo"}`,
@@ -2434,9 +2578,7 @@ async function runGroupUpdateHooks(botState, sock, update) {
 }
 
 async function runMessageDeleteHooks(botState, sock, payload) {
-  for (const cmd of commandModules) {
-    if (typeof cmd?.onMessageDelete !== "function") continue;
-
+  for (const cmd of messageDeleteHookModules) {
     try {
       await runTaskWithTimeout(
         `${getBotTag(botState)} hook onMessageDelete ${cmd?.name || "anonimo"}`,
@@ -3910,6 +4052,11 @@ function banner() {
 
 async function cargarComandos() {
   const base = path.join(__dirname, "commands");
+  comandos.clear();
+  commandModules.clear();
+  messageHookModules.length = 0;
+  groupUpdateHookModules.length = 0;
+  messageDeleteHookModules.length = 0;
 
   async function leer(dir) {
     const archivos = fs.readdirSync(dir, { withFileTypes: true });
@@ -3931,6 +4078,9 @@ async function cargarComandos() {
         if (!cmd || typeof cmd.run !== "function") continue;
 
         commandModules.add(cmd);
+        if (typeof cmd.onMessage === "function") messageHookModules.push(cmd);
+        if (typeof cmd.onGroupUpdate === "function") groupUpdateHookModules.push(cmd);
+        if (typeof cmd.onMessageDelete === "function") messageDeleteHookModules.push(cmd);
 
         const nombres = [];
 
@@ -5356,7 +5506,7 @@ async function iniciarInstanciaBot(config) {
         try {
           if (!update?.id) continue;
           const meta = await botState.sock.groupMetadata(update.id);
-          botState.groupCache.set(update.id, meta);
+          cacheGroupMetadata(botState, update.id, meta);
         } catch {}
       }
     });
@@ -5366,7 +5516,7 @@ async function iniciarInstanciaBot(config) {
       if (update?.id) {
         try {
           const meta = await botState.sock.groupMetadata(update.id);
-          botState.groupCache.set(update.id, meta);
+          cacheGroupMetadata(botState, update.id, meta);
         } catch {}
       }
 
@@ -5489,19 +5639,25 @@ async function iniciarInstanciaBot(config) {
         return;
       }
 
-      if ((messages || []).some((raw) => raw?.message)) {
+      const filteredMessages = [];
+      let hasMessagePayload = false;
+
+      for (const raw of messages || []) {
+        if (!raw?.message) continue;
+        hasMessagePayload = true;
+
+        if (type === "notify" || raw?.key?.fromMe) {
+          filteredMessages.push(raw);
+        }
+      }
+
+      if (hasMessagePayload) {
         console.log(
           `${getBotTag(botState)} messages.upsert type=${type || "unknown"} count=${
             messages?.length || 0
           }`
         );
       }
-
-      const filteredMessages = (messages || []).filter((raw) => {
-        if (!raw?.message) return false;
-        if (type === "notify") return true;
-        return Boolean(raw?.key?.fromMe);
-      });
 
       if (!filteredMessages.length) return;
       await handleIncomingMessages(botState, botState.sock, filteredMessages);
@@ -5631,6 +5787,11 @@ process.on("SIGINT", () => {
   } catch {}
 
   for (const botState of botStates.values()) {
+    try {
+      clearPersistedBotRuntimeStateWriteTimer(botState);
+      botState.persistedStateWritePending = false;
+    } catch {}
+
     try {
       abortActiveDownloadJobs(botState, "process_sigint");
     } catch {}
