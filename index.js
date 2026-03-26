@@ -1875,6 +1875,70 @@ function releaseSubbotSlot(botState, options = {}) {
   return true;
 }
 
+function saveMainBotPairingNumber(nextNumber = "") {
+  const normalized = sanitizePhoneNumber(nextNumber);
+
+  if (normalized === sanitizePhoneNumber(settings?.pairingNumber || "")) {
+    return buildMainBotConfig(settings);
+  }
+
+  settings.pairingNumber = normalized;
+  saveSettingsFile();
+  refreshBotConfigCache();
+
+  return buildMainBotConfig(settings);
+}
+
+function resetMainBotSession(botState, options = {}) {
+  if (!botState || botState?.config?.id !== "main") {
+    return false;
+  }
+
+  const resetAt = Date.now();
+  const requestedNumber =
+    sanitizePhoneNumber(options?.number) ||
+    sanitizePhoneNumber(botState?.config?.pairingNumber) ||
+    sanitizePhoneNumber(settings?.pairingNumber) ||
+    "";
+
+  clearReconnectTimer(botState);
+  clearPairingResetTimer(botState);
+  clearProfileApplyTimer(botState);
+
+  try {
+    botState.sock?.end?.();
+  } catch {}
+
+  removeAuthFolder(botState?.config?.authFolder || buildMainBotConfig(settings)?.authFolder);
+
+  if (requestedNumber) {
+    saveMainBotPairingNumber(requestedNumber);
+  }
+
+  clearReplacementBlock(botState);
+  botState.sock = null;
+  botState.authState = null;
+  botState.connecting = false;
+  botState.connectedAt = 0;
+  botState.lastDisconnectAt = resetAt;
+  botState.pairingRequested = false;
+  botState.pairingCommandHintShown = false;
+  botState.lastPairingCode = "";
+  botState.lastPairingNumber = "";
+  botState.lastPairingAt = 0;
+  botState.reconnectAttempts = 0;
+  botState.lastProfileSignature = "";
+  botState.groupCache?.clear?.();
+  botState.config = {
+    ...botState.config,
+    ...buildMainBotConfig(settings),
+    pairingNumber: requestedNumber || sanitizePhoneNumber(settings?.pairingNumber) || "",
+  };
+
+  writePersistedBotRuntimeState(botState);
+  return true;
+}
+
 function createBaseContext(botState, sock, message, extra = {}) {
   return {
     sock,
@@ -2572,6 +2636,66 @@ function getDashboardSnapshot() {
   };
 }
 
+function buildMainPairingSnapshot(result = null) {
+  const summary = summarizeBotConfig(buildMainBotConfig(settings));
+
+  let pairingStatus = "idle";
+  if (summary.connected) {
+    pairingStatus = "linked";
+  } else if (summary.cachedPairingCode) {
+    pairingStatus = "code_ready";
+  } else if (summary.pairingPending || summary.connecting) {
+    pairingStatus = "processing";
+  } else if (summary.replacementBlocked) {
+    pairingStatus = "needs_relink";
+  } else if (summary.registered && !summary.connected) {
+    pairingStatus = "disconnected";
+  }
+
+  if (result?.status === "created" || result?.status === "cached") {
+    pairingStatus = "code_ready";
+  } else if (result?.status === "already_linked") {
+    pairingStatus = "linked";
+  } else if (["pending", "pending_remote", "unavailable"].includes(String(result?.status || ""))) {
+    pairingStatus = "processing";
+  } else if (["error", "missing_number", "missing_bot"].includes(String(result?.status || ""))) {
+    pairingStatus = "failed";
+  }
+
+  const code = String(result?.code || summary.cachedPairingCode || "").trim();
+  const number = sanitizePhoneNumber(result?.number || summary.cachedPairingNumber || summary.configuredNumber || "");
+  const expiresInMs = Number(result?.expiresInMs || summary.cachedPairingExpiresInMs || 0);
+
+  return {
+    botId: "main",
+    pairingStatus,
+    message:
+      String(result?.message || "").trim() ||
+      (pairingStatus === "linked"
+        ? `${summary.displayName} ya esta conectado.`
+        : pairingStatus === "code_ready"
+          ? "Codigo de vinculacion listo."
+          : pairingStatus === "needs_relink"
+            ? "La sesion principal fue reemplazada o requiere relink."
+            : pairingStatus === "disconnected"
+              ? "La sesion principal existe pero no esta conectada."
+              : "Bot principal disponible para vinculacion."),
+    code,
+    number,
+    expiresInMs,
+    expiresAt: expiresInMs > 0 ? new Date(Date.now() + expiresInMs).toISOString() : "",
+    connected: Boolean(summary.connected),
+    registered: Boolean(summary.registered),
+    connecting: Boolean(summary.connecting),
+    pairingPending: Boolean(summary.pairingPending),
+    replacementBlocked: Boolean(summary.replacementBlocked),
+    configuredNumber: summary.configuredNumber || number || "",
+    displayName: summary.displayName,
+    lastDisconnectAt: Number(summary.lastDisconnectAt || 0),
+    connectedAt: Number(summary.connectedAt || 0)
+  };
+}
+
 function ensureDashboardServer() {
   if (!dashboardState.enabled || dashboardServer) return;
 
@@ -2579,6 +2703,102 @@ function ensureDashboardServer() {
     const requestUrl = resolveRequestUrl(req);
     const pathname = requestUrl.pathname;
     const method = String(req?.method || "GET").trim().toUpperCase();
+
+    if (pathname === "/internal/main/pairing") {
+      if (!["GET", "POST"].includes(method)) {
+        writeJson(res, 405, {
+          message: "Metodo no permitido.",
+        });
+        return;
+      }
+
+      if (!INTERNAL_WEBHOOK_TOKEN) {
+        writeJson(res, 503, {
+          message: "Configura INTERNAL_WEBHOOK_TOKEN o BOT_WEBHOOK_TOKEN antes de exponer este endpoint.",
+        });
+        return;
+      }
+
+      if (!isIpAllowed(req)) {
+        writeJson(res, 403, {
+          message: "IP no autorizada para el webhook interno.",
+        });
+        return;
+      }
+
+      if (
+        !isTokenAuthorized(req, INTERNAL_WEBHOOK_TOKEN, [
+          "x-bot-webhook-token",
+          "x-internal-token",
+        ])
+      ) {
+        writeJson(res, 401, {
+          message: "Token del webhook interno invalido.",
+        });
+        return;
+      }
+
+      try {
+        if (method === "GET") {
+          writeJson(res, 200, {
+            ok: true,
+            ...buildMainPairingSnapshot(),
+          });
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const phoneNumber = sanitizePhoneNumber(body?.phoneNumber);
+        const forceRelink = body?.forceRelink === true;
+        const useCache = body?.useCache !== false;
+        const mainState = getMainBotState() || ensureBotState(buildMainBotConfig(settings));
+
+        if (phoneNumber) {
+          const nextConfig = saveMainBotPairingNumber(phoneNumber);
+          mainState.config = {
+            ...mainState.config,
+            ...nextConfig,
+          };
+        }
+
+        if (forceRelink) {
+          if (Boolean(mainState?.sock?.user?.id)) {
+            writeJson(res, 409, {
+              ok: false,
+              ...buildMainPairingSnapshot({
+                status: "already_linked",
+                message: `${mainState.config?.displayName || "El bot principal"} ya esta conectado.`,
+              }),
+            });
+            return;
+          }
+
+          resetMainBotSession(mainState, {
+            number: phoneNumber || mainState?.config?.pairingNumber || settings?.pairingNumber || "",
+          });
+        }
+
+        const result = await global.botRuntime.requestBotPairingCode("main", {
+          number: phoneNumber || mainState?.config?.pairingNumber || settings?.pairingNumber || "",
+          useCache,
+        });
+
+        writeJson(res, result?.ok ? 200 : 200, {
+          ok: Boolean(result?.ok),
+          ...buildMainPairingSnapshot(result),
+        });
+        return;
+      } catch (error) {
+        writeJson(res, error?.statusCode || 500, {
+          ok: false,
+          ...buildMainPairingSnapshot({
+            status: "error",
+            message: error?.message || "No pude generar el codigo del bot principal.",
+          }),
+        });
+        return;
+      }
+    }
 
     if (pathname === "/internal/subbot/request") {
       if (method !== "POST") {
