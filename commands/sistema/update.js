@@ -130,6 +130,28 @@ function pickMainLine(result) {
   return lines[0] || "Sin detalle extra.";
 }
 
+function hasRestartSensitiveChanges(changedFiles = []) {
+  return uniquePaths(changedFiles).some((filePath) => {
+    const normalized = normalizeGitPath(filePath);
+    if (!normalized) return false;
+
+    if (
+      /^readme(\.|$)/i.test(path.basename(normalized)) ||
+      /\.(md|txt|png|jpg|jpeg|gif|webp|svg)$/i.test(normalized)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function updateRequiresRestart(updateResult = null) {
+  if (!updateResult?.updated) return false;
+  if (updateResult.depsInstalled) return true;
+  return hasRestartSensitiveChanges(updateResult.changedFiles || []);
+}
+
 function normalizeGitPath(value = "") {
   return String(value || "").replace(/\\/g, "/").trim();
 }
@@ -1050,12 +1072,16 @@ export default {
   name: "update",
   command: ["update", "actualizar", "actualiza", "upgrade"],
   category: "sistema",
-  description: "Actualiza el bot con git pull o descarga directa desde GitHub y reinicia sin perder la sesion",
+  description:
+    "Actualiza el bot con git pull o descarga directa desde GitHub; puede reiniciar o dejar los cambios listos para el siguiente reinicio",
 
   run: async ({ sock, msg, from, args = [], esOwner, settings }) => {
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const ownerAccess = resolveOwnerAccess({ esOwner, settings, msg, from });
-    const subcommand = String(args[0] || "").toLowerCase();
+    const normalizedArgs = (Array.isArray(args) ? args : []).map((value) =>
+      String(value || "").trim().toLowerCase()
+    );
+    const subcommand = normalizedArgs[0] || "";
 
     if (subcommand === "info" || subcommand === "check" || subcommand === "debug") {
       try {
@@ -1077,7 +1103,10 @@ export default {
               `Branch: *${info.branch}*\n` +
               `Commit: *${info.head}*\n` +
               `Entorno: *${info.restartMode.label}*\n` +
-              `Cambios bloqueantes: *${dirtyCount}*`,
+              `Cambios bloqueantes: *${dirtyCount}*\n\n` +
+              "Modos:\n" +
+              "`.update` = actualiza y reinicia\n" +
+              "`.update pull` = actualiza sin reiniciar",
             ...global.channelInfo,
           },
           quoted
@@ -1127,7 +1156,12 @@ export default {
     let restartScheduled = false;
 
     try {
-      const forceRestart = ["force", "restart", "reboot"].includes(subcommand);
+      const forceRestart = normalizedArgs.some((value) =>
+        ["force", "restart", "reboot"].includes(value)
+      );
+      const skipRestart = normalizedArgs.some((value) =>
+        ["pull", "norestart", "no-restart", "sinreinicio", "sin-reinicio"].includes(value)
+      ) && !forceRestart;
       const restartMode = getRestartMode();
       const gitRepoAvailable = await isInsideGitWorkTree();
 
@@ -1158,7 +1192,9 @@ export default {
           text:
             "*UPDATE BOT*\n\n" +
             (gitRepoAvailable
-              ? "Buscando cambios con git y preparando reinicio...\n"
+              ? skipRestart
+                ? "Buscando cambios con git sin reiniciar el proceso...\n"
+                : "Buscando cambios con git y preparando reinicio...\n"
               : "Git no esta disponible aqui. Voy a descargar la ultima version desde GitHub...\n") +
             `Entorno: *${restartMode.label}*`,
           ...global.channelInfo,
@@ -1241,6 +1277,32 @@ export default {
       const depsSummary = updateResult.depsInstalled
         ? "Dependencias: *actualizadas*"
         : "Dependencias: *sin cambios*";
+      const restartNeeded = forceRestart || updateRequiresRestart(updateResult);
+
+      if (skipRestart) {
+        await sock.sendMessage(
+          from,
+          {
+            text:
+              "*UPDATE OK*\n\n" +
+              `Metodo: *${updateResult.methodLabel}*\n` +
+              `Origen: *${updateResult.repoLabel}*\n` +
+              `${summary}\n` +
+              `${changedSummary}\n` +
+              `${depsSummary}\n` +
+              `${updateResult.stashSummary}\n` +
+              `Detalle: ${updateResult.detailLine}\n` +
+              "Aplicacion: *sin reinicio*\n\n" +
+              (restartNeeded
+                ? "Los archivos ya se actualizaron dentro del VPS, pero los cambios de codigo o dependencias no se cargan por completo hasta usar `.restart`."
+                : "Los cambios ya quedaron aplicados en disco y no hace falta reiniciar por este update."),
+            ...global.channelInfo,
+          },
+          quoted
+        );
+        updateInProgress = false;
+        return;
+      }
 
       await sock.sendMessage(
         from,
