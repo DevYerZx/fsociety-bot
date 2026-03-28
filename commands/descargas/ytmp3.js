@@ -20,6 +20,7 @@ const API_SEARCH_URL = buildDvyerUrl(API_SEARCH_PATH);
 
 const COOLDOWN_TIME = 15 * 1000;
 const AUDIO_QUALITY = "128k";
+const AUDIO_MP3_PREFERRED_WAIT_MS = 1200;
 const REQUEST_TIMEOUT = 120000;
 const MAX_AUDIO_BYTES = 100 * 1024 * 1024;
 const TMP_DIR = path.join(process.cwd(), "tmp");
@@ -228,6 +229,41 @@ function extractApiError(data, status) {
   );
 }
 
+function createAbortControllerSafe() {
+  try {
+    return typeof AbortController === "function" ? new AbortController() : null;
+  } catch {
+    return null;
+  }
+}
+
+function abortControllerSafe(controller, reason) {
+  if (!controller || typeof controller.abort !== "function") return;
+
+  try {
+    controller.abort(reason);
+  } catch {
+    try {
+      controller.abort();
+    } catch {}
+  }
+}
+
+function isAbortLikeError(error) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const name = String(error?.name || "").trim().toLowerCase();
+  return (
+    code === "TASK_ABORTED" ||
+    code === "ERR_CANCELED" ||
+    name === "aborterror" ||
+    name === "cancelederror"
+  );
+}
+
+function isLikelyMp3FileName(fileName) {
+  return path.extname(String(fileName || "").trim()).toLowerCase() === ".mp3";
+}
+
 async function readStreamToText(stream) {
   return await new Promise((resolve, reject) => {
     let data = "";
@@ -241,10 +277,11 @@ async function readStreamToText(stream) {
   });
 }
 
-async function apiGet(url, params, timeout = 35000) {
+async function apiGet(url, params, timeout = 35000, options = {}) {
   const response = await axios.get(url, {
     timeout,
     params,
+    signal: options?.signal || undefined,
     validateStatus: () => true,
   });
 
@@ -276,7 +313,7 @@ async function resolveSearch(query) {
   };
 }
 
-async function requestAudioLink(videoUrl, endpointUrl, sourceLabel) {
+async function requestAudioLink(videoUrl, endpointUrl, sourceLabel, options = {}) {
   const data = await apiGet(
     endpointUrl,
     {
@@ -284,7 +321,8 @@ async function requestAudioLink(videoUrl, endpointUrl, sourceLabel) {
       quality: AUDIO_QUALITY,
       url: videoUrl,
     },
-    45000
+    45000,
+    options
   );
 
   const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
@@ -303,22 +341,118 @@ async function requestAudioLink(videoUrl, endpointUrl, sourceLabel) {
 }
 
 async function resolveFastestAudioLink(videoUrl) {
-  try {
-    return await Promise.any([
-      requestAudioLink(videoUrl, API_AUDIO_URL, "principal"),
-      requestAudioLink(videoUrl, API_AUDIO_LEGACY_URL, "legacy"),
-      requestAudioLink(videoUrl, API_AUDIO_ALT_URL, "alterna"),
-    ]);
-  } catch (error) {
-    const messages = Array.isArray(error?.errors)
-      ? error.errors.map((item) => String(item?.message || item || "").trim()).filter(Boolean)
-      : [];
+  const sources = [
+    { endpointUrl: API_AUDIO_URL, sourceLabel: "principal" },
+    { endpointUrl: API_AUDIO_LEGACY_URL, sourceLabel: "legacy" },
+    { endpointUrl: API_AUDIO_ALT_URL, sourceLabel: "alterna" },
+  ];
+  const controllers = sources.map(() => createAbortControllerSafe());
 
-    throw new Error(
-      messages[0] ||
-        "No se pudo obtener un enlace de descarga desde las rutas internas."
-    );
-  }
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let pending = sources.length;
+    let firstSuccess = null;
+    let preferredTimer = null;
+    const errors = [];
+
+    const cleanupTimer = () => {
+      if (!preferredTimer) return;
+      clearTimeout(preferredTimer);
+      preferredTimer = null;
+    };
+
+    const abortLosers = (winnerIndex) => {
+      controllers.forEach((controller, index) => {
+        if (index === winnerIndex) return;
+        abortControllerSafe(controller, new Error("download_link_race_lost"));
+      });
+    };
+
+    const finishSuccess = (result, winnerIndex) => {
+      if (settled) return;
+      settled = true;
+      cleanupTimer();
+      abortLosers(winnerIndex);
+      resolve(result);
+    };
+
+    const finishError = () => {
+      if (settled) return;
+      settled = true;
+      cleanupTimer();
+
+      const messages = errors
+        .map((item) => String(item?.message || item || "").trim())
+        .filter(Boolean);
+
+      reject(
+        new Error(
+          messages[0] ||
+            "No se pudo obtener un enlace de descarga desde las rutas internas."
+        )
+      );
+    };
+
+    const maybeFinishWithFallback = () => {
+      if (settled) return;
+      if (firstSuccess) {
+        finishSuccess(firstSuccess.result, firstSuccess.index);
+        return;
+      }
+      if (pending === 0) {
+        finishError();
+      }
+    };
+
+    sources.forEach((source, index) => {
+      requestAudioLink(videoUrl, source.endpointUrl, source.sourceLabel, {
+        signal: controllers[index]?.signal || null,
+      })
+        .then((result) => {
+          if (settled) return;
+
+          pending -= 1;
+
+          if (isLikelyMp3FileName(result.fileName)) {
+            finishSuccess(result, index);
+            return;
+          }
+
+          if (!firstSuccess) {
+            firstSuccess = { result, index };
+
+            if (pending === 0) {
+              maybeFinishWithFallback();
+              return;
+            }
+
+            preferredTimer = setTimeout(() => {
+              preferredTimer = null;
+              maybeFinishWithFallback();
+            }, AUDIO_MP3_PREFERRED_WAIT_MS);
+            preferredTimer.unref?.();
+            return;
+          }
+
+          if (pending === 0) {
+            maybeFinishWithFallback();
+          }
+        })
+        .catch((error) => {
+          if (settled) return;
+
+          pending -= 1;
+
+          if (!isAbortLikeError(error)) {
+            errors.push(error);
+          }
+
+          if (pending === 0) {
+            maybeFinishWithFallback();
+          }
+        });
+    });
+  });
 }
 
 async function resolveSearchCached(query) {

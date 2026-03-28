@@ -143,6 +143,37 @@ function extractApiError(data, status) {
   );
 }
 
+function createAbortControllerSafe() {
+  try {
+    return typeof AbortController === "function" ? new AbortController() : null;
+  } catch {
+    return null;
+  }
+}
+
+function abortControllerSafe(controller, reason) {
+  if (!controller || typeof controller.abort !== "function") return;
+
+  try {
+    controller.abort(reason);
+  } catch {
+    try {
+      controller.abort();
+    } catch {}
+  }
+}
+
+function isAbortLikeError(error) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const name = String(error?.name || "").trim().toLowerCase();
+  return (
+    code === "TASK_ABORTED" ||
+    code === "ERR_CANCELED" ||
+    name === "aborterror" ||
+    name === "cancelederror"
+  );
+}
+
 function parseContentDispositionFileName(headerValue) {
   const text = String(headerValue || "");
   const utfMatch = text.match(/filename\*=UTF-8''([^;]+)/i);
@@ -174,10 +205,11 @@ async function readStreamToText(stream) {
   });
 }
 
-async function apiGet(url, params, timeout = 35000) {
+async function apiGet(url, params, timeout = 35000, options = {}) {
   const response = await axios.get(url, {
     timeout,
     params,
+    signal: options?.signal || undefined,
     validateStatus: () => true,
   });
 
@@ -209,7 +241,7 @@ async function resolveSearch(query) {
   };
 }
 
-async function requestVideoLink(videoUrl, endpointUrl, sourceLabel) {
+async function requestVideoLink(videoUrl, endpointUrl, sourceLabel, options = {}) {
   const data = await apiGet(
     endpointUrl,
     {
@@ -217,7 +249,8 @@ async function requestVideoLink(videoUrl, endpointUrl, sourceLabel) {
       quality: VIDEO_QUALITY,
       url: videoUrl,
     },
-    45000
+    45000,
+    options
   );
 
   const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
@@ -236,24 +269,70 @@ async function requestVideoLink(videoUrl, endpointUrl, sourceLabel) {
 }
 
 async function resolveFastestVideoLink(videoUrl) {
-  try {
-    return await Promise.any([
-      requestVideoLink(videoUrl, API_VIDEO_URL, "principal"),
-      requestVideoLink(videoUrl, API_VIDEO_LEGACY_URL, "legacy"),
-      requestVideoLink(videoUrl, API_VIDEO_ALT_URL, "alterna"),
-    ]);
-  } catch (error) {
-    const messages = Array.isArray(error?.errors)
-      ? error.errors
-          .map((item) => String(item?.message || item || "").trim())
-          .filter(Boolean)
-      : [];
+  const sources = [
+    { endpointUrl: API_VIDEO_URL, sourceLabel: "principal" },
+    { endpointUrl: API_VIDEO_LEGACY_URL, sourceLabel: "legacy" },
+    { endpointUrl: API_VIDEO_ALT_URL, sourceLabel: "alterna" },
+  ];
+  const controllers = sources.map(() => createAbortControllerSafe());
 
-    throw new Error(
-      messages[0] ||
-        "No se pudo obtener un enlace de descarga desde las rutas internas."
-    );
-  }
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let pending = sources.length;
+    const errors = [];
+
+    const finishSuccess = (result, winnerIndex) => {
+      if (settled) return;
+      settled = true;
+
+      controllers.forEach((controller, index) => {
+        if (index === winnerIndex) return;
+        abortControllerSafe(controller, new Error("download_link_race_lost"));
+      });
+
+      resolve(result);
+    };
+
+    const finishError = () => {
+      if (settled) return;
+      settled = true;
+
+      const messages = errors
+        .map((item) => String(item?.message || item || "").trim())
+        .filter(Boolean);
+
+      reject(
+        new Error(
+          messages[0] ||
+            "No se pudo obtener un enlace de descarga desde las rutas internas."
+        )
+      );
+    };
+
+    sources.forEach((source, index) => {
+      requestVideoLink(videoUrl, source.endpointUrl, source.sourceLabel, {
+        signal: controllers[index]?.signal || null,
+      })
+        .then((result) => {
+          if (settled) return;
+          pending -= 1;
+          finishSuccess(result, index);
+        })
+        .catch((error) => {
+          if (settled) return;
+
+          pending -= 1;
+
+          if (!isAbortLikeError(error)) {
+            errors.push(error);
+          }
+
+          if (pending === 0) {
+            finishError();
+          }
+        });
+    });
+  });
 }
 
 async function resolveSearchCached(query) {
@@ -554,50 +633,67 @@ async function normalizeVideoForWhatsApp(inputPath, outputPath, options = {}) {
   });
 }
 
-async function sendVideoOrDocument(sock, from, quoted, { filePath, fileName, title, size }) {
+async function sendVideoDirect(sock, from, quoted, { filePath, fileName, title }) {
+  await sock.sendMessage(
+    from,
+    {
+      video: { url: filePath },
+      mimetype: "video/mp4",
+      fileName,
+      caption: `api dvyer\n\n🎬 ${title}\n🎚️ ${VIDEO_QUALITY}`,
+      ...global.channelInfo,
+    },
+    quoted
+  );
+  return "video";
+}
+
+async function sendVideoDocument(sock, from, quoted, { filePath, fileName, title }) {
+  await sock.sendMessage(
+    from,
+    {
+      document: { url: filePath },
+      mimetype: "video/mp4",
+      fileName,
+      caption: `api dvyer\n\n🎬 ${title}\n🎚️ ${VIDEO_QUALITY}\n📦 Enviado como documento`,
+      ...global.channelInfo,
+    },
+    quoted
+  );
+  return "document";
+}
+
+async function sendVideoOrDocument(
+  sock,
+  from,
+  quoted,
+  { filePath, fileName, title, size, allowDocumentFallback = true }
+) {
   if (size > VIDEO_AS_DOCUMENT_THRESHOLD) {
-    await sock.sendMessage(
-      from,
-      {
-        document: { url: filePath },
-        mimetype: "video/mp4",
-        fileName,
-        caption: `api dvyer\n\n🎬 ${title}\n🎚️ ${VIDEO_QUALITY}\n📦 Enviado como documento`,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-    return "document";
+    return await sendVideoDocument(sock, from, quoted, {
+      filePath,
+      fileName,
+      title,
+    });
   }
 
   try {
-    await sock.sendMessage(
-      from,
-      {
-        video: { url: filePath },
-        mimetype: "video/mp4",
-        fileName,
-        caption: `api dvyer\n\n🎬 ${title}\n🎚️ ${VIDEO_QUALITY}`,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-    return "video";
+    return await sendVideoDirect(sock, from, quoted, {
+      filePath,
+      fileName,
+      title,
+    });
   } catch (e1) {
-    console.error("send local video failed:", e1?.message || e1);
+    if (!allowDocumentFallback) {
+      throw e1;
+    }
 
-    await sock.sendMessage(
-      from,
-      {
-        document: { url: filePath },
-        mimetype: "video/mp4",
-        fileName,
-        caption: `api dvyer\n\n🎬 ${title}\n🎚️ ${VIDEO_QUALITY}\n📦 Enviado como documento`,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-    return "document";
+    console.error("send local video failed:", e1?.message || e1);
+    return await sendVideoDocument(sock, from, quoted, {
+      filePath,
+      fileName,
+      title,
+    });
   }
 }
 
@@ -711,32 +807,64 @@ export default {
         });
       }
 
-      const normalized = await normalizeVideoForWhatsApp(
-        downloaded.path,
-        finalVideoFile,
-        { signal: abortSignal }
-      );
-
-      const sendPath =
-        normalized && fs.existsSync(finalVideoFile)
-          ? finalVideoFile
-          : rawVideoFile;
-
-      const sendSize = fs.existsSync(sendPath)
-        ? fs.statSync(sendPath).size
-        : downloaded.size;
-
       const finalTitle = safeFileName(
         stripExtension(downloaded.fileName || `${title}.mp4`) || title
       );
+      const rawSendPath = downloaded.path || rawVideoFile;
+      const rawSendSize = fs.existsSync(rawSendPath)
+        ? fs.statSync(rawSendPath).size
+        : downloaded.size;
+      const normalizedFileName = normalizeMp4Name(downloaded.fileName || `${finalTitle}.mp4`);
 
       throwIfAborted(abortSignal);
-      await sendVideoOrDocument(sock, from, quoted, {
-        filePath: sendPath,
-        fileName: normalizeMp4Name(downloaded.fileName || `${finalTitle}.mp4`),
-        title: finalTitle,
-        size: sendSize,
-      });
+
+      if (rawSendSize > VIDEO_AS_DOCUMENT_THRESHOLD) {
+        await sendVideoDocument(sock, from, quoted, {
+          filePath: rawSendPath,
+          fileName: normalizedFileName,
+          title: finalTitle,
+        });
+        return;
+      }
+
+      try {
+        await sendVideoOrDocument(sock, from, quoted, {
+          filePath: rawSendPath,
+          fileName: normalizedFileName,
+          title: finalTitle,
+          size: rawSendSize,
+          allowDocumentFallback: false,
+        });
+      } catch (sendRawError) {
+        console.warn(
+          "YTMP4 raw send fallback:",
+          sendRawError?.message || sendRawError
+        );
+
+        const normalized = await normalizeVideoForWhatsApp(
+          rawSendPath,
+          finalVideoFile,
+          { signal: abortSignal }
+        );
+
+        if (!normalized || !fs.existsSync(finalVideoFile)) {
+          await sendVideoDocument(sock, from, quoted, {
+            filePath: rawSendPath,
+            fileName: normalizedFileName,
+            title: finalTitle,
+          });
+          return;
+        }
+
+        const normalizedSize = fs.statSync(finalVideoFile).size;
+
+        await sendVideoOrDocument(sock, from, quoted, {
+          filePath: finalVideoFile,
+          fileName: normalizedFileName,
+          title: finalTitle,
+          size: normalizedSize,
+        });
+      }
     } catch (err) {
       const aborted = abortSignal?.aborted === true;
       console.error("YTMP4 ERROR:", err?.message || err);
