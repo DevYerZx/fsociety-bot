@@ -3153,6 +3153,7 @@ function getRestartMode() {
       kind: "pm2",
       label: "PM2/VPS",
       needsBootstrap: false,
+      allowsInternalRestart: true,
     };
   }
 
@@ -3161,6 +3162,7 @@ function getRestartMode() {
       kind: "managed",
       label: "Hosting administrado",
       needsBootstrap: false,
+      allowsInternalRestart: false,
     };
   }
 
@@ -3168,6 +3170,7 @@ function getRestartMode() {
     kind: "self",
     label: "Node directo / VPS",
     needsBootstrap: true,
+    allowsInternalRestart: true,
   };
 }
 
@@ -3201,6 +3204,12 @@ function buildRestartBootstrap(delayMs = PROCESS_RESTART_DELAY_MS) {
 
 function scheduleProcessRestart(delayMs = PROCESS_RESTART_DELAY_MS) {
   const restartMode = getRestartMode();
+  if (restartMode.allowsInternalRestart === false) {
+    return {
+      ...restartMode,
+      scheduled: false,
+    };
+  }
 
   if (restartMode.needsBootstrap) {
     const bootstrap = buildRestartBootstrap(delayMs);
@@ -3217,7 +3226,10 @@ function scheduleProcessRestart(delayMs = PROCESS_RESTART_DELAY_MS) {
     process.kill(process.pid, "SIGINT");
   }, restartMode.needsBootstrap ? 1200 : delayMs).unref?.();
 
-  return restartMode;
+  return {
+    ...restartMode,
+    scheduled: true,
+  };
 }
 
 function scheduleReconnect(botState, ms = 2500) {
@@ -5920,11 +5932,18 @@ process.on("SIGINT", () => {
     } catch {}
 
     try {
+      abortActiveCommand(botState, "process_sigint");
+    } catch {}
+
+    try {
       if (botState.reconnectTimer) {
         clearTimeout(botState.reconnectTimer);
       }
       if (botState.profileApplyTimer) {
         clearTimeout(botState.profileApplyTimer);
+      }
+      if (botState.socketRecoveryTimer) {
+        clearTimeout(botState.socketRecoveryTimer);
       }
     } catch {}
 

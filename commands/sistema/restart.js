@@ -29,6 +29,20 @@ export default {
     }
 
     const restartMode = runtime.getRestartMode();
+    if (restartMode?.allowsInternalRestart === false) {
+      return sock.sendMessage(
+        from,
+        {
+          text:
+            `*RESTART BLOQUEADO*\n\n` +
+            `Entorno: *${restartMode.label}*\n` +
+            "Para no tumbar tu hosting, el reinicio interno esta desactivado aqui.\n" +
+            "Reinicia desde tu panel, PM2 o consola cuando quieras recargar el bot.",
+          ...global.channelInfo,
+        },
+        { quoted: msg }
+      );
+    }
 
     await sock.sendMessage(
       from,

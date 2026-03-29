@@ -240,6 +240,7 @@ function getRestartMode() {
       kind: "pm2",
       label: "PM2/VPS",
       needsBootstrap: false,
+      allowsInternalRestart: true,
     };
   }
 
@@ -255,6 +256,7 @@ function getRestartMode() {
       kind: "managed",
       label: "Hosting administrado",
       needsBootstrap: false,
+      allowsInternalRestart: false,
     };
   }
 
@@ -262,6 +264,7 @@ function getRestartMode() {
     kind: "self",
     label: "Node directo / VPS",
     needsBootstrap: true,
+    allowsInternalRestart: true,
   };
 }
 
@@ -612,6 +615,12 @@ function buildRestartBootstrap(delayMs = RESTART_DELAY_MS) {
 
 function scheduleRestart(delayMs = RESTART_DELAY_MS) {
   const restartMode = getRestartMode();
+  if (restartMode.allowsInternalRestart === false) {
+    return {
+      ...restartMode,
+      scheduled: false,
+    };
+  }
 
   if (restartMode.needsBootstrap) {
     const bootstrap = buildRestartBootstrap(delayMs);
@@ -629,7 +638,10 @@ function scheduleRestart(delayMs = RESTART_DELAY_MS) {
     process.kill(process.pid, "SIGINT");
   }, restartMode.needsBootstrap ? 1200 : delayMs).unref?.();
 
-  return restartMode;
+  return {
+    ...restartMode,
+    scheduled: true,
+  };
 }
 
 function runCommand(command, args = [], options = {}) {
@@ -1099,9 +1111,11 @@ export default {
               `Branch: *${info.branch}*\n` +
               `Commit: *${info.head}*\n` +
               `Entorno: *${info.restartMode.label}*\n` +
+              `Reinicio interno: *${info.restartMode.allowsInternalRestart ? "SI" : "NO"}*\n` +
               `Cambios bloqueantes: *${dirtyCount}*\n\n` +
               "Modos:\n" +
-              "`.update` = actualiza y reinicia\n" +
+              "`.update` = actualiza sin reiniciar\n" +
+              "`.update restart` = actualiza y reinicia si el entorno lo permite\n" +
               "`.update norestart` = actualiza sin reiniciar",
             ...global.channelInfo,
           },
@@ -1155,10 +1169,12 @@ export default {
       const forceRestart = normalizedArgs.some((value) =>
         ["force", "restart", "reboot"].includes(value)
       );
-      const skipRestart = normalizedArgs.some((value) =>
+      const requestedNoRestart = normalizedArgs.some((value) =>
         ["norestart", "no-restart", "sinreinicio", "sin-reinicio"].includes(value)
-      ) && !forceRestart;
+      );
       const restartMode = getRestartMode();
+      const allowAutomaticRestart = forceRestart && !requestedNoRestart;
+      const skipRestart = !allowAutomaticRestart;
 
       await sock.sendMessage(
         from,
@@ -1166,7 +1182,7 @@ export default {
           text:
             "*UPDATE BOT*\n\n" +
             (skipRestart
-              ? "Descargando la ultima version directo desde GitHub sin reiniciar el proceso...\n"
+              ? "Descargando la ultima version directo desde GitHub en modo seguro, sin reiniciar el proceso...\n"
               : "Descargando la ultima version directo desde GitHub...\n") +
             `Entorno: *${restartMode.label}*`,
           ...global.channelInfo,
@@ -1226,8 +1242,31 @@ export default {
               `Detalle: ${updateResult.detailLine}\n` +
               "Aplicacion: *sin reinicio*\n\n" +
               (restartNeeded
-                ? "Los archivos ya se actualizaron dentro del VPS, pero los cambios de codigo o dependencias no se cargan por completo hasta usar `.restart`."
+                ? "Los archivos ya se actualizaron dentro del VPS, pero los cambios de codigo o dependencias no se cargan por completo hasta usar `.restart` o reiniciar desde tu panel."
                 : "Los cambios ya quedaron aplicados en disco y no hace falta reiniciar por este update."),
+            ...global.channelInfo,
+          },
+          quoted
+        );
+        updateInProgress = false;
+        return;
+      }
+
+      if (restartMode.allowsInternalRestart === false) {
+        await sock.sendMessage(
+          from,
+          {
+            text:
+              "*UPDATE OK*\n\n" +
+              `Metodo: *${updateResult.methodLabel}*\n` +
+              `Origen: *${updateResult.repoLabel}*\n` +
+              `${summary}\n` +
+              `${changedSummary}\n` +
+              `${depsSummary}\n` +
+              `${updateResult.stashSummary}\n` +
+              `Detalle: ${updateResult.detailLine}\n` +
+              "Aplicacion: *reinicio manual requerido*\n\n" +
+              "Este hosting no usa reinicio interno seguro desde el bot. Los archivos ya quedaron actualizados, pero debes reiniciar desde tu panel, PM2 o consola cuando quieras cargar el codigo nuevo.",
             ...global.channelInfo,
           },
           quoted
@@ -1258,7 +1297,31 @@ export default {
 
       await delay(1500);
       restartScheduled = true;
-      scheduleRestart(RESTART_DELAY_MS);
+      const restartResult = scheduleRestart(RESTART_DELAY_MS);
+
+      if (restartResult?.scheduled === false) {
+        restartScheduled = false;
+        updateInProgress = false;
+        await sock.sendMessage(
+          from,
+          {
+            text:
+              "*UPDATE OK*\n\n" +
+              `Metodo: *${updateResult.methodLabel}*\n` +
+              `Origen: *${updateResult.repoLabel}*\n` +
+              `${summary}\n` +
+              `${changedSummary}\n` +
+              `${depsSummary}\n` +
+              `${updateResult.stashSummary}\n` +
+              `Detalle: ${updateResult.detailLine}\n` +
+              "Aplicacion: *reinicio manual requerido*\n\n" +
+              "Bloquee el reinicio interno para no tumbar tu servidor. Reinicia manualmente cuando quieras cargar el codigo nuevo.",
+            ...global.channelInfo,
+          },
+          quoted
+        );
+        return;
+      }
     } catch (error) {
       await sock.sendMessage(
         from,
