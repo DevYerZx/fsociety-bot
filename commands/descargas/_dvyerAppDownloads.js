@@ -233,6 +233,36 @@ function isHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || "").trim());
 }
 
+function resolveCommandSocket(ctx = {}) {
+  const candidates = [ctx?.sock, ctx?.conn, ctx?.client];
+  return candidates.find((entry) => entry && typeof entry.sendMessage === "function") || null;
+}
+
+function resolveTargetJid(ctx = {}) {
+  return String(ctx?.from || ctx?.chat || ctx?.m?.from || ctx?.msg?.from || "").trim();
+}
+
+async function safeSendMessage(sock, from, payload, quoted, options = {}) {
+  const label = cleanText(options?.label || "command");
+  const throwOnUnavailable = options?.throwOnUnavailable === true;
+
+  if (!sock || typeof sock.sendMessage !== "function" || !from) {
+    const error = new Error("La conexion del bot no esta disponible ahora.");
+    console.warn(`[${label || "command"}]`, error.message);
+    if (throwOnUnavailable) throw error;
+    return false;
+  }
+
+  try {
+    await sock.sendMessage(from, payload, quoted);
+    return true;
+  } catch (error) {
+    console.error(`[${label || "command"}] sendMessage error:`, error?.message || error);
+    if (throwOnUnavailable) throw error;
+    return false;
+  }
+}
+
 function parseSelectionInput(value) {
   const raw = cleanText(value);
   const patterns = [
@@ -505,25 +535,29 @@ async function sendPreviewCard(sock, from, quoted, info, config) {
   const caption = buildPreviewCaption(info, config);
 
   if (info.icon) {
-    await sock.sendMessage(
+    await safeSendMessage(
+      sock,
       from,
       {
         image: { url: info.icon },
         caption,
         ...global.channelInfo,
       },
-      quoted
+      quoted,
+      { label: `${config.key}:preview`, throwOnUnavailable: true }
     );
     return;
   }
 
-  await sock.sendMessage(
+  await safeSendMessage(
+    sock,
     from,
     {
       text: caption,
       ...global.channelInfo,
     },
-    quoted
+    quoted,
+    { label: `${config.key}:preview`, throwOnUnavailable: true }
   );
 }
 
@@ -563,13 +597,15 @@ async function sendSearchPicker(ctx, query, results, config) {
           `${config.selectionText}`,
       };
 
-  await sock.sendMessage(
+  await safeSendMessage(
+    sock,
     from,
     {
       ...introPayload,
       ...global.channelInfo,
     },
-    quoted
+    quoted,
+    { label: `${config.key}:intro`, throwOnUnavailable: true }
   );
 
   const interactivePayload = {
@@ -594,7 +630,10 @@ async function sendSearchPicker(ctx, query, results, config) {
   };
 
   try {
-    await sock.sendMessage(from, interactivePayload, quoted);
+    await safeSendMessage(sock, from, interactivePayload, quoted, {
+      label: `${config.key}:picker`,
+      throwOnUnavailable: true,
+    });
   } catch (error) {
     console.error(`${config.key.toUpperCase()} interactive search failed:`, error?.message || error);
 
@@ -603,7 +642,8 @@ async function sendSearchPicker(ctx, query, results, config) {
       .map((row) => `${row.header}. ${row.title}\n${row.id}`)
       .join("\n\n");
 
-    await sock.sendMessage(
+    await safeSendMessage(
+      sock,
       from,
       {
         text:
@@ -611,7 +651,8 @@ async function sendSearchPicker(ctx, query, results, config) {
           `Toca o copia uno de los comandos para descargar.`,
         ...global.channelInfo,
       },
-      quoted
+      quoted,
+      { label: `${config.key}:picker-fallback` }
     );
   }
 }
@@ -624,7 +665,8 @@ async function sendFileDocument(sock, from, quoted, info, filePath, fileName, si
   const sizeText = humanBytes(size);
   if (sizeText) extra.push(`Tamano: ${sizeText}`);
 
-  await sock.sendMessage(
+  await safeSendMessage(
+    sock,
     from,
     {
       document: { url: filePath },
@@ -633,13 +675,15 @@ async function sendFileDocument(sock, from, quoted, info, filePath, fileName, si
       caption: `*FSOCIETY BOT*\n\n${info.title}${extra.length ? `\n${extra.join("\n")}` : ""}`,
       ...global.channelInfo,
     },
-    quoted
+    quoted,
+    { label: "file-document", throwOnUnavailable: true }
   );
 }
 
 async function sendLargeFileLink(sock, from, quoted, info, config) {
   const sizeText = humanBytes(info.sizeBytes);
-  await sock.sendMessage(
+  await safeSendMessage(
+    sock,
     from,
     {
       text:
@@ -648,7 +692,8 @@ async function sendLargeFileLink(sock, from, quoted, info, config) {
         `Enlace interno de descarga:\n${info.downloadUrl}`,
       ...global.channelInfo,
     },
-    quoted
+    quoted,
+    { label: `${config.key}:large-link`, throwOnUnavailable: true }
   );
 }
 
@@ -663,42 +708,58 @@ export function buildDvyerAppCommand(kind) {
     description: `Busca y descarga ${config.name}.`,
 
     run: async (ctx) => {
-      const { sock, from, settings } = ctx;
+      const sock = resolveCommandSocket(ctx);
+      const from = resolveTargetJid(ctx);
+      const settings = ctx?.settings;
       const msg = ctx.m || ctx.msg || null;
       const quoted = msg?.key ? { quoted: msg } : undefined;
-      const userId = `${from}:${config.key}`;
+      const userId = `${from || ctx?.botId || "unknown"}:${config.key}`;
+      const runtimeCtx = {
+        ...ctx,
+        sock,
+        from,
+      };
 
       let tempPath = null;
       let downloadCharge = null;
       let downloadInfo = null;
 
-      const until = cooldowns.get(userId);
-      if (until && until > Date.now()) {
-        return sock.sendMessage(
-          from,
-          {
-            text: `⏳ Espera ${getCooldownRemaining(until)}s`,
-            ...global.channelInfo,
-          },
-          quoted
-        );
-      }
-
-      cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
-
       try {
+        if (!sock || !from) {
+          console.warn(`${config.key.toUpperCase()} skipped: socket o chat no disponible.`);
+          return null;
+        }
+
+        const until = cooldowns.get(userId);
+        if (until && until > Date.now()) {
+          return await safeSendMessage(
+            sock,
+            from,
+            {
+              text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+              ...global.channelInfo,
+            },
+            quoted,
+            { label: `${config.key}:cooldown`, throwOnUnavailable: true }
+          );
+        }
+
+        cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+
         const parsedInput = parseSelectionInput(resolveUserInput(ctx));
         const userInput = parsedInput.target;
 
         if (!userInput) {
           cooldowns.delete(userId);
-          return sock.sendMessage(
+          return await safeSendMessage(
+            sock,
             from,
             {
               text: config.usage,
               ...global.channelInfo,
             },
-            quoted
+            quoted,
+            { label: `${config.key}:usage`, throwOnUnavailable: true }
           );
         }
 
@@ -709,7 +770,7 @@ export function buildDvyerAppCommand(kind) {
           return;
         }
 
-        downloadCharge = await chargeDownloadRequest(ctx, {
+        downloadCharge = await chargeDownloadRequest(runtimeCtx, {
           commandName: config.primaryCommand,
           query: userInput,
           provider: "dvyer",
@@ -721,13 +782,15 @@ export function buildDvyerAppCommand(kind) {
           return null;
         }
 
-        await sock.sendMessage(
+        await safeSendMessage(
+          sock,
           from,
           {
             text: `${config.preparing}\n\nEntrada: ${userInput}`,
             ...global.channelInfo,
           },
-          quoted
+          quoted,
+          { label: `${config.key}:preparing`, throwOnUnavailable: true }
         );
 
         downloadInfo = await requestDownloadMeta(userInput, config, {
@@ -765,20 +828,22 @@ export function buildDvyerAppCommand(kind) {
         );
       } catch (error) {
         console.error(`${config.key.toUpperCase()} ERROR:`, error?.message || error);
-        refundDownloadCharge(ctx, downloadCharge, {
+        refundDownloadCharge(runtimeCtx, downloadCharge, {
           commandName: config.primaryCommand,
           reason: error?.message || "download_error",
         });
         cooldowns.delete(userId);
 
         const detail = String(error?.message || "No se pudo procesar la descarga.");
-        await sock.sendMessage(
+        await safeSendMessage(
+          sock,
           from,
           {
             text: `❌ ${detail}`,
             ...global.channelInfo,
           },
-          quoted
+          quoted,
+          { label: `${config.key}:error` }
         );
       } finally {
         deleteFileSafe(tempPath);
