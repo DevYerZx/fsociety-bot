@@ -91,6 +91,9 @@ const FATAL_ERROR_THRESHOLD = 3;
 const RECONNECT_JITTER_RATIO = 0.2;
 const CONTACT_NAME_CACHE_TTL_MS = 10 * 60 * 1000;
 const CONTACT_NAME_CACHE_MAX_ENTRIES = 3000;
+const APPEND_UPSERT_RECENT_WINDOW_MS = 3 * 60 * 1000;
+const MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
+const MESSAGE_DEDUP_MAX_ENTRIES = 4000;
 const logger = pino({ level: "silent" });
 const FIXED_BROWSER = ["Windows", "Chrome", "114.0.5735.198"];
 
@@ -1014,6 +1017,102 @@ function serializeMessage(raw) {
   };
 }
 
+function parseMessageTimestampToMs(value) {
+  if (value == null) return 0;
+
+  let rawNumber = 0;
+  if (typeof value === "number") {
+    rawNumber = value;
+  } else if (typeof value === "string") {
+    rawNumber = Number(value);
+  } else if (typeof value?.toNumber === "function") {
+    rawNumber = Number(value.toNumber());
+  } else if (typeof value === "object") {
+    rawNumber = Number(value?.low ?? value?.value ?? 0);
+  }
+
+  if (!Number.isFinite(rawNumber) || rawNumber <= 0) {
+    return 0;
+  }
+
+  return rawNumber > 1_000_000_000_000 ? rawNumber : Math.floor(rawNumber * 1000);
+}
+
+function getMessageDedupKey(raw = {}) {
+  const remoteJid = String(raw?.key?.remoteJid || "").trim();
+  const participant =
+    String(raw?.key?.participant || raw?.key?.participantPn || raw?.key?.participantLid || "").trim();
+  const id = String(raw?.key?.id || "").trim();
+
+  if (!remoteJid || !id) {
+    return "";
+  }
+
+  return `${remoteJid}|${participant}|${id}`;
+}
+
+function markAndCheckRecentMessage(botState, raw = {}) {
+  if (!botState) return false;
+
+  if (!(botState.recentMessageIds instanceof Map)) {
+    botState.recentMessageIds = new Map();
+  }
+
+  const key = getMessageDedupKey(raw);
+  if (!key) {
+    return false;
+  }
+
+  const now = Date.now();
+
+  for (const [savedKey, savedAt] of botState.recentMessageIds) {
+    if (!savedAt || now - Number(savedAt) > MESSAGE_DEDUP_TTL_MS) {
+      botState.recentMessageIds.delete(savedKey);
+    }
+  }
+
+  const existingAt = Number(botState.recentMessageIds.get(key) || 0);
+  if (existingAt && now - existingAt <= MESSAGE_DEDUP_TTL_MS) {
+    return true;
+  }
+
+  botState.recentMessageIds.set(key, now);
+
+  while (botState.recentMessageIds.size > MESSAGE_DEDUP_MAX_ENTRIES) {
+    const oldestKey = botState.recentMessageIds.keys().next().value;
+    if (!oldestKey) break;
+    botState.recentMessageIds.delete(oldestKey);
+  }
+
+  return false;
+}
+
+function shouldProcessUpsertMessage(raw = {}, type = "") {
+  if (!raw?.message) {
+    return false;
+  }
+
+  if (String(type || "").trim().toLowerCase() === "notify") {
+    return true;
+  }
+
+  if (raw?.key?.fromMe) {
+    return true;
+  }
+
+  if (String(type || "").trim().toLowerCase() !== "append") {
+    return false;
+  }
+
+  const messageTimestampMs = parseMessageTimestampToMs(raw?.messageTimestamp);
+  if (!messageTimestampMs) {
+    return false;
+  }
+
+  const ageMs = Date.now() - messageTimestampMs;
+  return ageMs >= -90_000 && ageMs <= APPEND_UPSERT_RECENT_WINDOW_MS;
+}
+
 function getStoreContactName(botState, ...ids) {
   const contacts = botState?.store?.contacts;
   if (!contacts || typeof contacts !== "object") return "";
@@ -1771,12 +1870,15 @@ function pushConsole(level, args) {
 
 function shouldIgnoreError(value) {
   const txt = String(value || "");
+  const lower = txt.toLowerCase();
   return (
     txt.includes("Bad MAC") ||
     txt.includes("SessionCipher") ||
     txt.includes("Failed to decrypt message with any known session") ||
     txt.includes("No session record") ||
-    txt.includes("Closing open session in favor of incoming prekey bundle")
+    txt.includes("Closing open session in favor of incoming prekey bundle") ||
+    lower.includes("messagecountererror") ||
+    lower.includes("key used already or never filled")
   );
 }
 
@@ -1819,6 +1921,9 @@ function isTransientRuntimeError(value) {
     "device sent no auth",
     "not-authorized",
     "conflict",
+    "messagecountererror",
+    "key used already or never filled",
+    "precondition required",
   ];
 
   return transientTokens.some((token) => txt.includes(token));
@@ -2259,6 +2364,7 @@ function ensureBotState(config) {
     activeCommandAbortController: null,
     groupCache: new Map(),
     contactNameCache: new Map(),
+    recentMessageIds: new Map(),
     store: createStoreForBot(config.id),
     activeDownloadJobs: new Map(),
     downloadQueueCounter: 0,
@@ -2657,6 +2763,7 @@ function releaseSubbotSlot(botState, options = {}) {
   };
   botState.groupCache?.clear?.();
   botState.contactNameCache?.clear?.();
+  botState.recentMessageIds?.clear?.();
   botState.activeDownloadJobs?.clear?.();
 
   console.log(
@@ -2735,6 +2842,7 @@ function resetMainBotSession(botState, options = {}) {
   clearActiveCommandState(botState);
   botState.groupCache?.clear?.();
   botState.contactNameCache?.clear?.();
+  botState.recentMessageIds?.clear?.();
   botState.activeDownloadJobs?.clear?.();
   botState.config = {
     ...botState.config,
@@ -5134,6 +5242,7 @@ function stopLocalManagedBot(botState, reason = "disabled") {
   clearActiveCommandState(botState);
   botState.groupCache?.clear?.();
   botState.contactNameCache?.clear?.();
+  botState.recentMessageIds?.clear?.();
   botState.activeDownloadJobs?.clear?.();
   console.log(`${getBotTag(botState)} Detenido localmente (${reason})`);
   writePersistedBotRuntimeState(botState);
@@ -5163,6 +5272,7 @@ function recycleBotInstance(botState, reason = "recovery") {
   botState.bootStartedAt = 0;
   botState.groupCache?.clear?.();
   botState.contactNameCache?.clear?.();
+  botState.recentMessageIds?.clear?.();
   clearActiveCommandState(botState);
   botState.activeDownloadJobs?.clear?.();
   resetPairingCache(botState);
@@ -5942,6 +6052,7 @@ async function handleIncomingMessages(botState, sock, messages) {
 
     try {
       if (!raw?.message) continue;
+      if (markAndCheckRecentMessage(botState, raw)) continue;
 
       const from = raw?.key?.remoteJid || "";
       if (shouldIgnoreJid(from)) continue;
@@ -6320,7 +6431,7 @@ async function iniciarInstanciaBot(config) {
         if (!raw?.message) continue;
         hasMessagePayload = true;
 
-        if (type === "notify" || raw?.key?.fromMe) {
+        if (shouldProcessUpsertMessage(raw, type)) {
           filteredMessages.push(raw);
         }
       }
