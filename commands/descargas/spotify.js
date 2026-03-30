@@ -26,7 +26,7 @@ const SPOTIFY_TOTP_PROFILES = [
   { version: "59", secret: "{iOFn;4}<1PFYKPV?5{%u14]M>/V0hDH" },
 ];
 
-const COOLDOWN_TIME = 15 * 1000;
+const COOLDOWN_TIME = 0;
 const REQUEST_TIMEOUT = 120000;
 const MAX_AUDIO_BYTES = 120 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 60 * 1024 * 1024;
@@ -1153,19 +1153,21 @@ export default {
     let finalMp3Path = null;
     let downloadCharge = null;
 
-    const until = cooldowns.get(userId);
-    if (until && until > Date.now()) {
-      return sock.sendMessage(
-        from,
-        {
-          text: `⏳ Espera ${getCooldownRemaining(until)}s`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
-    }
+    if (COOLDOWN_TIME > 0) {
+      const until = cooldowns.get(userId);
+      if (until && until > Date.now()) {
+        return sock.sendMessage(
+          from,
+          {
+            text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
 
-    cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+      cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+    }
 
     try {
       const userInput = cleanText(resolveUserInput(ctx));

@@ -7,7 +7,7 @@ import { buildDvyerUrl, getDvyerBaseUrl } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 
 const API_MEGA_URL = buildDvyerUrl("/mega");
-const COOLDOWN_TIME = 15 * 1000;
+const COOLDOWN_TIME = 0;
 const REQUEST_TIMEOUT = 180000;
 const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-mega");
@@ -320,15 +320,17 @@ export default {
     let tempPath = null;
     let downloadCharge = null;
 
-    const until = cooldowns.get(userId);
-    if (until && until > Date.now()) {
-      return sock.sendMessage(from, {
-        text: `Espera ${getCooldownRemaining(until)}s`,
-        ...global.channelInfo,
-      });
-    }
+    if (COOLDOWN_TIME > 0) {
+      const until = cooldowns.get(userId);
+      if (until && until > Date.now()) {
+        return sock.sendMessage(from, {
+          text: `Espera ${getCooldownRemaining(until)}s`,
+          ...global.channelInfo,
+        });
+      }
 
-    cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+      cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+    }
 
     try {
       const rawInput = resolveUserInput(ctx);

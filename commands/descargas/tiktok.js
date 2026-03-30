@@ -9,7 +9,7 @@ import { chargeDownloadRequest, refundDownloadCharge } from "../economia/downloa
 const API_BASE = "https://dv-yer-api.online";
 const API_TIKTOK_URL = `${API_BASE}/ttdlmp4`;
 
-const COOLDOWN_TIME = 15 * 1000;
+const COOLDOWN_TIME = 0;
 const VIDEO_QUALITY = "hd";
 const API_LANG = "es";
 const REQUEST_TIMEOUT = 60000;
@@ -361,15 +361,17 @@ export default {
     let tempPath = null;
     let downloadCharge = null;
 
-    const until = cooldowns.get(userId);
-    if (until && until > Date.now()) {
-      return sock.sendMessage(from, {
-        text: `⏳ Espera ${getCooldownRemaining(until)}s`,
-        ...global.channelInfo,
-      });
-    }
+    if (COOLDOWN_TIME > 0) {
+      const until = cooldowns.get(userId);
+      if (until && until > Date.now()) {
+        return sock.sendMessage(from, {
+          text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+          ...global.channelInfo,
+        });
+      }
 
-    cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+      cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+    }
 
     try {
       const videoUrl = resolveTikTokUrl(ctx);
@@ -427,4 +429,3 @@ export default {
     }
   },
 };
-

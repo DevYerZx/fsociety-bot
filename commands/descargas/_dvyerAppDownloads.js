@@ -13,7 +13,7 @@ const SEARCH_TIMEOUT = 45000;
 const MAX_FILE_BYTES = 800 * 1024 * 1024;
 const MIN_FILE_BYTES = 20000;
 const TMP_ROOT = path.join(os.tmpdir(), "dvyer-app-downloads");
-const COOLDOWN_TIME = 15 * 1000;
+const COOLDOWN_TIME = 0;
 const cooldowns = new Map();
 
 const COMMAND_CONFIG = {
@@ -730,21 +730,23 @@ export function buildDvyerAppCommand(kind) {
           return null;
         }
 
-        const until = cooldowns.get(userId);
-        if (until && until > Date.now()) {
-          return await safeSendMessage(
-            sock,
-            from,
-            {
-              text: `⏳ Espera ${getCooldownRemaining(until)}s`,
-              ...global.channelInfo,
-            },
-            quoted,
-            { label: `${config.key}:cooldown`, throwOnUnavailable: true }
-          );
-        }
+        if (COOLDOWN_TIME > 0) {
+          const until = cooldowns.get(userId);
+          if (until && until > Date.now()) {
+            return await safeSendMessage(
+              sock,
+              from,
+              {
+                text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+                ...global.channelInfo,
+              },
+              quoted,
+              { label: `${config.key}:cooldown`, throwOnUnavailable: true }
+            );
+          }
 
-        cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+          cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+        }
 
         const parsedInput = parseSelectionInput(resolveUserInput(ctx));
         const userInput = parsedInput.target;

@@ -23,11 +23,13 @@ const VIDEO_SOURCES = [
   { endpointUrl: API_VIDEO_ALT_URL, sourceLabel: "alterna" },
 ];
 
-const COOLDOWN_TIME = 15 * 1000;
+const COOLDOWN_TIME = 0;
 const VIDEO_QUALITY = "360p";
 const REQUEST_TIMEOUT = 120000;
 const MAX_VIDEO_BYTES = 1500 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 70 * 1024 * 1024;
+const REQUEST_RETRY_ATTEMPTS = 3;
+const REQUEST_RETRY_DELAY_MS = 900;
 const TMP_DIR = path.join(process.cwd(), "tmp");
 
 const cooldowns = new Map();
@@ -139,6 +141,107 @@ function getCooldownRemaining(untilMs) {
   return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeErrorText(error) {
+  return String(error?.message || error || "").trim();
+}
+
+function shouldRetryDownloadError(error) {
+  const text = normalizeErrorText(error).toLowerCase();
+  if (!text) return false;
+
+  return (
+    text.includes("http 401") ||
+    text.includes("unauthorized") ||
+    text.includes("internal yt1s link error") ||
+    text.includes("internal link error") ||
+    text.includes("no se encontro un formato") ||
+    text.includes("timeout") ||
+    text.includes("timed out") ||
+    text.includes("socket hang up") ||
+    text.includes("econnreset") ||
+    text.includes("etimedout") ||
+    text.includes("eai_again") ||
+    text.includes("429") ||
+    text.includes("too many requests") ||
+    text.includes("temporarily unavailable") ||
+    text.includes("service unavailable")
+  );
+}
+
+async function withRetries(task, options = {}) {
+  const attempts = Math.max(1, Number(options?.attempts || 1));
+  const delayMs = Math.max(0, Number(options?.delayMs || 0));
+  const signal = options?.signal || null;
+  const label = String(options?.label || "retry-task");
+  const shouldRetry =
+    typeof options?.shouldRetry === "function"
+      ? options.shouldRetry
+      : () => false;
+
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    throwIfAborted(signal);
+
+    try {
+      return await task(attempt);
+    } catch (error) {
+      if (signal?.aborted) {
+        throw buildAbortError(signal);
+      }
+
+      lastError = error;
+      const canRetry = attempt < attempts && shouldRetry(error, attempt);
+      if (!canRetry) {
+        throw error;
+      }
+
+      console.warn(
+        `${label} reintento ${attempt}/${attempts}:`,
+        error?.message || error
+      );
+
+      const waitMs = delayMs * attempt;
+      if (waitMs > 0) {
+        await sleep(waitMs);
+      }
+    }
+  }
+
+  throw lastError || new Error("Retry failed.");
+}
+
+function toFriendlyVideoError(error) {
+  const raw = normalizeErrorText(error);
+  const lower = raw.toLowerCase();
+
+  if (
+    lower.includes("http 401") ||
+    lower.includes("unauthorized") ||
+    lower.includes("internal yt1s link error") ||
+    lower.includes("internal link error") ||
+    lower.includes("no se encontro un formato")
+  ) {
+    return "No pude generar el enlace interno de video tras 3 intentos. Intenta de nuevo en unos segundos.";
+  }
+
+  if (
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("socket hang up") ||
+    lower.includes("econnreset") ||
+    lower.includes("eai_again")
+  ) {
+    return "El servidor de descarga tardo demasiado. Reintenta en unos segundos.";
+  }
+
+  return raw || "Error al procesar el video.";
+}
+
 function extractApiError(data, status) {
   return (
     data?.detail ||
@@ -247,21 +350,39 @@ async function resolveSearch(query) {
 }
 
 async function requestVideoLink(videoUrl, endpointUrl, sourceLabel, options = {}) {
-  const data = await apiGet(
-    endpointUrl,
-    {
-      mode: "link",
-      quality: VIDEO_QUALITY,
-      url: videoUrl,
-    },
-    45000,
-    options
-  );
+  const signal = options?.signal || null;
 
-  const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
-  if (!downloadUrl) {
-    throw new Error(`La ruta ${sourceLabel} no devolvió enlace de descarga.`);
-  }
+  const { data, downloadUrl } = await withRetries(
+    async () => {
+      const apiData = await apiGet(
+        endpointUrl,
+        {
+          mode: "link",
+          quality: VIDEO_QUALITY,
+          url: videoUrl,
+        },
+        45000,
+        options
+      );
+
+      const resolvedUrl = normalizeApiUrl(pickApiDownloadUrl(apiData));
+      if (!resolvedUrl) {
+        throw new Error(`internal link error: no se encontro un formato video disponible (${sourceLabel})`);
+      }
+
+      return {
+        data: apiData,
+        downloadUrl: resolvedUrl,
+      };
+    },
+    {
+      attempts: REQUEST_RETRY_ATTEMPTS,
+      delayMs: REQUEST_RETRY_DELAY_MS,
+      signal,
+      label: `ytmp4-link-${sourceLabel}`,
+      shouldRetry: shouldRetryDownloadError,
+    }
+  );
 
   return {
     sourceLabel,
@@ -565,14 +686,25 @@ async function downloadVideoFromApiWithFallbacks(videoUrl, outputPath, options =
   const errors = [];
 
   for (const source of VIDEO_SOURCES) {
-    deleteFileSafe(outputPath);
-
     try {
-      const downloaded = await downloadVideoFromApi(videoUrl, outputPath, {
-        ...options,
-        signal,
-        endpointUrl: source.endpointUrl,
-      });
+      const downloaded = await withRetries(
+        async () => {
+          deleteFileSafe(outputPath);
+
+          return await downloadVideoFromApi(videoUrl, outputPath, {
+            ...options,
+            signal,
+            endpointUrl: source.endpointUrl,
+          });
+        },
+        {
+          attempts: REQUEST_RETRY_ATTEMPTS,
+          delayMs: REQUEST_RETRY_DELAY_MS,
+          signal,
+          label: `ytmp4-file-${source.sourceLabel}`,
+          shouldRetry: shouldRetryDownloadError,
+        }
+      );
 
       return {
         ...downloaded,
@@ -741,15 +873,17 @@ export default {
     let finalVideoFile = null;
     let downloadCharge = null;
 
-    const until = cooldowns.get(userId);
-    if (until && until > Date.now()) {
-      return sock.sendMessage(from, {
-        text: `⏳ Espera ${getCooldownRemaining(until)}s`,
-        ...global.channelInfo,
-      });
-    }
+    if (COOLDOWN_TIME > 0) {
+      const until = cooldowns.get(userId);
+      if (until && until > Date.now()) {
+        return sock.sendMessage(from, {
+          text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+          ...global.channelInfo,
+        });
+      }
 
-    cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+      cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+    }
 
     try {
       const rawInput = resolveUserInput(ctx);
@@ -908,7 +1042,7 @@ export default {
       }
 
       await sock.sendMessage(from, {
-        text: `❌ ${String(err?.message || "Error al procesar el video.")}`,
+        text: `❌ ${toFriendlyVideoError(err)}`,
         ...global.channelInfo,
       });
     } finally {

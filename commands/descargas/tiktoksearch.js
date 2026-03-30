@@ -3,6 +3,8 @@ import { chargeDownloadRequest, refundDownloadCharge } from "../economia/downloa
 
 const RESULT_LIMIT = 5;
 const DEFAULT_CAROUSEL_COVER = "https://i.ibb.co/5xrnyZhN/fsociety-bot-profile.png";
+const SEARCH_RETRY_ATTEMPTS = 3;
+const SEARCH_RETRY_DELAY_MS = 900;
 
 function getPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
@@ -45,6 +47,37 @@ function compactUrl(value = "", max = 95) {
   const text = String(value || "").trim();
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(1, max - 3))}...`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function searchTikTokVideosWithRetries(query, limit) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= SEARCH_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const results = await searchTikTokVideos(query, limit);
+      if (Array.isArray(results) && results.length > 0) {
+        return results;
+      }
+
+      lastError = new Error("No se encontraron resultados.");
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < SEARCH_RETRY_ATTEMPTS) {
+      await sleep(SEARCH_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  if (String(lastError?.message || "").toLowerCase() === "no se encontraron resultados.") {
+    return [];
+  }
+
+  throw lastError || new Error("Error de busqueda TikTok.");
 }
 
 function buildTikTokPublicUrl(item = {}) {
@@ -293,7 +326,7 @@ export default {
     let downloadCharge = null;
 
     try {
-      const results = await searchTikTokVideos(q, RESULT_LIMIT);
+      const results = await searchTikTokVideosWithRetries(q, RESULT_LIMIT);
 
       if (!results.length) {
         return sock.sendMessage(
@@ -332,7 +365,7 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: "Error obteniendo videos de TikTok.",
+          text: `Error obteniendo videos de TikTok tras ${SEARCH_RETRY_ATTEMPTS} intentos. Intenta otra busqueda en unos segundos.`,
           ...global.channelInfo,
         },
         { quoted: msg }

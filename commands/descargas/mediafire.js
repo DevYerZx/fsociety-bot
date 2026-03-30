@@ -7,7 +7,7 @@ import { chargeDownloadRequest, refundDownloadCharge } from "../economia/downloa
 
 const API_BASE = "https://dvyer-api.onrender.com";
 const API_MEDIAFIRE_URL = `${API_BASE}/mediafire`;
-const COOLDOWN_TIME = 15 * 1000;
+const COOLDOWN_TIME = 0;
 const REQUEST_TIMEOUT = 120000;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-mediafire");
@@ -317,15 +317,17 @@ export default {
     let tempPath = null;
     let downloadCharge = null;
 
-    const until = cooldowns.get(userId);
-    if (until && until > Date.now()) {
-      return sock.sendMessage(from, {
-        text: `Espera ${getCooldownRemaining(until)}s`,
-        ...global.channelInfo,
-      });
-    }
+    if (COOLDOWN_TIME > 0) {
+      const until = cooldowns.get(userId);
+      if (until && until > Date.now()) {
+        return sock.sendMessage(from, {
+          text: `Espera ${getCooldownRemaining(until)}s`,
+          ...global.channelInfo,
+        });
+      }
 
-    cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+      cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
+    }
 
     try {
       const rawInput = resolveUserInput(ctx);

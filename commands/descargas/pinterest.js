@@ -1,7 +1,7 @@
 import { searchPinterestImages } from "./_searchFallbacks.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 
-const COOLDOWN_TIME = 8 * 1000;
+const COOLDOWN_TIME = 0;
 const cooldowns = new Map();
 
 function clean(str = "") {
@@ -27,18 +27,22 @@ export default {
     const { sock, from, args, msg } = ctx;
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const userId = from;
-    const now = Date.now();
-    const wait = (cooldowns.get(userId) || 0) - now;
+    if (COOLDOWN_TIME > 0) {
+      const now = Date.now();
+      const wait = (cooldowns.get(userId) || 0) - now;
 
-    if (wait > 0) {
-      return sock.sendMessage(
-        from,
-        {
-          text: `Espera ${Math.ceil(wait / 1000)}s para volver a buscar.`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
+      if (wait > 0) {
+        return sock.sendMessage(
+          from,
+          {
+            text: `Espera ${Math.ceil(wait / 1000)}s para volver a buscar.`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+
+      cooldowns.set(userId, now + COOLDOWN_TIME);
     }
 
     const query = clean(args.join(" "));
@@ -52,8 +56,6 @@ export default {
         quoted
       );
     }
-
-    cooldowns.set(userId, now + COOLDOWN_TIME);
 
     await sock.sendMessage(
       from,
