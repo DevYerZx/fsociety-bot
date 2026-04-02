@@ -8,7 +8,7 @@ import {
 export default {
   name: "idioma",
   command: ["idioma", "language", "lang"],
-  category: "sistema",
+  category: "herramientas",
   description: "Configura el idioma por chat o grupo",
 
   run: async ({ sock, msg, from, args = [], settings, esOwner, esAdmin, isGroup }) => {

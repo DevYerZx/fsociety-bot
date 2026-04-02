@@ -12,7 +12,7 @@ function getPrefix(settings) {
 export default {
   name: "tiktokusuario",
   command: ["tiktokusuario", "ttuser", "ttperfil"],
-  category: "descarga",
+  category: "busqueda",
   description: "Busca videos de un usuario especifico en TikTok",
 
   run: async (ctx) => {

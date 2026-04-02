@@ -304,7 +304,7 @@ async function sendFallbackResults(sock, from, quoted, query, results, prefix) {
 export default {
   name: "ttsearch",
   command: ["ttsearch", "ttksearch", "tts", "tiktoksearch"],
-  category: "descarga",
+  category: "busqueda",
   description: "Busca videos de TikTok y envia carrusel de videos",
 
   run: async (ctx) => {

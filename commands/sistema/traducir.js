@@ -158,7 +158,7 @@ async function translateText(text, source, target) {
 export default {
   name: "traducir",
   command: ["traducir", "translate", "tr"],
-  category: "sistema",
+  category: "herramientas",
   description: "Traduce texto sin IA de pago usando servicios publicos",
 
   run: async (ctx) => {

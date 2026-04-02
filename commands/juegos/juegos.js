@@ -45,8 +45,6 @@ export default {
         `- ${prefix}banderas\n` +
         `- ${prefix}tictactoe\n` +
         `- ${prefix}ruleta rojo\n\n` +
-          `Free Fire (categoria aparte):\n` +
-          `- ${prefix}ffcatalogo\n\n` +
           `Rankings:\n` +
           `- ${prefix}topjuegos\n` +
           `- ${prefix}topjuegos grupo\n` +
