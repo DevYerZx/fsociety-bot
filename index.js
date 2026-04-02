@@ -1684,6 +1684,7 @@ let usageStatsSaveTimer = null;
 let managedBotSyncInterval = null;
 let autoCleanInterval = null;
 let botHealthCheckInterval = null;
+let liveConsoleTelemetryInterval = null;
 let dashboardServer = null;
 let secondaryBotStartInProgress = false;
 const WEB_BRIDGE_TOKEN = String(process.env.WEB_BRIDGE_TOKEN || "").trim();
@@ -1739,6 +1740,14 @@ const CONSOLE_NET_REFERENCE_MBPS = Math.max(
 const CONSOLE_METRIC_PING_URL = String(
   process.env.CONSOLE_METRIC_PING_URL || buildDvyerUrl("/health")
 ).trim();
+const CONSOLE_LIVE_TELEMETRY_ENABLED = parseBooleanEnv(
+  "CONSOLE_LIVE_TELEMETRY",
+  true
+);
+const CONSOLE_LIVE_TELEMETRY_INTERVAL_MS = Math.max(
+  8_000,
+  parseNumberEnv("CONSOLE_LIVE_TELEMETRY_INTERVAL_MS", 20_000) || 20_000
+);
 const DASHBOARD_AUTO_ENABLED = parseBooleanEnv("DASHBOARD_ENABLED", false);
 const DASHBOARD_AUTO_PORT = Math.max(
   1,
@@ -4894,6 +4903,55 @@ async function measureHttpLatencyMs(url, timeoutMs = CONSOLE_METRIC_HTTP_TIMEOUT
   }
 }
 
+async function collectLiveTelemetrySnapshot(forceLatency = false) {
+  const cpuCount = Math.max(1, Number(os.cpus()?.length || 1));
+  const loadAverage = Number(os.loadavg?.()[0] || 0);
+  const totalMemBytes = Math.max(1, Number(os.totalmem() || 0));
+  const usedMemBytes = Math.max(0, totalMemBytes - Number(os.freemem() || 0));
+  const networkMetrics = getRealtimeNetworkMetrics();
+  const latencyMs = forceLatency
+    ? await measureHttpLatencyMs(CONSOLE_METRIC_PING_URL)
+    : Math.max(1, Number(lastMeasuredLatencyMs || 0));
+
+  return {
+    cpuPct: Math.max(1, Math.min(99, Math.round((loadAverage / cpuCount) * 100))),
+    ramPct: Math.max(1, Math.min(99, Math.round((usedMemBytes / totalMemBytes) * 100))),
+    netPct: networkMetrics.percent,
+    netMbps: networkMetrics.mbps,
+    latencyMs: Math.max(1, Number(latencyMs || 1)),
+  };
+}
+
+function startLiveConsoleTelemetryTicker() {
+  if (!CONSOLE_LIVE_TELEMETRY_ENABLED || liveConsoleTelemetryInterval) {
+    return;
+  }
+
+  let tick = 0;
+
+  const runTick = () => {
+    tick += 1;
+    const forceLatency = tick % 3 === 1;
+
+    collectLiveTelemetrySnapshot(forceLatency)
+      .then((snapshot) => {
+        const mainState = getMainBotState() || { config: { label: "MAIN" } };
+        logBotEvent(
+          mainState,
+          "info",
+          `Live Metrics | CPU ${snapshot.cpuPct}% | RAM ${snapshot.ramPct}% | ` +
+            `NET ${snapshot.netPct}% (${snapshot.netMbps.toFixed(2)} Mbps) | ` +
+            `LAT ${snapshot.latencyMs} ms`
+        );
+      })
+      .catch(() => {});
+  };
+
+  liveConsoleTelemetryInterval = setInterval(runTick, CONSOLE_LIVE_TELEMETRY_INTERVAL_MS);
+  liveConsoleTelemetryInterval.unref?.();
+  runTick();
+}
+
 function buildDashboardProgressBar(percent = 0, width = 20) {
   const normalizedPercent = Math.max(0, Math.min(100, Number(percent || 0)));
   const safeWidth = Math.max(8, Number(width || 20));
@@ -5046,7 +5104,10 @@ async function banner() {
   const terminalWidth = Number(process.stdout?.columns || 0);
   const bodyWidth = Math.max(80, Math.min(118, terminalWidth > 0 ? terminalWidth - 2 : 100));
   const isInteractiveTerminal = Boolean(process.stdout?.isTTY);
-  const animateBoot = CONSOLE_BOOT_ANIMATION && isInteractiveTerminal;
+  const animateBoot =
+    CONSOLE_BOOT_ANIMATION &&
+    isInteractiveTerminal &&
+    !isPm2Environment(process.env);
   const bootSteps = animateBoot ? 5 : 1;
   const bootDelayMs = CONSOLE_BOOT_FRAME_DELAY_MS;
   const onlinePulseFrames = ["●", "○", "◇", "◆"];
@@ -7347,6 +7408,7 @@ async function start() {
   flushManagedBotRuntimeStates();
   ensureDashboardServer();
   runAutoClean();
+  startLiveConsoleTelemetryTicker();
 
   if (!managedBotSyncInterval) {
     managedBotSyncInterval = setInterval(() => {
@@ -7405,6 +7467,10 @@ process.on("SIGINT", () => {
     if (botHealthCheckInterval) {
       clearInterval(botHealthCheckInterval);
       botHealthCheckInterval = null;
+    }
+    if (liveConsoleTelemetryInterval) {
+      clearInterval(liveConsoleTelemetryInterval);
+      liveConsoleTelemetryInterval = null;
     }
     writeAtomicJsonFile(USAGE_STATS_FILE, usageStats);
   } catch {}
