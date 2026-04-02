@@ -294,6 +294,11 @@ export default {
       return;
     }
 
+    // Usuario normal: bloquear en silencio (sin avisos).
+    if (!esAdmin && !esOwner) {
+      return true;
+    }
+
     const sender =
       msg?.sender ||
       msg?.key?.participant ||
@@ -307,17 +312,10 @@ export default {
       const prefix = getPrimaryPrefix(settings);
       const mentionJid = getParticipantMentionJid(groupMetadata || {}, null, sender);
 
-      let warningText =
+      const warningText =
         `🚫 *BOT OFF EN ESTE GRUPO*\n\n` +
         `Este grupo tiene el bot apagado.\n` +
         `Activalo con: *${prefix}botgrupo on*`;
-
-      if (isControlCommand && !esAdmin && !esOwner) {
-        warningText =
-          `🚫 *BOT OFF EN ESTE GRUPO*\n\n` +
-          `Solo admins/owner pueden volver a encender el bot.\n` +
-          `Pidele a un admin usar: *${prefix}botgrupo on*`;
-      }
 
       await sock.sendMessage(
         from,
