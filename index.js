@@ -14,6 +14,7 @@ import os from "os";
 import http from "http";
 import { spawn } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
+import { buildDvyerUrl } from "./lib/api-manager.js";
 import {
   recordWeeklyCommand,
   recordWeeklyMessage,
@@ -1727,6 +1728,17 @@ const CONSOLE_BOOT_FRAME_DELAY_MS = Math.max(
   90,
   parseNumberEnv("CONSOLE_BOOT_FRAME_DELAY_MS", 180) || 180
 );
+const CONSOLE_METRIC_HTTP_TIMEOUT_MS = Math.max(
+  600,
+  parseNumberEnv("CONSOLE_METRIC_HTTP_TIMEOUT_MS", 1400) || 1400
+);
+const CONSOLE_NET_REFERENCE_MBPS = Math.max(
+  5,
+  parseNumberEnv("CONSOLE_NET_REFERENCE_MBPS", 120) || 120
+);
+const CONSOLE_METRIC_PING_URL = String(
+  process.env.CONSOLE_METRIC_PING_URL || buildDvyerUrl("/health")
+).trim();
 const DASHBOARD_AUTO_ENABLED = parseBooleanEnv("DASHBOARD_ENABLED", false);
 const DASHBOARD_AUTO_PORT = Math.max(
   1,
@@ -4744,6 +4756,8 @@ function setDashboardConfig(patch = {}) {
 // ================= BANNER =================
 
 let packageVersionLabelCache = "";
+let networkTrafficSampleCache = null;
+let lastMeasuredLatencyMs = 0;
 
 function getPackageVersionLabel() {
   if (packageVersionLabelCache) {
@@ -4769,6 +4783,115 @@ async function estimateBootLatencyMs() {
   const elapsedNs = Number(process.hrtime.bigint() - start);
   const elapsedMs = Math.max(1, Math.round(elapsedNs / 1_000_000));
   return Math.max(1, elapsedMs - baselineDelayMs);
+}
+
+function readNetworkTrafficSample() {
+  try {
+    const raw = fs.readFileSync("/proc/net/dev", "utf-8");
+    const lines = raw
+      .split("\n")
+      .slice(2)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    let rxBytes = 0;
+    let txBytes = 0;
+
+    for (const line of lines) {
+      const parts = line.split(/[:\s]+/).filter(Boolean);
+      if (parts.length < 10) continue;
+
+      const iface = String(parts[0] || "").trim();
+      if (!iface || iface === "lo") continue;
+
+      const rx = Number(parts[1] || 0);
+      const tx = Number(parts[9] || 0);
+      if (!Number.isFinite(rx) || !Number.isFinite(tx)) continue;
+
+      rxBytes += rx;
+      txBytes += tx;
+    }
+
+    return {
+      atMs: Date.now(),
+      rxBytes,
+      txBytes,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getRealtimeNetworkMetrics() {
+  const nowSample = readNetworkTrafficSample();
+  if (!nowSample) {
+    return {
+      percent: 0,
+      mbps: 0,
+      rxMbps: 0,
+      txMbps: 0,
+    };
+  }
+
+  const prevSample = networkTrafficSampleCache;
+  networkTrafficSampleCache = nowSample;
+
+  if (!prevSample || nowSample.atMs <= prevSample.atMs) {
+    return {
+      percent: 0,
+      mbps: 0,
+      rxMbps: 0,
+      txMbps: 0,
+    };
+  }
+
+  const elapsedSec = Math.max(0.001, (nowSample.atMs - prevSample.atMs) / 1000);
+  const rxBytesDelta = Math.max(0, nowSample.rxBytes - prevSample.rxBytes);
+  const txBytesDelta = Math.max(0, nowSample.txBytes - prevSample.txBytes);
+  const totalMbps = ((rxBytesDelta + txBytesDelta) * 8) / 1_000_000 / elapsedSec;
+  const rxMbps = (rxBytesDelta * 8) / 1_000_000 / elapsedSec;
+  const txMbps = (txBytesDelta * 8) / 1_000_000 / elapsedSec;
+  const percent = Math.max(
+    1,
+    Math.min(99, Math.round((totalMbps / CONSOLE_NET_REFERENCE_MBPS) * 100))
+  );
+
+  return {
+    percent,
+    mbps: Math.max(0, Number(totalMbps.toFixed(2))),
+    rxMbps: Math.max(0, Number(rxMbps.toFixed(2))),
+    txMbps: Math.max(0, Number(txMbps.toFixed(2))),
+  };
+}
+
+async function measureHttpLatencyMs(url, timeoutMs = CONSOLE_METRIC_HTTP_TIMEOUT_MS) {
+  const target = String(url || "").trim();
+  if (!target || typeof fetch !== "function") {
+    return Math.max(1, Number(lastMeasuredLatencyMs || 0));
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(300, Number(timeoutMs || 0)));
+  timer.unref?.();
+
+  const started = process.hrtime.bigint();
+  try {
+    await fetch(target, {
+      method: "GET",
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const elapsedMs = Math.max(
+      1,
+      Math.round(Number(process.hrtime.bigint() - started) / 1_000_000)
+    );
+    lastMeasuredLatencyMs = elapsedMs;
+    return elapsedMs;
+  } catch {
+    return Math.max(1, Number(lastMeasuredLatencyMs || 0));
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function buildDashboardProgressBar(percent = 0, width = 20) {
@@ -4897,7 +5020,7 @@ function buildDashboardFrame(params = {}) {
   addSection("SYSTEM METER", [
     `CPU      ⟪ ${buildSolidBar(telemetry.cpuPct, 18, "▒")} ⟫ ${String(telemetry.cpuPct).padStart(2, " ")}%`,
     `RAM      ⟪ ${buildSolidBar(telemetry.ramPct, 18, "▒")} ⟫ ${String(telemetry.ramPct).padStart(2, " ")}%`,
-    `NET      ⟪ ${buildSolidBar(netPct, 18, "▒")} ⟫ ${String(netPct).padStart(2, " ")}%`,
+    `NET      ⟪ ${buildSolidBar(netPct, 18, "▒")} ⟫ ${String(netPct).padStart(2, " ")}% (${Number(telemetry.netMbps || 0).toFixed(2)} Mbps)`,
     `LATENCY  ${String(telemetry.latencyMs).padStart(3, " ")} ms    MEM ${telemetry.usedRamGb.toFixed(1)}/${telemetry.totalRamGb.toFixed(1)} GB`,
   ]);
 
@@ -4941,15 +5064,9 @@ async function banner() {
     "✓ Ready for command traffic",
   ];
   const activityLogs = [];
-  const baseLatency = await estimateBootLatencyMs();
-  const cpuCount = Math.max(1, Number(os.cpus()?.length || 1));
-  const loadAverage = Number(os.loadavg?.()[0] || 0);
-  const baseCpuPct = Math.max(2, Math.min(99, Math.round((loadAverage / cpuCount) * 100)));
-  const totalMemBytes = Math.max(1, Number(os.totalmem() || 0));
-  const usedMemBytes = Math.max(0, totalMemBytes - Number(os.freemem() || 0));
-  const baseRamPct = Math.max(2, Math.min(99, Math.round((usedMemBytes / totalMemBytes) * 100)));
-  const usedRamGb = usedMemBytes / (1024 ** 3);
-  const totalRamGb = totalMemBytes / (1024 ** 3);
+  const fallbackLatency = await estimateBootLatencyMs();
+  networkTrafficSampleCache = readNetworkTrafficSample();
+  const initialLatency = await measureHttpLatencyMs(CONSOLE_METRIC_PING_URL);
 
   for (let step = 1; step <= bootSteps; step += 1) {
     const ratio = step / bootSteps;
@@ -4965,11 +5082,24 @@ async function banner() {
           : Math.max(8, Math.round(module.target * ratio)),
     }));
 
+    const cpuCount = Math.max(1, Number(os.cpus()?.length || 1));
+    const loadAverage = Number(os.loadavg?.()[0] || 0);
+    const totalMemBytes = Math.max(1, Number(os.totalmem() || 0));
+    const usedMemBytes = Math.max(0, totalMemBytes - Number(os.freemem() || 0));
+    const usedRamGb = usedMemBytes / (1024 ** 3);
+    const totalRamGb = totalMemBytes / (1024 ** 3);
+    const networkMetrics = getRealtimeNetworkMetrics();
+    const liveLatency =
+      step === bootSteps
+        ? await measureHttpLatencyMs(CONSOLE_METRIC_PING_URL)
+        : Number(initialLatency || fallbackLatency || 1);
+
     const telemetry = {
-      cpuPct: Math.max(1, Math.min(99, baseCpuPct + (step % 2 === 0 ? 1 : 0))),
-      ramPct: Math.max(1, Math.min(99, baseRamPct + (step % 3 === 0 ? 1 : 0))),
-      netPct: Math.max(1, Math.min(99, 100 - Math.min(90, baseLatency * 2) + (step % 2))),
-      latencyMs: Math.max(1, baseLatency + (bootSteps - step)),
+      cpuPct: Math.max(1, Math.min(99, Math.round((loadAverage / cpuCount) * 100))),
+      ramPct: Math.max(1, Math.min(99, Math.round((usedMemBytes / totalMemBytes) * 100))),
+      netPct: networkMetrics.percent,
+      netMbps: networkMetrics.mbps,
+      latencyMs: Math.max(1, Number(liveLatency || fallbackLatency || 1)),
       usedRamGb,
       totalRamGb,
     };
