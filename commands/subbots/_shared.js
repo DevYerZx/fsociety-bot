@@ -143,10 +143,22 @@ export function getSubbotActivityText(bot) {
   return "reservado";
 }
 
+function getAssignedSubbotNumber(bot) {
+  return normalizeNumber(
+    bot?.configuredNumber ||
+      bot?.requesterNumber ||
+      bot?.cachedPairingNumber ||
+      bot?.lastPairingRequestNumber ||
+      ""
+  );
+}
+
 function getSubbotCompactLines(bot) {
+  const assignedNumber = getAssignedSubbotNumber(bot);
   const lines = [
-    `[${bot.slot}] ${bot.label || `SUBBOT${bot.slot}`} | ${getSubbotStatusTone(bot)}`,
-    `Bot: ${bot.displayName}`,
+    `◆ [${bot.slot}] ${bot.label || `SUBBOT${bot.slot}`} | ${getSubbotStatusTone(bot)}`,
+    `Nombre: ${bot.displayName}`,
+    `Numero: ${assignedNumber || "Sin numero"}`,
     `Tiempo: ${getSubbotActivityText(bot)}`,
   ];
 
@@ -171,21 +183,24 @@ function getSubbotCompactLines(bot) {
 export function buildSubbotCard(bot, options = {}) {
   const compact = options?.compact !== false;
   const showSensitive = options?.showSensitive === true;
+  const assignedNumber = getAssignedSubbotNumber(bot);
 
   if (compact) {
     return getSubbotCompactLines(bot).join("\n");
   }
 
   const lines = [
-    `Slot: ${bot.slot}`,
+    `╭─ INFO SUBBOT ${bot.slot} ─`,
     `Estado: ${getSubbotStatusTone(bot)}`,
-    `Bot: ${bot.displayName}`,
+    `Nombre: ${bot.displayName}`,
     `Label: ${bot.label || `SUBBOT${bot.slot}`}`,
+    `Numero actual: ${assignedNumber || "Sin numero"}`,
     `Tiempo activo: ${bot.connected ? formatDuration(bot.connectedForMs || 0) : "No activo ahora"}`,
     `Conectado desde: ${formatMoment(bot.connectedAt, "Sin conexion activa")}`,
     `Solicitud detectada: ${formatMoment(bot.requestedAt, "Sin solicitud reciente")}`,
     `Ultima salida: ${formatMoment(bot.lastDisconnectAt, "Sin desconexion reciente")}`,
     `Liberado: ${formatMoment(bot.releasedAt, "Sin liberar aun")}`,
+    `╰────────────────`,
   ];
 
   if (showSensitive) {

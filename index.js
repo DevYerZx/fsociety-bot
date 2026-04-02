@@ -7261,11 +7261,27 @@ async function iniciarInstanciaBot(config) {
           resetPairingCache(botState);
           botState.pairingCommandHintShown = false;
           scheduleProfileApply(botState, botState.sock);
+          const connectedBotName = resolveConfiguredBotName(config);
+          const connectedNumber = sanitizePhoneNumber(
+            botState?.config?.pairingNumber ||
+              botState?.config?.requesterNumber ||
+              botState?.lastPairingNumber ||
+              ""
+          );
+
           if (botState.config?.id === "main") {
             logBotEvent(
               botState,
               "success",
-              `Ya conectado bot ${resolveConfiguredBotName(config)}`
+              `Ya conectado bot ${connectedBotName}`
+            );
+          } else {
+            logBotEvent(
+              botState,
+              "success",
+              connectedNumber
+                ? `Subbot conectado: ${connectedBotName} | Numero: ${connectedNumber}`
+                : `Subbot conectado: ${connectedBotName}`
             );
           }
           writePersistedBotRuntimeState(botState);
