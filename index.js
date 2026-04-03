@@ -7737,13 +7737,16 @@ async function start() {
     autoCleanInterval = setInterval(() => {
       try {
         const state = getAutoCleanState();
-        if (state.enabled) {
+        const intervalMs = Math.max(60_000, Number(state.intervalMs || 30 * 60 * 1000));
+        const lastRunAt = Number(state.lastRunAt || 0);
+        // Permite cambiar config sin reiniciar: chequeamos cada minuto y corremos cuando toque.
+        if (state.enabled && Date.now() - lastRunAt >= intervalMs) {
           runAutoClean();
         }
       } catch (err) {
         console.error("Error en autoclean:", err);
       }
-    }, Math.max(60_000, Number(getAutoCleanState().intervalMs || 30 * 60 * 1000)));
+    }, 60_000);
     autoCleanInterval.unref?.();
   }
 

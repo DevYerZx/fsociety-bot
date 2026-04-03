@@ -15,3 +15,6 @@ dvyer-session*/
 dvyer-session-subbot/
 dvyer-session-subbot*/
 database/runtime/
+database/autoclean.json
+database/economy.json
+database/usage-stats.json

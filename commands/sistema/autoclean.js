@@ -36,6 +36,7 @@ export default {
           text:
             `*AUTO CLEAN EJECUTADO*\n\n` +
             `Archivos borrados: *${result.removedFiles}*\n` +
+            `Carpetas vacias borradas: *${result.removedDirs || 0}*\n` +
             `Espacio liberado: *${result.freedLabel}*`,
           ...global.channelInfo,
         },
@@ -46,9 +47,11 @@ export default {
     if (action === "config") {
       const intervalMinutes = Number(args[1] || 30);
       const ageMinutes = Number(args[2] || 360);
+      const tmpLimitMb = args[3] == null ? null : Number(args[3]);
       const state = runtime.setAutoCleanConfig({
         intervalMs: intervalMinutes * 60 * 1000,
         maxFileAgeMs: ageMinutes * 60 * 1000,
+        ...(Number.isFinite(tmpLimitMb) ? { maxTmpTotalBytes: tmpLimitMb * 1024 * 1024 } : {}),
       });
 
       return sock.sendMessage(
@@ -57,7 +60,8 @@ export default {
           text:
             `Autoclean actualizado.\n` +
             `Intervalo: *${formatDuration(state.intervalMs)}*\n` +
-            `Edad maxima: *${formatDuration(state.maxFileAgeMs)}*`,
+            `Edad maxima: *${formatDuration(state.maxFileAgeMs)}*\n` +
+            `Limite TMP: *${formatBytes(state.maxTmpTotalBytes)}*`,
           ...global.channelInfo,
         },
         { quoted: msg }
@@ -74,13 +78,16 @@ export default {
           `Estado: *${state.enabled ? "ENCENDIDO" : "APAGADO"}*\n` +
           `Intervalo: *${formatDuration(state.intervalMs)}*\n` +
           `Edad maxima: *${formatDuration(state.maxFileAgeMs)}*\n` +
+          `Limite TMP: *${formatBytes(state.maxTmpTotalBytes)}*\n` +
           `Ultima ejecucion: *${state.lastRunAt ? new Date(state.lastRunAt).toLocaleString("es-PE") : "Nunca"}*\n` +
-          `Ultimo borrado: *${state.lastSummary.removedFiles} archivos / ${formatBytes(state.lastSummary.freedBytes)}*\n\n` +
+          `Ultimo borrado: *${state.lastSummary.removedFiles} archivos / ${formatBytes(state.lastSummary.freedBytes)}*\n` +
+          `TMP: *${formatBytes(state.lastSummary.tmpTotalBytes)}* / *${formatBytes(state.lastSummary.tmpLimitBytes || state.maxTmpTotalBytes)}*` +
+          `${state.lastSummary.tmpOverLimit ? " (recorte por limite)" : ""}\n\n` +
           `Uso:\n` +
           `${prefix}autoclean on\n` +
           `${prefix}autoclean off\n` +
           `${prefix}autoclean run\n` +
-          `${prefix}autoclean config 30 360`,
+          `${prefix}autoclean config 30 360 1024`,
         ...global.channelInfo,
       },
       { quoted: msg }
