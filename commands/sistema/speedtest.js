@@ -8,6 +8,65 @@ const DEFAULT_UPLOAD_BYTES = 4_000_000;
 const REQUEST_TIMEOUT_MS = 45_000;
 const TRACE_TIMEOUT_MS = 8_000;
 
+const DEFAULT_HEADERS = {
+  "user-agent":
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  accept: "*/*",
+  "accept-language": "es-419,es;q=0.9,en;q=0.8",
+  "cache-control": "no-cache",
+  pragma: "no-cache",
+};
+
+const CF_HEADERS = {
+  ...DEFAULT_HEADERS,
+  origin: TEST_HOST,
+  referer: `${TEST_HOST}/`,
+};
+
+const DOWNLOAD_FALLBACKS = [
+  {
+    name: "Cloudflare",
+    buildUrl: (bytesWanted) => `${TEST_HOST}/__down?bytes=${bytesWanted}&r=${Date.now()}`,
+    headers: CF_HEADERS,
+  },
+  {
+    name: "Hetzner",
+    url: "https://speed.hetzner.de/100MB.bin",
+    headers: DEFAULT_HEADERS,
+    supportsRange: true,
+  },
+  {
+    name: "OVH",
+    url: "https://proof.ovh.net/files/100Mb.dat",
+    headers: DEFAULT_HEADERS,
+    supportsRange: true,
+  },
+  {
+    name: "Cachefly",
+    url: "https://cachefly.cachefly.net/100mb.test",
+    headers: DEFAULT_HEADERS,
+    supportsRange: true,
+  },
+];
+
+const UPLOAD_FALLBACKS = [
+  {
+    name: "Cloudflare",
+    buildUrl: () => `${TEST_HOST}/__up?r=${Date.now()}`,
+    headers: CF_HEADERS,
+  },
+  {
+    name: "Postman",
+    url: "https://postman-echo.com/post",
+    headers: DEFAULT_HEADERS,
+  },
+  {
+    name: "Httpbin",
+    url: "https://httpbin.org/post",
+    headers: DEFAULT_HEADERS,
+  },
+];
+
 let activeSpeedtest = null;
 
 function formatBytes(bytes) {
@@ -68,14 +127,48 @@ async function readResponseBytes(response) {
   return total;
 }
 
+async function readResponseBytesLimited(response, limitBytes) {
+  const limit = Number(limitBytes || 0);
+  if (!limit || limit <= 0) {
+    return await readResponseBytes(response);
+  }
+
+  if (!response?.body?.getReader) {
+    const payload = await response.arrayBuffer();
+    return Math.min(payload.byteLength, limit);
+  }
+
+  const reader = response.body.getReader();
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value?.byteLength || 0;
+    if (total >= limit) {
+      try {
+        await reader.cancel();
+      } catch {}
+      break;
+    }
+  }
+
+  return total;
+}
+
 async function runTimedFetch(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = process.hrtime.bigint();
 
   try {
+    const headers = {
+      ...(DEFAULT_HEADERS || {}),
+      ...(options?.headers || {}),
+    };
     const response = await fetch(url, {
       ...options,
+      headers,
       signal: controller.signal,
     });
 
@@ -91,13 +184,34 @@ async function runTimedFetch(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) 
 
 async function measurePing() {
   const samples = [];
+  let useFallback = false;
 
   for (let index = 0; index < PING_SAMPLES; index += 1) {
-    const query = `${TEST_HOST}/__down?bytes=1&r=${Date.now()}-${index}`;
-    const { response, startedAt } = await runTimedFetch(query, { method: "GET" });
-    await readResponseBytes(response);
-    const endedAt = process.hrtime.bigint();
-    samples.push(Number(endedAt - startedAt) / 1_000_000);
+    try {
+      const query = `${TEST_HOST}/__down?bytes=1&r=${Date.now()}-${index}`;
+      const { response, startedAt } = await runTimedFetch(query, { method: "GET", headers: CF_HEADERS });
+      await readResponseBytesLimited(response, 8_192);
+      const endedAt = process.hrtime.bigint();
+      samples.push(Number(endedAt - startedAt) / 1_000_000);
+    } catch {
+      useFallback = true;
+      break;
+    }
+  }
+
+  if (useFallback) {
+    samples.length = 0;
+    for (let index = 0; index < PING_SAMPLES; index += 1) {
+      const query = `${TRACE_HOST}?r=${Date.now()}-${index}`;
+      const { response, startedAt } = await runTimedFetch(
+        query,
+        { method: "GET", headers: DEFAULT_HEADERS },
+        TRACE_TIMEOUT_MS
+      );
+      await readResponseBytesLimited(response, 8_192);
+      const endedAt = process.hrtime.bigint();
+      samples.push(Number(endedAt - startedAt) / 1_000_000);
+    }
   }
 
   const jitter = stdDev(samples);
@@ -111,40 +225,95 @@ async function measurePing() {
 
 async function measureDownload(bytesToDownload) {
   const bytesWanted = Math.max(1_000_000, Number(bytesToDownload || DEFAULT_DOWNLOAD_BYTES));
-  const query = `${TEST_HOST}/__down?bytes=${bytesWanted}&r=${Date.now()}`;
-  const { response, startedAt } = await runTimedFetch(query, { method: "GET" });
-  const bytes = await readResponseBytes(response);
-  const endedAt = process.hrtime.bigint();
-  const elapsedMs = Number(endedAt - startedAt) / 1_000_000;
+  let lastError = "No pude medir descarga.";
+
+  for (const provider of DOWNLOAD_FALLBACKS) {
+    try {
+      const url = provider.buildUrl ? provider.buildUrl(bytesWanted) : provider.url;
+      const headers = { ...(provider.headers || {}) };
+
+      if (provider.supportsRange) {
+        headers.range = `bytes=0-${bytesWanted - 1}`;
+      }
+
+      const { response, startedAt } = await runTimedFetch(url, { method: "GET", headers });
+      const bytes = await readResponseBytesLimited(response, bytesWanted);
+      const endedAt = process.hrtime.bigint();
+      const elapsedMs = Number(endedAt - startedAt) / 1_000_000;
+
+      return {
+        ok: true,
+        provider: provider.name,
+        sourceUrl: url,
+        bytes,
+        elapsedMs,
+        speedLabel: formatMbps(bytes, elapsedMs),
+      };
+    } catch (error) {
+      lastError = `${provider.name}: ${error?.message || error}`;
+      continue;
+    }
+  }
 
   return {
-    bytes,
-    elapsedMs,
-    speedLabel: formatMbps(bytes, elapsedMs),
+    ok: false,
+    provider: "",
+    sourceUrl: "",
+    bytes: 0,
+    elapsedMs: 0,
+    speedLabel: "0.00 Mbps",
+    error: lastError,
   };
 }
 
 async function measureUpload(bytesToUpload) {
   const bytesWanted = Math.max(500_000, Number(bytesToUpload || DEFAULT_UPLOAD_BYTES));
-  const payload = Buffer.alloc(bytesWanted, 97);
-  const query = `${TEST_HOST}/__up?r=${Date.now()}`;
-  const { response, startedAt } = await runTimedFetch(query, {
-    method: "POST",
-    headers: {
-      "content-type": "application/octet-stream",
-      "content-length": String(payload.length),
-    },
-    body: payload,
-  });
+  // Evita que algunos endpoints bloqueen cargas grandes.
+  const payloadSize = clampNumber(bytesWanted, 500_000, 4_000_000);
+  const payload = Buffer.alloc(payloadSize, 97);
+  let lastError = "No pude medir subida.";
 
-  await response.text();
-  const endedAt = process.hrtime.bigint();
-  const elapsedMs = Number(endedAt - startedAt) / 1_000_000;
+  for (const provider of UPLOAD_FALLBACKS) {
+    try {
+      const url = provider.buildUrl ? provider.buildUrl() : provider.url;
+      const headers = {
+        ...(provider.headers || {}),
+        "content-type": "application/octet-stream",
+        "content-length": String(payload.length),
+      };
+
+      const { response, startedAt } = await runTimedFetch(url, {
+        method: "POST",
+        headers,
+        body: payload,
+      });
+
+      await response.text();
+      const endedAt = process.hrtime.bigint();
+      const elapsedMs = Number(endedAt - startedAt) / 1_000_000;
+
+      return {
+        ok: true,
+        provider: provider.name,
+        sourceUrl: url,
+        bytes: payload.length,
+        elapsedMs,
+        speedLabel: formatMbps(payload.length, elapsedMs),
+      };
+    } catch (error) {
+      lastError = `${provider.name}: ${error?.message || error}`;
+      continue;
+    }
+  }
 
   return {
+    ok: false,
+    provider: "",
+    sourceUrl: "",
     bytes: payload.length,
-    elapsedMs,
-    speedLabel: formatMbps(payload.length, elapsedMs),
+    elapsedMs: 0,
+    speedLabel: "0.00 Mbps",
+    error: lastError,
   };
 }
 
@@ -200,7 +369,9 @@ function buildSvgReport(result, meta) {
   const jitterPct = clampNumber(((100 - Math.min(100, jitter)) / 100) * 100, 0, 100);
 
   const title = "FSOCIETY SPEEDTEST";
-  const subtitle = "Fuente: Cloudflare (speed.cloudflare.com)";
+  const dlSource = result?.download?.provider ? `DL: ${result.download.provider}` : "DL: ?";
+  const ulSource = result?.upload?.provider ? `UL: ${result.upload.provider}` : "UL: ?";
+  const subtitle = `Fuente: ${dlSource} | ${ulSource}`;
   const ipLine = meta?.ip ? `IP: ${meta.ip}  COLO: ${meta.colo || "?"}  LOC: ${meta.loc || "?"}` : "";
   const hostLine = `Host: ${os.hostname()}  OS: ${os.platform()} ${os.release()}`;
   const timeLine = `Hora: ${new Date(result?.finishedAt || Date.now()).toLocaleString("es-PE")}`;
@@ -327,16 +498,21 @@ async function executeSpeedtest(options = {}) {
 function buildResultMessage(result) {
   const totalTimeMs = Math.max(0, Number(result?.finishedAt || 0) - Number(result?.startedAt || 0));
 
+  const dlOk = result?.download?.ok !== false;
+  const ulOk = result?.upload?.ok !== false;
+  const dlProvider = result?.download?.provider ? ` (${result.download.provider})` : "";
+  const ulProvider = result?.upload?.provider ? ` (${result.upload.provider})` : "";
+
   return (
     `*SPEEDTEST BOT*\n\n` +
-    `Host prueba: *Cloudflare Speed Test*\n` +
+    `Fuente: *Cloudflare/Alternativo*\n` +
     `Ping promedio: *${formatMs(result?.ping?.averageMs)}*\n` +
     `Ping mejor: *${formatMs(result?.ping?.bestMs)}*\n` +
     `Jitter: *${formatMs(result?.ping?.jitterMs)}*\n` +
-    `Descarga: *${result?.download?.speedLabel || "0.00 Mbps"}*\n` +
-    `Subida: *${result?.upload?.speedLabel || "0.00 Mbps"}*\n` +
-    `Datos descarga: *${formatBytes(result?.download?.bytes)}*\n` +
-    `Datos subida: *${formatBytes(result?.upload?.bytes)}*\n` +
+    `Descarga: *${result?.download?.speedLabel || "0.00 Mbps"}*${dlProvider}\n` +
+    `Subida: *${result?.upload?.speedLabel || "0.00 Mbps"}*${ulProvider}\n` +
+    `Datos descarga: *${formatBytes(result?.download?.bytes)}*${dlOk ? "" : " (fallo)" }\n` +
+    `Datos subida: *${formatBytes(result?.upload?.bytes)}*${ulOk ? "" : " (fallo)" }\n` +
     `Tiempo total: *${formatMs(totalTimeMs)}*`
   );
 }
