@@ -1,5 +1,11 @@
 import { formatBytes, formatDuration, getPrimaryPrefix } from "../../lib/json-store.js";
 
+function formatTmpLimit(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "DESACTIVADO";
+  return formatBytes(value);
+}
+
 export default {
   name: "autoclean",
   command: ["autoclean", "autolimpieza", "cleaner"],
@@ -61,7 +67,7 @@ export default {
             `Autoclean actualizado.\n` +
             `Intervalo: *${formatDuration(state.intervalMs)}*\n` +
             `Edad maxima: *${formatDuration(state.maxFileAgeMs)}*\n` +
-            `Limite TMP: *${formatBytes(state.maxTmpTotalBytes)}*`,
+            `Limite TMP: *${formatTmpLimit(state.maxTmpTotalBytes)}*`,
           ...global.channelInfo,
         },
         { quoted: msg }
@@ -78,16 +84,16 @@ export default {
           `Estado: *${state.enabled ? "ENCENDIDO" : "APAGADO"}*\n` +
           `Intervalo: *${formatDuration(state.intervalMs)}*\n` +
           `Edad maxima: *${formatDuration(state.maxFileAgeMs)}*\n` +
-          `Limite TMP: *${formatBytes(state.maxTmpTotalBytes)}*\n` +
+          `Limite TMP: *${formatTmpLimit(state.maxTmpTotalBytes)}*\n` +
           `Ultima ejecucion: *${state.lastRunAt ? new Date(state.lastRunAt).toLocaleString("es-PE") : "Nunca"}*\n` +
           `Ultimo borrado: *${state.lastSummary.removedFiles} archivos / ${formatBytes(state.lastSummary.freedBytes)}*\n` +
-          `TMP: *${formatBytes(state.lastSummary.tmpTotalBytes)}* / *${formatBytes(state.lastSummary.tmpLimitBytes || state.maxTmpTotalBytes)}*` +
+          `TMP: *${formatBytes(state.lastSummary.tmpTotalBytes)}* / *${formatTmpLimit(state.lastSummary.tmpLimitBytes || state.maxTmpTotalBytes)}*` +
           `${state.lastSummary.tmpOverLimit ? " (recorte por limite)" : ""}\n\n` +
           `Uso:\n` +
           `${prefix}autoclean on\n` +
           `${prefix}autoclean off\n` +
           `${prefix}autoclean run\n` +
-          `${prefix}autoclean config 30 360 1024`,
+          `${prefix}autoclean config 30 360 0`,
         ...global.channelInfo,
       },
       { quoted: msg }
