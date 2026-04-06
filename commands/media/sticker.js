@@ -36,10 +36,11 @@ function ffmpegToWebp(input, output) {
     ffmpeg(input)
       .outputOptions([
         "-vcodec", "libwebp",
-        "-vf", "scale=512:512:force_original_aspect_ratio=decrease,fps=15,pad=512:512:-1:-1:color=white@0.0",
+        "-vf", "fps=15,scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000",
         "-lossless", "1",
         "-qscale", "50",
         "-preset", "default",
+        "-pix_fmt", "yuva420p",
         "-an",
         "-vsync", "0",
       ])

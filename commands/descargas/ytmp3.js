@@ -39,6 +39,12 @@ if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
 }
 
+function ensureTmpDir() {
+  try {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+  } catch {}
+}
+
 function deleteFileSafe(filePath) {
   try {
     if (filePath && fs.existsSync(filePath)) {
@@ -719,6 +725,7 @@ async function downloadAudioFromInternalLink(
     }
   });
 
+  ensureTmpDir();
   const outputStream = fs.createWriteStream(outputPath);
   const releaseAbort = bindAbort(signal, () => {
     const abortError = buildAbortError(signal);
@@ -830,6 +837,7 @@ async function downloadAudioFromApi(videoUrl, outputPath, options = {}) {
     }
   });
 
+  ensureTmpDir();
   const outputStream = fs.createWriteStream(outputPath);
   const releaseAbort = bindAbort(signal, () => {
     const abortError = buildAbortError(signal);
@@ -1147,6 +1155,7 @@ export default {
       );
 
       const stamp = Date.now();
+      ensureTmpDir();
       sourceFile = path.join(TMP_DIR, `${stamp}-source.bin`);
       finalMp3 = path.join(TMP_DIR, `${stamp}-audio.mp3`);
 

@@ -548,6 +548,17 @@ refreshChannelInfo();
 // ================= TMP =================
 
 const TMP_DIR = path.join(process.cwd(), "tmp");
+const DOWNLOAD_TMP_DIR_NAMES = [
+  "dvyer-tiktok",
+  "dvyer-facebook",
+  "dvyer-mediafire",
+  "dvyer-mega",
+  "dvyer-instagram",
+  "dvyer-spotify",
+  "dvyer-cuevana",
+  "dvyer-app-downloads",
+];
+const DOWNLOAD_TMP_FILE_RE = /^\d{10,}-(?:source\.bin|audio\.mp3|raw\.mp4|final\.mp4)$/i;
 
 try {
   if (!fs.existsSync(DATABASE_DIR)) {
@@ -567,6 +578,30 @@ try {
 process.env.TMPDIR = TMP_DIR;
 process.env.TMP = TMP_DIR;
 process.env.TEMP = TMP_DIR;
+
+function cleanupDownloadTmpOnBoot() {
+  try {
+    for (const dirName of DOWNLOAD_TMP_DIR_NAMES) {
+      const targetDir = path.join(TMP_DIR, dirName);
+      if (!fs.existsSync(targetDir)) continue;
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+
+    const rootEntries = fs.readdirSync(TMP_DIR);
+    for (const entry of rootEntries) {
+      if (!DOWNLOAD_TMP_FILE_RE.test(entry)) continue;
+      const fullPath = path.join(TMP_DIR, entry);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.isFile()) {
+          fs.unlinkSync(fullPath);
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
+cleanupDownloadTmpOnBoot();
 
 // ================= UTIL =================
 
