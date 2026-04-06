@@ -9,18 +9,12 @@ import { getDownloadCache, setDownloadCache, withInflightDedup } from "../../lib
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 
 const API_VIDEO_PATH = "/ytdlmp4";
-const API_VIDEO_LEGACY_PATH = "/ytmp4";
-const API_VIDEO_ALT_PATH = "/ytaltmp4";
 const API_SEARCH_PATH = "/ytsearch";
 const API_BASE = getDvyerBaseUrl();
 const API_VIDEO_URL = buildDvyerUrl(API_VIDEO_PATH);
-const API_VIDEO_LEGACY_URL = buildDvyerUrl(API_VIDEO_LEGACY_PATH);
-const API_VIDEO_ALT_URL = buildDvyerUrl(API_VIDEO_ALT_PATH);
 const API_SEARCH_URL = buildDvyerUrl(API_SEARCH_PATH);
 const VIDEO_SOURCES = [
   { endpointUrl: API_VIDEO_URL, sourceLabel: "principal" },
-  { endpointUrl: API_VIDEO_LEGACY_URL, sourceLabel: "legacy" },
-  { endpointUrl: API_VIDEO_ALT_URL, sourceLabel: "alterna" },
 ];
 
 const COOLDOWN_TIME = 0;
@@ -634,100 +628,121 @@ async function downloadVideoFromApi(videoUrl, outputPath, options = {}) {
   const endpointUrl = String(options?.endpointUrl || API_VIDEO_URL).trim() || API_VIDEO_URL;
   throwIfAborted(signal);
 
-  let response;
-  try {
-    response = await axios.get(endpointUrl, {
-      responseType: "stream",
-      timeout: REQUEST_TIMEOUT,
-      signal,
-      params: {
-        mode: "file",
-        quality: VIDEO_QUALITY,
-        url: videoUrl,
-      },
-      validateStatus: () => true,
-    });
-  } catch (error) {
-    if (signal?.aborted) {
-      throw buildAbortError(signal);
-    }
-    throw error;
-  }
+  const qualityCandidates = Array.from(
+    new Set(
+      [VIDEO_QUALITY, ...VIDEO_LINK_QUALITIES]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    )
+  );
 
-  if (response.status >= 400) {
-    const errorText = await readStreamToText(response.data).catch(() => "");
-    let parsed = null;
+  let lastError = null;
+
+  for (const quality of qualityCandidates) {
+    let response;
+    try {
+      response = await axios.get(endpointUrl, {
+        responseType: "stream",
+        timeout: REQUEST_TIMEOUT,
+        signal,
+        params: {
+          mode: "file",
+          quality,
+          url: videoUrl,
+        },
+        validateStatus: () => true,
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        throw buildAbortError(signal);
+      }
+      lastError = error;
+      continue;
+    }
+
+    if (response.status >= 400) {
+      const errorText = await readStreamToText(response.data).catch(() => "");
+      let parsed = null;
+
+      try {
+        parsed = JSON.parse(errorText);
+      } catch {}
+
+      lastError = new Error(
+        extractApiError(
+          parsed || { message: errorText || "Error al descargar el video." },
+          response.status
+        )
+      );
+      continue;
+    }
+
+    const contentLength = Number(response.headers?.["content-length"] || 0);
+    if (contentLength && contentLength > MAX_VIDEO_BYTES) {
+      lastError = new Error("Video demasiado grande");
+      continue;
+    }
+
+    let downloaded = 0;
+
+    response.data.on("data", (chunk) => {
+      downloaded += chunk.length;
+      if (downloaded > MAX_VIDEO_BYTES) {
+        response.data.destroy(new Error("Video demasiado grande"));
+      }
+    });
+
+    ensureTmpDir();
+    const outputStream = fs.createWriteStream(outputPath);
+    const releaseAbort = bindAbort(signal, () => {
+      const abortError = buildAbortError(signal);
+      response.data?.destroy?.(abortError);
+      outputStream.destroy(abortError);
+      deleteFileSafe(outputPath);
+    });
 
     try {
-      parsed = JSON.parse(errorText);
-    } catch {}
-
-    throw new Error(
-      extractApiError(
-        parsed || { message: errorText || "Error al descargar el video." },
-        response.status
-      )
-    );
-  }
-
-  const contentLength = Number(response.headers?.["content-length"] || 0);
-  if (contentLength && contentLength > MAX_VIDEO_BYTES) {
-    throw new Error("Video demasiado grande");
-  }
-
-  let downloaded = 0;
-
-  response.data.on("data", (chunk) => {
-    downloaded += chunk.length;
-    if (downloaded > MAX_VIDEO_BYTES) {
-      response.data.destroy(new Error("Video demasiado grande"));
+      await pipeline(response.data, outputStream);
+    } catch (error) {
+      deleteFileSafe(outputPath);
+      if (signal?.aborted) {
+        throw buildAbortError(signal);
+      }
+      lastError = error;
+      continue;
+    } finally {
+      releaseAbort();
     }
-  });
 
-  ensureTmpDir();
-  const outputStream = fs.createWriteStream(outputPath);
-  const releaseAbort = bindAbort(signal, () => {
-    const abortError = buildAbortError(signal);
-    response.data?.destroy?.(abortError);
-    outputStream.destroy(abortError);
-    deleteFileSafe(outputPath);
-  });
+    throwIfAborted(signal);
 
-  try {
-    await pipeline(response.data, outputStream);
-  } catch (error) {
-    deleteFileSafe(outputPath);
-    if (signal?.aborted) {
-      throw buildAbortError(signal);
+    if (!fs.existsSync(outputPath)) {
+      lastError = new Error("No se pudo descargar el video.");
+      continue;
     }
-    throw error;
-  } finally {
-    releaseAbort();
+
+    const size = fs.statSync(outputPath).size;
+
+    if (!size || size < 150000) {
+      lastError = new Error("Video invalido");
+      continue;
+    }
+
+    if (size > MAX_VIDEO_BYTES) {
+      lastError = new Error("Video demasiado grande");
+      continue;
+    }
+
+    const fromHeader = parseContentDispositionFileName(response.headers?.["content-disposition"]);
+
+    return {
+      path: outputPath,
+      size,
+      fileName: fromHeader || path.basename(outputPath),
+    };
   }
 
-  throwIfAborted(signal);
-
-  if (!fs.existsSync(outputPath)) {
-    throw new Error("No se pudo descargar el video.");
-  }
-
-  const size = fs.statSync(outputPath).size;
-
-  if (!size || size < 150000) {
-    throw new Error("Video invalido");
-  }
-
-  if (size > MAX_VIDEO_BYTES) {
-    throw new Error("Video demasiado grande");
-  }
-
-  const fromHeader = parseContentDispositionFileName(response.headers?.["content-disposition"]);
-
-  return {
-    path: outputPath,
-    size,
-    fileName: fromHeader || path.basename(outputPath),
-  };
+  throw lastError || new Error("No se pudo descargar el video.");
 }
 
 async function downloadVideoFromApiWithFallbacks(videoUrl, outputPath, options = {}) {
