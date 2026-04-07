@@ -6,10 +6,11 @@ import { chargeDownloadRequest, refundDownloadCharge } from "../economia/downloa
 const API_BASE = getDvyerBaseUrl();
 const API_MP3_URL = buildDvyerUrl("/ytmp3");
 const API_SEARCH_URL = buildDvyerUrl("/ytsearch");
-const AUDIO_QUALITY = "128k";
-const REQUEST_TIMEOUT = 35000;
+const AUDIO_QUALITY = "64k";
+const REQUEST_TIMEOUT = 25000;
 const COOLDOWN_TIME = 0;
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const SPEED_MODE_DOCUMENT = true;
 
 const cooldowns = new Map();
 const cache = new Map();
@@ -216,6 +217,21 @@ function getCooldownRemaining(untilMs) {
 }
 
 async function sendAudioFast(sock, from, quoted, { downloadUrl, fileName, title }) {
+  if (SPEED_MODE_DOCUMENT) {
+    await sock.sendMessage(
+      from,
+      {
+        document: { url: downloadUrl },
+        mimetype: "audio/mpeg",
+        fileName,
+        caption: `🎵 ${title}\n⚡ Envio rapido`,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+    return;
+  }
+
   try {
     await sock.sendMessage(
       from,
@@ -292,16 +308,10 @@ export default {
 
       await sock.sendMessage(
         from,
-        video.thumbnail
-          ? {
-              image: { url: video.thumbnail },
-              caption: `🎵 Preparando audio...\n\n🎧 ${video.title}\n🎚️ Calidad: ${AUDIO_QUALITY}`,
-              ...global.channelInfo,
-            }
-          : {
-              text: `🎵 Preparando audio...\n\n🎧 ${video.title}\n🎚️ Calidad: ${AUDIO_QUALITY}`,
-              ...global.channelInfo,
-            },
+        {
+          text: `🎵 Preparando audio...\n\n🎧 ${video.title}\n🎚️ Calidad: ${AUDIO_QUALITY}`,
+          ...global.channelInfo,
+        },
         quoted
       );
 
