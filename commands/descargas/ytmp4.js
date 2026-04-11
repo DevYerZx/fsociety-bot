@@ -627,7 +627,8 @@ async function sendRemoteMp4(sock, from, quoted, data) {
   return "document";
 }
 
-async function sendLocalMp4(sock, from, quoted, data) {
+async function sendLocalMp4(sock, from, quoted, data, options = {}) {
+  const preferDocument = Boolean(options?.preferDocument);
   const caption = [
     "╭─〔 *DVYER • YTMP4* 〕",
     `┃ 🎬 Título: ${clipText(data.title || data.fileName, 80)}`,
@@ -646,7 +647,7 @@ async function sendLocalMp4(sock, from, quoted, data) {
       throw new Error("El MP4 local es invalido o esta incompleto.");
     }
 
-    if (fileBuffer.length <= VIDEO_AS_DOCUMENT_THRESHOLD) {
+    if (!preferDocument && fileBuffer.length <= VIDEO_AS_DOCUMENT_THRESHOLD) {
       try {
         await sock.sendMessage(
           from,
@@ -680,7 +681,7 @@ async function sendLocalMp4(sock, from, quoted, data) {
     } catch {}
   }
 
-  if (fileSize <= VIDEO_AS_DOCUMENT_THRESHOLD) {
+  if (!preferDocument && fileSize <= VIDEO_AS_DOCUMENT_THRESHOLD) {
     try {
       await sock.sendMessage(
         from,
@@ -773,8 +774,12 @@ export default {
 
       const downloaded = await downloadYtmp4Fallback(resolved.url, resolved.title, quality, fast);
       tempPath = downloaded.tempPath;
-      const transcoded = await transcodeMp4Full(downloaded);
-      const prepared = await remuxMp4Fast(transcoded);
+
+      // En fast evitamos ffmpeg pesado para enviar mas rapido.
+      // En nofast mantenemos normalizacion para maxima compatibilidad.
+      const prepared = fast
+        ? downloaded
+        : await remuxMp4Fast(await transcodeMp4Full(downloaded));
       tempPath = prepared.tempPath;
       const officialFileName = normalizeMp4Name(resolved.title || prepared.fileName || "youtube-video.mp4");
 
@@ -783,7 +788,7 @@ export default {
         fileName: officialFileName,
         title: resolved.title || path.parse(officialFileName).name,
         quality,
-      });
+      }, { preferDocument: fast });
       sentSuccessfully = true;
     } catch (error) {
       console.error("YTMP4 ERROR:", error?.message || error);
