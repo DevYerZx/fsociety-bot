@@ -6,6 +6,7 @@ import http from "http";
 import https from "https";
 import axios from "axios";
 import yts from "yt-search";
+import { spawn } from "child_process";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
 import { buildDvyerUrl } from "../../lib/api-manager.js";
@@ -20,6 +21,9 @@ const MIN_VIDEO_BYTES = 64 * 1024;
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const QUALITY_PATTERN = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
+const REMUX_MAX_BYTES = 300 * 1024 * 1024;
+const REMUX_MIN_TIMEOUT = 25_000;
+const REMUX_MAX_TIMEOUT = 120_000;
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -80,6 +84,108 @@ function parseContentDispositionFileName(headerValue) {
   }
   const normalMatch = text.match(/filename="?([^"]+)"?/i);
   return normalMatch?.[1]?.trim() || "";
+}
+
+async function readStreamToText(stream) {
+  return await new Promise((resolve, reject) => {
+    let data = "";
+    stream.on("data", (chunk) => {
+      data += chunk.toString();
+      if (data.length > 20000) data = data.slice(-20000);
+    });
+    stream.on("end", () => resolve(data));
+    stream.on("error", reject);
+  });
+}
+
+function extractApiError(data, status) {
+  return (
+    data?.detail ||
+    data?.error?.message ||
+    data?.message ||
+    (status ? `HTTP ${status}` : "Error de API")
+  );
+}
+
+function runFfmpegRemux(inputPath, outputPath, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let stderr = "";
+    const child = spawn("ffmpeg", [
+      "-y",
+      "-i",
+      inputPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      "-c",
+      "copy",
+      "-movflags",
+      "+faststart",
+      "-loglevel",
+      "error",
+      outputPath,
+    ]);
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      reject(new Error("ffmpeg timeout"));
+    }, timeoutMs);
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+
+    child.on("error", (error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (code === 0) return resolve();
+      reject(new Error(stderr.trim() || `ffmpeg exited ${code}`));
+    });
+  });
+}
+
+async function remuxMp4Fast(data) {
+  const sourcePath = String(data?.tempPath || "");
+  if (!sourcePath || !fs.existsSync(sourcePath)) return data;
+  const size = Number(data?.size || 0);
+  if (!Number.isFinite(size) || size <= 0 || size > REMUX_MAX_BYTES) return data;
+
+  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp4-fixed.mp4`);
+  const timeoutMs = Math.max(REMUX_MIN_TIMEOUT, Math.min(REMUX_MAX_TIMEOUT, Math.round(size / (1024 * 1024)) * 1000));
+
+  try {
+    await runFfmpegRemux(sourcePath, outputPath, timeoutMs);
+    const stat = await fsp.stat(outputPath).catch(() => null);
+    if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
+      await deleteFileSafe(outputPath);
+      return data;
+    }
+    await deleteFileSafe(sourcePath);
+    return {
+      ...data,
+      tempPath: outputPath,
+      size: stat.size,
+      contentType: "video/mp4",
+    };
+  } catch {
+    await deleteFileSafe(outputPath);
+    return data;
+  }
 }
 
 function extractTextFromMessage(message) {
@@ -513,11 +619,12 @@ export default {
       );
 
       const downloaded = await downloadYtmp4Fallback(resolved.url, resolved.title, quality, fast);
-      tempPath = downloaded.tempPath;
+      const prepared = await remuxMp4Fast(downloaded);
+      tempPath = prepared.tempPath;
 
       await sendLocalMp4(sock, from, quoted, {
-        ...downloaded,
-        title: path.parse(downloaded.fileName).name || resolved.title,
+        ...prepared,
+        title: path.parse(prepared.fileName).name || resolved.title,
         quality,
       });
     } catch (error) {
