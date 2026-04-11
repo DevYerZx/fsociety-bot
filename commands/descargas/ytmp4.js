@@ -17,6 +17,7 @@ const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
+const BUFFER_SEND_MAX_BYTES = 120 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
@@ -636,12 +637,55 @@ async function sendLocalMp4(sock, from, quoted, data) {
     "╰─⟡ MP4 listo.",
   ].join("\n");
 
-  if (data.size <= VIDEO_AS_DOCUMENT_THRESHOLD) {
+  const fileSize = Number(data?.size || 0);
+  const canUseBuffer = fileSize > 0 && fileSize <= BUFFER_SEND_MAX_BYTES;
+
+  if (canUseBuffer) {
+    const fileBuffer = await fsp.readFile(data.tempPath);
+    if (!Buffer.isBuffer(fileBuffer) || fileBuffer.length < MIN_VIDEO_BYTES) {
+      throw new Error("El MP4 local es invalido o esta incompleto.");
+    }
+
+    if (fileBuffer.length <= VIDEO_AS_DOCUMENT_THRESHOLD) {
+      try {
+        await sock.sendMessage(
+          from,
+          {
+            video: fileBuffer,
+            mimetype: "video/mp4",
+            fileName: data.fileName,
+            caption,
+            gifPlayback: false,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+        return "video";
+      } catch {}
+    }
+
     try {
       await sock.sendMessage(
         from,
         {
-          video: fs.createReadStream(data.tempPath),
+          document: fileBuffer,
+          mimetype: "video/mp4",
+          fileName: data.fileName,
+          caption,
+          ...global.channelInfo,
+        },
+        quoted
+      );
+      return "document";
+    } catch {}
+  }
+
+  if (fileSize <= VIDEO_AS_DOCUMENT_THRESHOLD) {
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          video: { url: data.tempPath },
           mimetype: "video/mp4",
           fileName: data.fileName,
           caption,
@@ -657,7 +701,7 @@ async function sendLocalMp4(sock, from, quoted, data) {
   await sock.sendMessage(
     from,
     {
-      document: fs.createReadStream(data.tempPath),
+      document: { url: data.tempPath },
       mimetype: "video/mp4",
       fileName: data.fileName,
       caption,
