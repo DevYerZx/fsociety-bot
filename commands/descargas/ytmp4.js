@@ -35,9 +35,11 @@ const FFMPEG_MAX_TIMEOUT = 420_000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const PROVIDER_NAME = "dvyer_ytmp4";
-const TMP_FILE_MAX_AGE_MS = 45 * 60 * 1000;
-const DELETE_RETRIES = 4;
-const DELETE_RETRY_DELAY_MS = 120;
+const TMP_FILE_MAX_AGE_MS = 12 * 60 * 1000;
+const DELETE_RETRIES = 10;
+const DELETE_RETRY_DELAY_MS = 260;
+const DEFERRED_DELETE_DELAYS_MS = [5000, 20000, 60000, 180000];
+const pendingDeferredDeletes = new Set();
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -68,6 +70,25 @@ async function deleteFileSafe(filePath) {
   }
 
   return false;
+}
+
+function scheduleDeferredDelete(filePath) {
+  const target = String(filePath || "").trim();
+  if (!target || pendingDeferredDeletes.has(target)) return;
+  pendingDeferredDeletes.add(target);
+
+  (async () => {
+    try {
+      for (const delayMs of DEFERRED_DELETE_DELAYS_MS) {
+        await waitMs(delayMs);
+        const deleted = await deleteFileSafe(target);
+        if (deleted) return;
+      }
+      await cleanupOldFiles(60_000);
+    } catch {} finally {
+      pendingDeferredDeletes.delete(target);
+    }
+  })();
 }
 
 async function cleanupOldFiles(maxAgeMs = TMP_FILE_MAX_AGE_MS) {
@@ -1015,9 +1036,15 @@ export default {
       }
     } finally {
       for (const filePath of ownedTempPaths) {
-        await deleteFileSafe(filePath);
+        const deleted = await deleteFileSafe(filePath);
+        if (!deleted) {
+          scheduleDeferredDelete(filePath);
+        }
       }
-      await deleteFileSafe(tempPath);
+      const deletedMain = await deleteFileSafe(tempPath);
+      if (!deletedMain) {
+        scheduleDeferredDelete(tempPath);
+      }
       await cleanupOldFiles();
     }
   },

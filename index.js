@@ -1246,8 +1246,61 @@ function buildGroupCommandSemanticKey(raw = {}, commandData = {}) {
       ""
   );
   const commandBodyHash = crypto.createHash("sha1").update(commandBody).digest("hex").slice(0, 16);
+  const timestampMs = parseMessageTimestampToMs(raw?.messageTimestamp);
+  const timestampSeconds = timestampMs ? Math.floor(timestampMs / 1000) : 0;
 
-  return `semantic|${chatId}|${sender}|${commandName}|${commandBodyHash}`;
+  return `semantic|${chatId}|${sender}|${commandName}|${commandBodyHash}|${timestampSeconds}`;
+}
+
+function buildCommandReplayKey(raw = {}, commandData = {}) {
+  const chatId = String(raw?.key?.remoteJid || "")
+    .trim()
+    .toLowerCase();
+  const commandName = normalizeGroupCommandText(commandData?.commandName || "");
+  if (!chatId || !commandName) return "";
+
+  const sender = normalizeGroupCommandSender(raw) || "unknown";
+  const commandBody = normalizeGroupCommandText(
+    commandData?.body ||
+      (Array.isArray(commandData?.args) ? commandData.args.join(" ") : "") ||
+      ""
+  );
+  const commandBodyHash = crypto.createHash("sha1").update(commandBody).digest("hex").slice(0, 16);
+  const timestampMs = parseMessageTimestampToMs(raw?.messageTimestamp);
+  const timestampSeconds = timestampMs ? Math.floor(timestampMs / 1000) : 0;
+  const messageId = String(raw?.key?.id || "").trim().toLowerCase();
+  const entropy = timestampSeconds || messageId;
+  if (!entropy) return "";
+
+  return `cmd_replay|${chatId}|${sender}|${commandName}|${commandBodyHash}|${entropy}`;
+}
+
+function cleanupCommandReplayCache(botState, now = Date.now()) {
+  if (!(botState?.commandReplayCache instanceof Map)) {
+    botState.commandReplayCache = new Map();
+    return;
+  }
+
+  for (const [key, seenAt] of botState.commandReplayCache) {
+    if (!seenAt || now - Number(seenAt) > COMMAND_REPLAY_CACHE_TTL_MS) {
+      botState.commandReplayCache.delete(key);
+    }
+  }
+}
+
+function shouldSkipCommandReplay(botState, raw = {}, commandData = {}) {
+  const replayKey = buildCommandReplayKey(raw, commandData);
+  if (!replayKey) return false;
+
+  const now = Date.now();
+  cleanupCommandReplayCache(botState, now);
+  const seenAt = Number(botState?.commandReplayCache?.get?.(replayKey) || 0);
+  if (seenAt && now - seenAt <= COMMAND_REPLAY_CACHE_TTL_MS) {
+    return true;
+  }
+
+  botState?.commandReplayCache?.set?.(replayKey, now);
+  return false;
 }
 
 function getGroupCommandClaimFilePath(claimKey = "") {
@@ -2746,8 +2799,12 @@ const GROUP_COMMAND_SUBBOT_MAX_DELAY_MS = Math.max(
   parseNumberEnv("GROUP_COMMAND_SUBBOT_MAX_DELAY_MS", 850) || 850
 );
 const GROUP_COMMAND_SEMANTIC_DEDUP_TTL_MS = Math.max(
-  1_500,
-  parseNumberEnv("GROUP_COMMAND_SEMANTIC_DEDUP_TTL_MS", 8_000) || 8_000
+  8_000,
+  parseNumberEnv("GROUP_COMMAND_SEMANTIC_DEDUP_TTL_MS", 10 * 60 * 1000) || 10 * 60 * 1000
+);
+const COMMAND_REPLAY_CACHE_TTL_MS = Math.max(
+  60_000,
+  parseNumberEnv("COMMAND_REPLAY_CACHE_TTL_MS", 20 * 60 * 1000) || 20 * 60 * 1000
 );
 const GROUP_UPDATE_CLAIM_ENABLED = parseBooleanEnv("GROUP_UPDATE_CLAIM_ENABLED", true);
 const GROUP_UPDATE_CLAIM_TTL_MS = Math.max(
@@ -3685,6 +3742,7 @@ function ensureBotState(config) {
     groupResponderState: new Map(),
     groupJoinNoticeCache: new Map(),
     groupUpdateClaimCache: new Map(),
+    commandReplayCache: new Map(),
     persistedStateWriteTimer: null,
     persistedStateWritePending: false,
     socketRecoveryTimer: null,
@@ -8427,6 +8485,9 @@ async function handleIncomingMessages(botState, sock, messages) {
       if (!commandData) continue;
       const cmd = comandos.get(commandData.commandName);
       if (!cmd) continue;
+      if (shouldSkipCommandReplay(botState, raw, commandData)) {
+        continue;
+      }
 
       const groupReservation = await reserveGroupCommandExecution(
         botState,
