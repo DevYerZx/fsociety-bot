@@ -23,7 +23,6 @@ const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
-const BUFFER_SEND_MAX_BYTES = 120 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
@@ -90,6 +89,23 @@ async function cleanupOldFiles(maxAgeMs = TMP_FILE_MAX_AGE_MS) {
 
 function cleanText(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function isGenericVideoTitle(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+  if (!normalized) return true;
+  return (
+    normalized === "youtube mp4" ||
+    normalized === "youtube video" ||
+    normalized === "youtube-video" ||
+    normalized === "video"
+  );
+}
+
+function pickBestVideoTitle(...candidates) {
+  const cleaned = candidates.map((item) => cleanText(item)).filter(Boolean);
+  const preferred = cleaned.find((item) => !isGenericVideoTitle(item));
+  return preferred || cleaned[0] || "YouTube Video";
 }
 
 function clipText(value = "", max = 90) {
@@ -332,8 +348,6 @@ async function remuxMp4Fast(data) {
 
 async function prepareMp4Fast(data) {
   const remuxed = await remuxMp4Fast(data);
-  if (remuxed?.tempPath && remuxed.tempPath !== data?.tempPath) return remuxed;
-
   const size = Number(remuxed?.size || 0);
   if (!Number.isFinite(size) || size <= 0 || size > FAST_COMPAT_TRANSCODE_MAX_BYTES) {
     return remuxed;
@@ -403,6 +417,86 @@ function extractYouTubeUrl(text) {
   return match ? match[0].trim() : "";
 }
 
+function extractYouTubeVideoId(urlValue = "") {
+  const urlText = String(urlValue || "").trim();
+  if (!urlText) return "";
+
+  try {
+    const parsed = new URL(urlText);
+    const host = String(parsed.hostname || "").replace(/^www\./i, "").toLowerCase();
+    if (host === "youtu.be") {
+      return String(parsed.pathname || "")
+        .replace(/^\/+/, "")
+        .split("/")[0]
+        .trim();
+    }
+
+    if (
+      host.endsWith("youtube.com") ||
+      host.endsWith("youtube-nocookie.com")
+    ) {
+      const vParam = cleanText(parsed.searchParams.get("v"));
+      if (vParam) return vParam;
+
+      const parts = String(parsed.pathname || "")
+        .split("/")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (parts.length >= 2 && ["shorts", "embed", "live", "v"].includes(parts[0].toLowerCase())) {
+        return cleanText(parts[1]);
+      }
+    }
+  } catch {}
+
+  const fallbackMatch = urlText.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:shorts|embed|live)\/|[?&]v=)([A-Za-z0-9_-]{6,})/i
+  );
+  return cleanText(fallbackMatch?.[1] || "");
+}
+
+async function resolveDirectUrlMetadata(videoUrl = "") {
+  const normalizedUrl = cleanText(videoUrl);
+  if (!normalizedUrl) return null;
+
+  const videoId = extractYouTubeVideoId(normalizedUrl);
+
+  if (videoId) {
+    try {
+      const info = await yts({ videoId });
+      if (cleanText(info?.url) || cleanText(info?.title)) {
+        return {
+          title: cleanText(info?.title || ""),
+          duration: cleanText(info?.timestamp || ""),
+          author: cleanText(info?.author?.name || info?.author || ""),
+          videoId: cleanText(info?.videoId || videoId),
+        };
+      }
+    } catch {}
+  }
+
+  try {
+    const results = await yts(normalizedUrl);
+    const videos = Array.isArray(results?.videos) ? results.videos : [];
+    const found = videos.find((item) => {
+      const itemUrl = cleanText(item?.url || "");
+      const itemVideoId = cleanText(item?.videoId || "");
+      if (videoId && itemVideoId && itemVideoId === videoId) return true;
+      return itemUrl && normalizedUrl && itemUrl === normalizedUrl;
+    }) || videos.find((item) => cleanText(item?.url || ""));
+
+    if (found) {
+      return {
+        title: cleanText(found?.title || ""),
+        duration: cleanText(found?.timestamp || ""),
+        author: cleanText(found?.author?.name || found?.author || ""),
+        videoId: cleanText(found?.videoId || videoId),
+      };
+    }
+  } catch {}
+
+  return null;
+}
+
 function normalizeQuality(value) {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return "360p";
@@ -450,9 +544,13 @@ function extractQualityAndQuery(input) {
 async function resolveInputToUrl(input) {
   const directUrl = extractYouTubeUrl(input);
   if (directUrl) {
+    const metadata = await resolveDirectUrlMetadata(directUrl);
     return {
       url: directUrl,
-      title: "YouTube MP4",
+      title: pickBestVideoTitle(metadata?.title, "YouTube Video"),
+      duration: cleanText(metadata?.duration || ""),
+      author: cleanText(metadata?.author || ""),
+      videoId: cleanText(metadata?.videoId || ""),
       searched: false,
     };
   }
@@ -519,7 +617,7 @@ async function getYtmp4Link(videoUrl, quality, fast = true) {
 
   return {
     remoteUrl,
-    title: cleanText(data.title || "YouTube MP4"),
+    title: cleanText(data.title || ""),
     fileName: normalizeMp4Name(data.filename || data.title || "youtube-video.mp4"),
     quality: cleanText(data.quality || data.quality_requested || quality || "360p"),
     thumbnail: data.thumbnail || "",
@@ -704,47 +802,6 @@ async function sendLocalMp4(sock, from, quoted, data, options = {}) {
   ].join("\n");
 
   const fileSize = Number(data?.size || 0);
-  const canUseBuffer = fileSize > 0 && fileSize <= BUFFER_SEND_MAX_BYTES;
-
-  if (canUseBuffer) {
-    const fileBuffer = await fsp.readFile(data.tempPath);
-    if (!Buffer.isBuffer(fileBuffer) || fileBuffer.length < MIN_VIDEO_BYTES) {
-      throw new Error("El MP4 local es invalido o esta incompleto.");
-    }
-
-    if (!preferDocument && fileBuffer.length <= VIDEO_AS_DOCUMENT_THRESHOLD) {
-      try {
-        await sock.sendMessage(
-          from,
-          {
-            video: fileBuffer,
-            mimetype: "video/mp4",
-            fileName: data.fileName,
-            caption,
-            gifPlayback: false,
-            ...global.channelInfo,
-          },
-          quoted
-        );
-        return "video";
-      } catch {}
-    }
-
-    try {
-      await sock.sendMessage(
-        from,
-        {
-          document: fileBuffer,
-          mimetype: "video/mp4",
-          fileName: data.fileName,
-          caption,
-          ...global.channelInfo,
-        },
-        quoted
-      );
-      return "document";
-    } catch {}
-  }
 
   if (!preferDocument && fileSize <= VIDEO_AS_DOCUMENT_THRESHOLD) {
     try {
@@ -884,6 +941,11 @@ export default {
       tempPath = downloaded.tempPath;
       if (downloaded?.tempPath) ownedTempPaths.add(downloaded.tempPath);
 
+      let linkMeta = null;
+      try {
+        linkMeta = await getYtmp4Link(resolved.url, quality, fast);
+      } catch {}
+
       // En fast priorizamos velocidad, pero con compatibilidad WhatsApp.
       // En nofast mantenemos normalizacion completa.
       const prepared = fast
@@ -891,13 +953,20 @@ export default {
         : await remuxMp4Fast(await transcodeMp4Full(downloaded));
       tempPath = prepared.tempPath;
       if (prepared?.tempPath) ownedTempPaths.add(prepared.tempPath);
-      const officialFileName = normalizeMp4Name(resolved.title || prepared.fileName || "youtube-video.mp4");
+      const finalTitle = pickBestVideoTitle(
+        linkMeta?.title,
+        resolved.title,
+        path.parse(String(prepared.fileName || "")).name
+      );
+      const officialFileName = normalizeMp4Name(
+        linkMeta?.fileName || finalTitle || prepared.fileName || "youtube-video.mp4"
+      );
 
       await sendLocalMp4(sock, from, quoted, {
         ...prepared,
         fileName: officialFileName,
-        title: resolved.title || path.parse(officialFileName).name,
-        quality,
+        title: finalTitle,
+        quality: cleanText(linkMeta?.quality || quality || "360p"),
       });
       sentSuccessfully = true;
     } catch (error) {
