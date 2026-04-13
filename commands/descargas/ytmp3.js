@@ -313,12 +313,65 @@ async function ensureMp3Compatible(downloaded) {
 }
 
 function extractApiError(data, status) {
-  return (
+  const raw =
     data?.detail ||
     data?.error?.message ||
     data?.message ||
-    (status ? `HTTP ${status}` : "Error de API")
-  );
+    data?.error ||
+    (status ? `HTTP ${status}` : "Error de API");
+
+  const normalized = cleanApiErrorText(raw);
+  const lowered = normalized.toLowerCase();
+
+  if (
+    lowered.includes("service suspended") ||
+    lowered.includes("suspend-by-user") ||
+    (Number(status || 0) === 503 && lowered.includes("suspend"))
+  ) {
+    return (
+      "La API de ytmp3 esta suspendida (HTTP 503). Reactivala en tu hosting o cambia la URL con " +
+      ".apimanager set dvyer baseUrl https://tu-api-activa"
+    );
+  }
+
+  if (normalized) return normalized;
+  return status ? `HTTP ${status}` : "Error de API";
+}
+
+function cleanApiErrorText(value) {
+  const text = String(value == null ? "" : value)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.slice(0, 280);
+}
+
+function shouldUseLocalFallback(error) {
+  const text = String(error?.message || error || "").toLowerCase();
+  if (!text) return false;
+  if (text.includes("api de ytmp3 esta suspendida")) return true;
+  if (text.includes("service suspended")) return true;
+  if (text.includes("suspend-by-user")) return true;
+  if (text.includes("timed out")) return true;
+  if (text.includes("timeout")) return true;
+  if (text.includes("socket hang up")) return true;
+  if (text.includes("provider_circuit_open")) return true;
+  if (text.includes("getaddrinfo")) return true;
+  if (text.includes("econnreset")) return true;
+  if (text.includes("econnrefused")) return true;
+  if (text.includes("enotfound")) return true;
+  if (text.includes("eai_again")) return true;
+  if (/http\s*5\d\d/i.test(text)) return true;
+  return false;
 }
 
 async function resolveInputToUrl(input) {
@@ -385,6 +438,12 @@ async function downloadYtmp3(videoUrl, preferredName) {
     throw new Error(extractApiError(parsed || { message: errorText }, response.status));
   }
 
+  const contentType = String(response.headers?.["content-type"] || "").toLowerCase();
+  if (contentType.includes("text/html")) {
+    const htmlText = await readStreamToText(response.data).catch(() => "");
+    throw new Error(extractApiError({ message: htmlText }, response.status));
+  }
+
   const contentLength = Number(response.headers?.["content-length"] || 0);
   if (contentLength > MAX_AUDIO_BYTES) {
     throw new Error(`El MP3 pesa ${humanBytes(contentLength)} y supera el limite del bot.`);
@@ -427,6 +486,79 @@ async function downloadYtmp3(videoUrl, preferredName) {
     fileName,
     size,
     contentType: response.headers?.["content-type"] || "audio/mpeg",
+  };
+}
+
+async function downloadYtmp3Local(videoUrl, preferredName) {
+  await ensureTmpDir();
+  const stamp = `${Date.now()}-${randomUUID()}-ytmp3-local`;
+  const outputTemplate = path.join(TMP_DIR, `${stamp}.%(ext)s`);
+  const timeoutMs = REQUEST_TIMEOUT;
+
+  const args = [
+    "--no-playlist",
+    "--no-progress",
+    "--no-warnings",
+    "--no-simulate",
+    "--print",
+    "%(title)s",
+    "--output",
+    outputTemplate,
+    "--extract-audio",
+    "--audio-format",
+    "mp3",
+    "--audio-quality",
+    "0",
+    videoUrl,
+  ];
+
+  const ytDlpOutput = await runYtDlp(args, timeoutMs);
+  const rawTitleFromYtDlp = cleanText(ytDlpOutput?.stdout || "");
+
+  const files = await fsp.readdir(TMP_DIR).catch(() => []);
+  const generated = files
+    .filter((name) => name.startsWith(stamp))
+    .map((name) => ({
+      name,
+      fullPath: path.join(TMP_DIR, name),
+      stat: fs.existsSync(path.join(TMP_DIR, name)) ? fs.statSync(path.join(TMP_DIR, name)) : null,
+    }))
+    .filter((entry) => entry.stat?.isFile?.());
+
+  const mp3Entry =
+    generated.find((entry) => entry.name.toLowerCase().endsWith(".mp3")) ||
+    generated.sort((a, b) => Number(b.stat?.mtimeMs || 0) - Number(a.stat?.mtimeMs || 0))[0];
+
+  if (!mp3Entry?.fullPath || !fs.existsSync(mp3Entry.fullPath)) {
+    throw new Error("Fallback local no pudo descargar el MP3.");
+  }
+
+  const outputPath = mp3Entry.fullPath;
+  for (const entry of generated) {
+    if (entry.fullPath === outputPath) continue;
+    await deleteFileSafe(entry.fullPath);
+  }
+
+  const finalSize = fs.statSync(outputPath).size;
+  if (finalSize < MIN_AUDIO_BYTES) {
+    await deleteFileSafe(outputPath);
+    throw new Error("Fallback local genero un MP3 invalido.");
+  }
+  if (finalSize > MAX_AUDIO_BYTES) {
+    await deleteFileSafe(outputPath);
+    throw new Error(`El MP3 fallback pesa ${humanBytes(finalSize)} y supera el limite del bot.`);
+  }
+
+  const fallbackTitle = cleanText(
+    rawTitleFromYtDlp || preferredName || path.parse(outputPath).name || "youtube-audio"
+  );
+
+  return {
+    tempPath: outputPath,
+    fileName: normalizeMp3Name(fallbackTitle),
+    size: finalSize,
+    contentType: "audio/mpeg",
+    provider: "local_ytdlp",
   };
 }
 
@@ -499,6 +631,53 @@ function runFfmpeg(args, timeoutMs = METADATA_TIMEOUT) {
       clearTimeout(timer);
       if (code === 0) return resolve();
       reject(new Error(stderr.trim() || `ffmpeg exited ${code}`));
+    });
+  });
+}
+
+function runYtDlp(args, timeoutMs = REQUEST_TIMEOUT) {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    let stdout = "";
+    let stderr = "";
+
+    const child = spawn("yt-dlp", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const timer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      child.kill("SIGKILL");
+      reject(new Error("yt-dlp timeout"));
+    }, Math.max(30_000, Number(timeoutMs || REQUEST_TIMEOUT)));
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunkToText(chunk);
+      if (stdout.length > 8000) stdout = stdout.slice(-8000);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunkToText(chunk);
+      if (stderr.length > 12000) stderr = stderr.slice(-12000);
+    });
+
+    child.on("error", (error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        return resolve({
+          stdout: String(stdout || "").trim(),
+          stderr: String(stderr || "").trim(),
+        });
+      }
+      const detail = cleanApiErrorText(stderr || stdout || `yt-dlp exited ${code}`);
+      reject(new Error(detail || `yt-dlp exited ${code}`));
     });
   });
 }
@@ -697,23 +876,44 @@ export default {
         quoted
       );
 
-      const downloaded = await runWithProviderCircuit(
-        PROVIDER_NAME,
-        () => downloadYtmp3(resolved.url, resolved.title),
-        {
-          failureThreshold: 4,
-          cooldownMs: 90_000,
-          shouldCountFailure: (error) => {
-            const text = String(error?.message || error || "").toLowerCase();
-            if (!text) return false;
-            if (text.includes("no encontre resultados")) return false;
-            if (text.includes("uso:")) return false;
-            if (text.includes("supera el limite")) return false;
-            if (text.includes("demasiado grande")) return false;
-            return true;
+      const circuitOptions = {
+        failureThreshold: 4,
+        cooldownMs: 90_000,
+        shouldCountFailure: (error) => {
+          const text = String(error?.message || error || "").toLowerCase();
+          if (!text) return false;
+          if (text.includes("no encontre resultados")) return false;
+          if (text.includes("uso:")) return false;
+          if (text.includes("supera el limite")) return false;
+          if (text.includes("demasiado grande")) return false;
+          return true;
+        },
+      };
+
+      let downloaded;
+      try {
+        downloaded = await runWithProviderCircuit(
+          PROVIDER_NAME,
+          () => downloadYtmp3(resolved.url, resolved.title),
+          circuitOptions
+        );
+      } catch (primaryError) {
+        const canFallback =
+          primaryError?.code === "PROVIDER_CIRCUIT_OPEN" || shouldUseLocalFallback(primaryError);
+        if (!canFallback) throw primaryError;
+        downloaded = await downloadYtmp3Local(resolved.url, resolved.title);
+      }
+
+      if (downloaded?.provider === "local_ytdlp") {
+        await sock.sendMessage(
+          from,
+          {
+            text: "⚠️ API ytmp3 no disponible. Usando fallback local con yt-dlp.",
+            ...global.channelInfo,
           },
-        }
-      );
+          quoted
+        );
+      }
       tempPath = downloaded.tempPath;
       if (downloaded?.tempPath) ownedTempPaths.add(downloaded.tempPath);
       const compatible = await ensureMp3Compatible(downloaded);
