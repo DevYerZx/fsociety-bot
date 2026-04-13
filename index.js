@@ -761,7 +761,9 @@ function isBotPresentInGroup(metadata = {}, summary = {}) {
   const participantIdentitySet = buildGroupParticipantIdentitySet(metadata);
   if (!participantIdentitySet.size) return false;
 
-  const botIdentitySet = buildBotIdentitySet(summary);
+  // Importante: solo usamos identidad WA real en vivo para evitar
+  // falsos positivos con numeros configurados de owners/requesters.
+  const botIdentitySet = buildBotLiveIdentitySet(summary);
   if (!botIdentitySet.size) return false;
 
   for (const identity of botIdentitySet) {
