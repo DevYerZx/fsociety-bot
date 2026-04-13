@@ -1206,6 +1206,13 @@ function normalizeGroupCommandSender(raw = {}) {
 }
 
 function buildGroupCommandClaimKey(raw = {}, commandData = {}) {
+  const rawMessageKey = String(getMessageDedupKey(raw) || "")
+    .trim()
+    .toLowerCase();
+  if (rawMessageKey) {
+    return `message|${rawMessageKey}`;
+  }
+
   const chatId = String(raw?.key?.remoteJid || "")
     .trim()
     .toLowerCase();
@@ -1223,6 +1230,24 @@ function buildGroupCommandClaimKey(raw = {}, commandData = {}) {
   const timestampSeconds = timestampMs ? Math.floor(timestampMs / 1000) : 0;
 
   return `${chatId}|${sender}|${commandName}|${commandBodyHash}|${timestampSeconds}`;
+}
+
+function buildGroupCommandSemanticKey(raw = {}, commandData = {}) {
+  const chatId = String(raw?.key?.remoteJid || "")
+    .trim()
+    .toLowerCase();
+  const commandName = normalizeGroupCommandText(commandData?.commandName || "");
+  if (!chatId || !commandName) return "";
+
+  const sender = normalizeGroupCommandSender(raw) || "unknown";
+  const commandBody = normalizeGroupCommandText(
+    commandData?.body ||
+      (Array.isArray(commandData?.args) ? commandData.args.join(" ") : "") ||
+      ""
+  );
+  const commandBodyHash = crypto.createHash("sha1").update(commandBody).digest("hex").slice(0, 16);
+
+  return `semantic|${chatId}|${sender}|${commandName}|${commandBodyHash}`;
 }
 
 function getGroupCommandClaimFilePath(claimKey = "") {
@@ -1247,6 +1272,73 @@ function readGroupCommandClaim(filePath = "") {
   } catch {
     return null;
   }
+}
+
+function reserveGroupClaimFile(filePath = "", payload = {}, ttlMs = GROUP_COMMAND_CLAIM_TTL_MS, options = {}) {
+  const safeTtlMs = Math.max(500, Number(ttlMs || 0) || GROUP_COMMAND_CLAIM_TTL_MS);
+  const failOpen = options?.failOpen !== false;
+  const logLabel = String(options?.logLabel || "group-claim").trim() || "group-claim";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let fileHandle = null;
+    try {
+      fileHandle = fs.openSync(filePath, "wx");
+      fs.writeFileSync(fileHandle, JSON.stringify(payload, null, 2), "utf-8");
+      return {
+        allowed: true,
+        reason: "claimed",
+      };
+    } catch (error) {
+      const code = String(error?.code || "").trim().toUpperCase();
+      if (code !== "EEXIST") {
+        if (!failOpen) {
+          return {
+            allowed: false,
+            reason: "claim_error_strict",
+          };
+        }
+        console.error(`[${logLabel}] No pude reservar claim:`, error?.message || error);
+        return {
+          allowed: true,
+          reason: "claim_error_fail_open",
+        };
+      }
+
+      const existingClaim = readGroupCommandClaim(filePath);
+      const existingClaimedAt = Number(
+        existingClaim?.claimedAt || existingClaim?.updatedAt || 0
+      );
+
+      if (!existingClaimedAt || Date.now() - existingClaimedAt > safeTtlMs) {
+        try {
+          fs.rmSync(filePath, { force: true });
+          continue;
+        } catch {}
+      }
+
+      return {
+        allowed: false,
+        reason: "already_claimed",
+        winnerBotId: String(existingClaim?.botId || "").trim().toLowerCase(),
+      };
+    } finally {
+      if (fileHandle !== null) {
+        try {
+          fs.closeSync(fileHandle);
+        } catch {}
+      }
+    }
+  }
+
+  return failOpen
+    ? {
+        allowed: true,
+        reason: "retry_exhausted_fail_open",
+      }
+    : {
+        allowed: false,
+        reason: "retry_exhausted_strict",
+      };
 }
 
 let lastGroupCommandClaimCleanupAt = 0;
@@ -1729,61 +1821,55 @@ async function reserveGroupCommandExecution(botState, raw, commandData = {}) {
     processPid: process.pid,
   };
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let fileHandle = null;
-    try {
-      fileHandle = fs.openSync(claimFilePath, "wx");
-      fs.writeFileSync(fileHandle, JSON.stringify(payload, null, 2), "utf-8");
+  const semanticKey = buildGroupCommandSemanticKey(raw, commandData);
+  const semanticClaimFilePath = getGroupCommandClaimFilePath(semanticKey);
+  if (semanticClaimFilePath) {
+    const semanticResult = reserveGroupClaimFile(
+      semanticClaimFilePath,
+      {
+        ...payload,
+        claimType: "semantic",
+        claimKey: semanticKey,
+      },
+      GROUP_COMMAND_SEMANTIC_DEDUP_TTL_MS,
+      {
+        failOpen: false,
+        logLabel: "group-claim-semantic",
+      }
+    );
+    if (!semanticResult.allowed) {
       return {
-        allowed: true,
-        reason: "claimed",
+        allowed: false,
+        reason: "semantic_duplicate",
+        winnerBotId: semanticResult.winnerBotId || "",
         delayMs,
       };
-    } catch (error) {
-      const code = String(error?.code || "").trim().toUpperCase();
-      if (code !== "EEXIST") {
-        console.error("[group-claim] No pude reservar mensaje de grupo:", error?.message || error);
-        return {
-          allowed: true,
-          reason: "error_fail_open",
-          delayMs,
-        };
-      }
-
-      const existingClaim = readGroupCommandClaim(claimFilePath);
-      const existingClaimedAt = Number(
-        existingClaim?.claimedAt || existingClaim?.updatedAt || 0
-      );
-
-      if (
-        !existingClaimedAt ||
-        Date.now() - existingClaimedAt > GROUP_COMMAND_CLAIM_TTL_MS
-      ) {
-        try {
-          fs.rmSync(claimFilePath, { force: true });
-          continue;
-        } catch {}
-      }
-
-      const winnerBotId = String(existingClaim?.botId || "").trim().toLowerCase();
-      return {
-        allowed: winnerBotId === botId,
-        reason: winnerBotId && winnerBotId !== botId ? "claimed_by_other" : "already_claimed",
-        winnerBotId,
-        delayMs,
-      };
-    } finally {
-      if (fileHandle !== null) {
-        try {
-          fs.closeSync(fileHandle);
-        } catch {}
-      }
     }
+  }
+
+  const messageResult = reserveGroupClaimFile(
+    claimFilePath,
+    payload,
+    GROUP_COMMAND_CLAIM_TTL_MS,
+    {
+      failOpen: true,
+      logLabel: "group-claim",
+    }
+  );
+
+  if (!messageResult.allowed) {
+    const winnerBotId = String(messageResult?.winnerBotId || "").trim().toLowerCase();
+    return {
+      allowed: winnerBotId === botId,
+      reason: winnerBotId && winnerBotId !== botId ? "claimed_by_other" : "already_claimed",
+      winnerBotId,
+      delayMs,
+    };
   }
 
   return {
     allowed: true,
-    reason: "retry_exhausted_fail_open",
+    reason: "claimed",
     delayMs,
   };
 }
@@ -2658,6 +2744,10 @@ const GROUP_COMMAND_SUBBOT_STEP_DELAY_MS = Math.max(
 const GROUP_COMMAND_SUBBOT_MAX_DELAY_MS = Math.max(
   60,
   parseNumberEnv("GROUP_COMMAND_SUBBOT_MAX_DELAY_MS", 850) || 850
+);
+const GROUP_COMMAND_SEMANTIC_DEDUP_TTL_MS = Math.max(
+  1_500,
+  parseNumberEnv("GROUP_COMMAND_SEMANTIC_DEDUP_TTL_MS", 8_000) || 8_000
 );
 const GROUP_UPDATE_CLAIM_ENABLED = parseBooleanEnv("GROUP_UPDATE_CLAIM_ENABLED", true);
 const GROUP_UPDATE_CLAIM_TTL_MS = Math.max(
