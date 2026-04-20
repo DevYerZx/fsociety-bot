@@ -1,6 +1,8 @@
 // =========================
 // FSOCIETY BOT - INDEX (MULTI BOT)
 //OWNDER DVYER 
+//LICENCIA CON DERECHOS (DVYER) 
+//NO BORRAR DERECHOS YA QUE NO ERES CREADOR DE LA BASE RESPETA AL DUEÑO 
 // =========================
 
 import * as baileys from "@dvyer/baileys";
