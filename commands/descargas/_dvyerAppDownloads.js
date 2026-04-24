@@ -17,11 +17,12 @@ import {
 } from "../economia/download-access.js";
 
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
-const SEARCH_TIMEOUT = 45000;
+const SEARCH_TIMEOUT = 45_000;
 const MAX_FILE_BYTES = 800 * 1024 * 1024;
-const MIN_FILE_BYTES = 20000;
+const MIN_FILE_BYTES = 20_000;
 const TMP_ROOT = path.join(os.tmpdir(), "dvyer-app-downloads");
 const COOLDOWN_TIME = 0;
+
 const cooldowns = new Map();
 
 const COMMAND_CONFIG = {
@@ -86,8 +87,12 @@ const COMMAND_CONFIG = {
   },
 };
 
-if (!fs.existsSync(TMP_ROOT)) {
-  fs.mkdirSync(TMP_ROOT, { recursive: true });
+ensureTmpRoot();
+
+function ensureTmpRoot() {
+  try {
+    fs.mkdirSync(TMP_ROOT, { recursive: true });
+  } catch {}
 }
 
 function getCommandConfig(kind) {
@@ -96,9 +101,13 @@ function getCommandConfig(kind) {
 }
 
 function apiBaseLabel() {
-  return String(getDvyerBaseUrl() || "https://dv-yer-api.online")
+  const configured = String(getDvyerBaseUrl() || "https://dv-yer-api.online")
     .trim()
     .replace(/\/+$/, "");
+
+  // ✅ Para tu endpoint real:
+  // https://dv-yer-api.online/apkdl?mode=link&q=freefire&pick=1&prefer=auto&lang=es&apikey=...
+  return configured || "https://dv-yer-api.online";
 }
 
 function buildApiUrl(endpoint = "") {
@@ -138,7 +147,9 @@ function cleanText(value = "") {
 
 function clipText(value = "", max = 72) {
   const normalized = cleanText(value);
+
   if (normalized.length <= max) return normalized;
+
   return `${normalized.slice(0, Math.max(1, max - 3))}...`;
 }
 
@@ -269,7 +280,7 @@ async function safeSendMessage(sock, from, payload, quoted, options = {}) {
   const throwOnUnavailable = options?.throwOnUnavailable === true;
 
   if (!sock || typeof sock.sendMessage !== "function" || !from) {
-    const error = new Error("La conexion del bot no esta disponible ahora.");
+    const error = new Error("La conexión del bot no está disponible ahora.");
     console.warn(`[${label || "command"}]`, error.message);
 
     if (throwOnUnavailable) throw error;
@@ -400,7 +411,7 @@ async function downloadThumbnailBuffer(url) {
 
   const response = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 15000,
+    timeout: 15_000,
     validateStatus: () => true,
   });
 
@@ -425,7 +436,7 @@ async function requestSearchResults(input, config) {
   const results = Array.isArray(data?.results) ? data.results.slice(0, 10) : [];
 
   if (!results.length) {
-    throw new Error(`No encontre resultados de ${config.name}.`);
+    throw new Error(`No encontré resultados de ${config.name}.`);
   }
 
   return results;
@@ -435,6 +446,7 @@ async function requestDownloadMeta(input, config, options = {}) {
   const params = {
     mode: "link",
     lang: "es",
+    prefer: "auto",
     pick: Math.max(1, Math.min(10, Number(options?.pick || 1))),
   };
 
@@ -448,7 +460,7 @@ async function requestDownloadMeta(input, config, options = {}) {
   const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
 
   if (!downloadUrl) {
-    throw new Error("La API no devolvio enlace interno de descarga.");
+    throw new Error("La API no devolvió enlace interno de descarga.");
   }
 
   const inferredExt =
@@ -540,7 +552,7 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
 
   if (!size || size < MIN_FILE_BYTES) {
     deleteFileSafe(outputPath);
-    throw new Error("El archivo descargado es invalido.");
+    throw new Error("El archivo descargado es inválido.");
   }
 
   if (size > MAX_FILE_BYTES) {
@@ -563,12 +575,12 @@ function buildPreviewCaption(info, config) {
     `┃ ${config.rowLabel} *${info.title || `${config.name} File`}*`,
   ];
 
-  if (info.version) lines.push(`┃ 🧩 Version: *${info.version}*`);
+  if (info.version) lines.push(`┃ 🧩 Versión: *${info.version}*`);
   if (info.packageName) lines.push(`┃ 📛 Paquete: *${info.packageName}*`);
   if (info.format) lines.push(`┃ 📁 Formato: *${String(info.format).toUpperCase()}*`);
 
   const sizeText = humanBytes(info.sizeBytes);
-  if (sizeText) lines.push(`┃ 📦 Tamano: *${sizeText}*`);
+  if (sizeText) lines.push(`┃ 📦 Tamaño: *${sizeText}*`);
 
   lines.push("╰━━━━━━━━━━━━━━━━━━⬣");
 
@@ -617,13 +629,13 @@ async function sendSearchPicker(ctx, query, results, config) {
 
   const rows = results.map((result, index) => ({
     header: `${index + 1}`,
-    title: clipText(result.title || "Sin titulo", 72),
+    title: clipText(result.title || "Sin título", 72),
     description: clipText(
       `${config.rowLabel} | ${String(
         result.format || config.defaultExtension
-      ).toUpperCase()} | ${result.version || "Sin version"}${
-        humanBytes(result.filesize_bytes)
-          ? ` | ${humanBytes(result.filesize_bytes)}`
+      ).toUpperCase()} | ${result.version || "Sin versión"}${
+        humanBytes(result.filesize_bytes || result.size_bytes)
+          ? ` | ${humanBytes(result.filesize_bytes || result.size_bytes)}`
           : ""
       }`,
       72
@@ -645,7 +657,7 @@ async function sendSearchPicker(ctx, query, results, config) {
         caption:
           `╭━━〔 🔎 *FSOCIETY BOT* 〕━━⬣\n` +
           `┃ Resultado para: *${clipText(query, 80)}*\n` +
-          `┃ Primer resultado: *${clipText(results[0]?.title || "Sin titulo", 80)}*\n` +
+          `┃ Primer resultado: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
           `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
           `${config.selectionText}`,
       }
@@ -720,12 +732,12 @@ async function sendSearchPicker(ctx, query, results, config) {
 async function sendFileDocument(sock, from, quoted, info, filePath, fileName, size) {
   const extra = [];
 
-  if (info.version) extra.push(`┃ 🧩 Version: ${info.version}`);
+  if (info.version) extra.push(`┃ 🧩 Versión: ${info.version}`);
   if (info.packageName) extra.push(`┃ 📛 Paquete: ${info.packageName}`);
   if (info.format) extra.push(`┃ 📁 Formato: ${String(info.format).toUpperCase()}`);
 
   const sizeText = humanBytes(size);
-  if (sizeText) extra.push(`┃ 📦 Tamano: ${sizeText}`);
+  if (sizeText) extra.push(`┃ 📦 Tamaño: ${sizeText}`);
 
   const caption =
     `╭━━〔 ✅ *DESCARGA LISTA* 〕━━⬣\n` +
@@ -757,10 +769,10 @@ async function sendLargeFileLink(sock, from, quoted, info, config) {
     {
       text:
         `╭━━〔 ⚠️ *ARCHIVO GRANDE* 〕━━⬣\n` +
-        `┃ El ${config.tooLargeLabel} supera el limite de envio directo.\n` +
-        `${sizeText ? `┃ Tamano: *${sizeText}*\n` : ""}` +
+        `┃ El ${config.tooLargeLabel} supera el límite de envío directo.\n` +
+        `${sizeText ? `┃ Tamaño: *${sizeText}*\n` : ""}` +
         `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
-        `No envio la API key por seguridad.`,
+        `No envío el enlace con API key por seguridad.`,
       ...global.channelInfo,
     },
     quoted,
@@ -770,6 +782,7 @@ async function sendLargeFileLink(sock, from, quoted, info, config) {
 
 export function buildDvyerAppCommand(kind) {
   const config = getCommandConfig(kind);
+
   const commandNames = Array.isArray(config.aliases)
     ? config.aliases
     : [config.primaryCommand];
