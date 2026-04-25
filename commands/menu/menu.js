@@ -8,6 +8,12 @@ function cleanText(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function clipText(value = "", max = 70) {
+  const text = cleanText(value);
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 3))}...`;
+}
+
 function formatUptime(seconds = 0) {
   const total = Math.max(0, Math.floor(Number(seconds || 0)));
   const d = Math.floor(total / 86400);
@@ -44,8 +50,8 @@ function normalizeCategoryKey(value = "") {
     downloads: "descargas",
 
     busquedas: "busqueda",
-    search: "busqueda",
     buscar: "busqueda",
+    search: "busqueda",
 
     grupo: "grupos",
     group: "grupos",
@@ -65,9 +71,11 @@ function normalizeCategoryKey(value = "") {
     ai: "ia",
 
     system: "sistema",
+
     owner: "owner",
     dueño: "owner",
     dueno: "owner",
+
     admin: "admin",
   };
 
@@ -88,7 +96,7 @@ function normalizeCategoryLabel(value = "") {
     subbots: "SUBBOTS",
     economia: "ECONOMÍA",
     sistema: "SISTEMA",
-    ia: "INTELIGENCIA ARTIFICIAL",
+    ia: "IA",
     media: "MULTIMEDIA",
     anime: "ANIME",
     admin: "ADMIN",
@@ -240,7 +248,7 @@ function getCommandDescription(cmd) {
     cleanText(cmd?.description) ||
     cleanText(cmd?.descripcion) ||
     cleanText(cmd?.desc) ||
-    "Sin descripción disponible."
+    "Sin descripción."
   );
 }
 
@@ -323,48 +331,49 @@ function buildTopPanel({
     `┃ 🗂️ *Categorías:* ${totalCategories}`,
     `┃ 📌 *Comandos:* ${totalCommands}`,
     "┃",
-    "┃ _Usa el prefijo + comando para ejecutar._",
+    "┃ _Escribe el prefijo + comando._",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
 function buildCategoryIndex(categoryNames, categories) {
-  const lines = [
-    "╭━━〔 🧭 *ÍNDICE DE CATEGORÍAS* 〕━━⬣",
-  ];
+  const list = categoryNames
+    .map((category) => {
+      const icon = getCategoryIcon(category);
+      const label = normalizeCategoryLabel(category);
+      const count = categories[category]?.length || 0;
+      return `${icon} ${label}(${count})`;
+    })
+    .join(" • ");
 
-  for (const category of categoryNames) {
-    const icon = getCategoryIcon(category);
-    const label = normalizeCategoryLabel(category);
-    const count = categories[category]?.length || 0;
-
-    lines.push(`┃ ${icon} *${label}* — ${count}`);
-  }
-
-  lines.push("╰━━━━━━━━━━━━━━━━━━━━⬣");
-
-  return lines.join("\n");
+  return [
+    "╭─〔 🧭 *CATEGORÍAS* 〕",
+    `┃ ${list}`,
+    "╰────────────⬣",
+  ].join("\n");
 }
 
 function buildCommandLine(item, primaryPrefix) {
   const command = `${primaryPrefix}${item.main}`;
   const badges = buildBadgeLine(item);
+  const desc = clipText(item.description || "Sin descripción.", 58);
 
-  const lines = [
-    `┃ ✦ *${command}*${badges}`,
-    `┃   _${item.description}_`,
-  ];
+  let line = `┃ ✦ *${command}*`;
+
+  if (badges) line += badges;
+
+  line += `\n┃   _${desc}_`;
 
   if (item.aliases.length) {
     const aliasText = item.aliases
-      .slice(0, 6)
+      .slice(0, 3)
       .map((alias) => `${primaryPrefix}${alias}`)
       .join(" • ");
 
-    lines.push(`┃   ↳ Alias: ${aliasText}`);
+    line += `\n┃   ↳ ${aliasText}`;
   }
 
-  return lines.join("\n");
+  return line;
 }
 
 function buildCategoryBlock(category, commands, primaryPrefix) {
@@ -372,58 +381,42 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
   const title = normalizeCategoryLabel(category);
 
   const lines = [
-    `╭━━〔 ${icon} *${title}* 〕━━⬣`,
-    `┃ 📌 Total: ${commands.length}`,
-    "┃",
+    `╭─〔 ${icon} *${title}* 〕`,
   ];
 
   for (const item of commands) {
     lines.push(buildCommandLine(item, primaryPrefix));
-    lines.push("┃");
   }
 
-  lines.push("╰━━━━━━━━━━━━━━━━━━━━⬣");
+  lines.push("╰────────────⬣");
 
   return lines.join("\n");
 }
 
 function buildFooter(primaryPrefix) {
   return [
-    "╭━━〔 💡 *AYUDA RÁPIDA* 〕━━⬣",
-    `┃ 📜 *${primaryPrefix}menu*`,
-    "┃   _Muestra este menú principal._",
-    "┃",
-    `┃ ⚙️ *${primaryPrefix}status*`,
-    "┃   _Muestra el estado del bot._",
-    "┃",
-    `┃ 👑 *${primaryPrefix}owner*`,
-    "┃   _Muestra contacto o soporte del dueño._",
-    "┃",
-    "┃ ⚡ *Tip:* escribe el comando tal como aparece.",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    "╭─〔 💡 *AYUDA* 〕",
+    `┃ ${primaryPrefix}menu → ver menú`,
+    `┃ ${primaryPrefix}status → estado`,
+    `┃ ${primaryPrefix}owner → soporte`,
+    "╰────────────⬣",
   ].join("\n");
 }
 
-function splitLongText(text, maxLength = 3800) {
-  const parts = [];
-  let current = "";
+function makeSingleCaption(fullCaption, primaryPrefix) {
+  const maxLength = 3900;
 
-  const blocks = String(text || "").split("\n\n");
-
-  for (const block of blocks) {
-    const next = current ? `${current}\n\n${block}` : block;
-
-    if (next.length > maxLength) {
-      if (current) parts.push(current);
-      current = block;
-    } else {
-      current = next;
-    }
+  if (fullCaption.length <= maxLength) {
+    return fullCaption;
   }
 
-  if (current) parts.push(current);
-
-  return parts;
+  return (
+    `${fullCaption.slice(0, 3800)}\n\n` +
+    "╭─〔 ⚠️ *MENÚ RECORTADO* 〕\n" +
+    "┃ Hay demasiados comandos para un solo mensaje.\n" +
+    `┃ Usa ${primaryPrefix}menu para ver lo principal.\n` +
+    "╰────────────⬣"
+  );
 }
 
 async function react(sock, msg, emoji) {
@@ -454,7 +447,10 @@ export default {
         return await sock.sendMessage(
           from,
           {
-            text: "❌ Error interno: no se encontró la lista de comandos.",
+            text:
+              "╭━━〔 ❌ *ERROR MENÚ* 〕━━⬣\n" +
+              "┃ No se encontró la lista de comandos.\n" +
+              "╰━━━━━━━━━━━━━━━━━━━━⬣",
             ...global.channelInfo,
           },
           { quoted: msg }
@@ -501,62 +497,28 @@ export default {
       ];
 
       const fullCaption = textParts.join("\n\n").trim();
+      const finalCaption = makeSingleCaption(fullCaption, primaryPrefix);
 
-      if (imageBuffer && fullCaption.length <= 3800) {
+      // ✅ SOLO ENVÍA UN MENSAJE
+      if (imageBuffer) {
         await sock.sendMessage(
           from,
           {
             image: imageBuffer,
-            caption: fullCaption,
+            caption: finalCaption,
             ...global.channelInfo,
           },
           { quoted: msg }
         );
-      } else if (imageBuffer) {
-        await sock.sendMessage(
-          from,
-          {
-            image: imageBuffer,
-            caption: topPanel,
-            ...global.channelInfo,
-          },
-          { quoted: msg }
-        );
-
-        const chunks = splitLongText(
-          [
-            buildCategoryIndex(categoryNames, categories),
-            ...categoryNames.map((category) =>
-              buildCategoryBlock(category, categories[category], primaryPrefix)
-            ),
-            buildFooter(primaryPrefix),
-          ].join("\n\n"),
-          3800
-        );
-
-        for (const chunk of chunks) {
-          await sock.sendMessage(
-            from,
-            {
-              text: chunk,
-              ...global.channelInfo,
-            },
-            { quoted: msg }
-          );
-        }
       } else {
-        const chunks = splitLongText(fullCaption, 3800);
-
-        for (const chunk of chunks) {
-          await sock.sendMessage(
-            from,
-            {
-              text: chunk,
-              ...global.channelInfo,
-            },
-            { quoted: msg }
-          );
-        }
+        await sock.sendMessage(
+          from,
+          {
+            text: finalCaption,
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
       }
 
       await react(sock, msg, "✅");
