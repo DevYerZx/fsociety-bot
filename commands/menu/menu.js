@@ -8,12 +8,6 @@ function cleanText(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function clipText(value = "", max = 70) {
-  const text = cleanText(value);
-  if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(1, max - 3))}...`;
-}
-
 function formatUptime(seconds = 0) {
   const total = Math.max(0, Math.floor(Number(seconds || 0)));
   const d = Math.floor(total / 86400);
@@ -243,15 +237,6 @@ function getMainCommand(cmd) {
   return names[0] || "";
 }
 
-function getCommandDescription(cmd) {
-  return (
-    cleanText(cmd?.description) ||
-    cleanText(cmd?.descripcion) ||
-    cleanText(cmd?.desc) ||
-    "Sin descripción."
-  );
-}
-
 function getCommandCategory(cmd) {
   return normalizeCategoryKey(cmd?.categoria || cmd?.category || "otros");
 }
@@ -270,44 +255,21 @@ function collectCommandData(comandos) {
     if (!main) continue;
 
     const category = getCommandCategory(cmd);
-    const names = getCommandNames(cmd);
-    const aliases = names.filter((name) => name !== main);
-    const description = getCommandDescription(cmd);
 
     if (!categories[category]) {
-      categories[category] = [];
+      categories[category] = new Set();
     }
 
-    const exists = categories[category].some((item) => item.main === main);
-    if (exists) continue;
-
-    categories[category].push({
-      main,
-      aliases,
-      description,
-      owner: Boolean(cmd?.owner || cmd?.isOwner),
-      admin: Boolean(cmd?.admin || cmd?.isAdmin),
-      premium: Boolean(cmd?.premium || cmd?.isPremium),
-      group: Boolean(cmd?.group || cmd?.isGroup),
-    });
+    categories[category].add(main);
   }
 
-  for (const category of Object.keys(categories)) {
-    categories[category].sort((a, b) => a.main.localeCompare(b.main));
+  const cleanCategories = {};
+
+  for (const [category, set] of Object.entries(categories)) {
+    cleanCategories[category] = Array.from(set).sort((a, b) => a.localeCompare(b));
   }
 
-  return categories;
-}
-
-function buildBadgeLine(item) {
-  const badges = [];
-
-  if (item.owner) badges.push("Owner");
-  if (item.admin) badges.push("Admin");
-  if (item.premium) badges.push("VIP");
-  if (item.group) badges.push("Grupo");
-
-  return badges.length ? ` │ ${badges.join(" • ")}` : "";
+  return cleanCategories;
 }
 
 function buildTopPanel({
@@ -353,29 +315,6 @@ function buildCategoryIndex(categoryNames, categories) {
   ].join("\n");
 }
 
-function buildCommandLine(item, primaryPrefix) {
-  const command = `${primaryPrefix}${item.main}`;
-  const badges = buildBadgeLine(item);
-  const desc = clipText(item.description || "Sin descripción.", 58);
-
-  let line = `┃ ✦ *${command}*`;
-
-  if (badges) line += badges;
-
-  line += `\n┃   _${desc}_`;
-
-  if (item.aliases.length) {
-    const aliasText = item.aliases
-      .slice(0, 3)
-      .map((alias) => `${primaryPrefix}${alias}`)
-      .join(" • ");
-
-    line += `\n┃   ↳ ${aliasText}`;
-  }
-
-  return line;
-}
-
 function buildCategoryBlock(category, commands, primaryPrefix) {
   const icon = getCategoryIcon(category);
   const title = normalizeCategoryLabel(category);
@@ -384,9 +323,8 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
     `╭─〔 ${icon} *${title}* 〕`,
   ];
 
-  for (const item of commands) {
-    lines.push(buildCommandLine(item, primaryPrefix));
-  }
+  const commandLines = commands.map((name) => `┃ ✦ *${primaryPrefix}${name}*`);
+  lines.push(...commandLines);
 
   lines.push("╰────────────⬣");
 
@@ -435,7 +373,7 @@ async function react(sock, msg, emoji) {
 export default {
   command: ["menu", "help", "comandos"],
   categoria: "menu",
-  description: "Muestra el menú principal con categorías, comandos y descripción.",
+  description: "Muestra el menú principal del bot.",
 
   run: async ({ sock, msg, from, settings, comandos, botId, botLabel }) => {
     try {
@@ -499,7 +437,6 @@ export default {
       const fullCaption = textParts.join("\n\n").trim();
       const finalCaption = makeSingleCaption(fullCaption, primaryPrefix);
 
-      // ✅ SOLO ENVÍA UN MENSAJE
       if (imageBuffer) {
         await sock.sendMessage(
           from,
