@@ -3,8 +3,19 @@ import path from "path";
 import os from "os";
 import axios from "axios";
 import { pipeline } from "stream/promises";
-import { getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
-import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import { randomUUID } from "crypto";
+
+import {
+  getDvyerBaseUrl,
+  withDvyerApiKey,
+  withDvyerApiKeyHeader,
+  appendDvyerApiKeyToUrl,
+} from "../../lib/api-manager.js";
+
+import {
+  chargeDownloadRequest,
+  refundDownloadCharge,
+} from "../economia/download-access.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_FACEBOOK_URL = `${API_BASE}/facebook`;
@@ -14,12 +25,18 @@ const COOLDOWN_TIME = 0;
 const REQUEST_TIMEOUT = 120000;
 const MAX_VIDEO_BYTES = 800 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 45 * 1024 * 1024;
-const TMP_DIR = path.join(os.tmpdir(), "dvyer-facebook");
+
+// Más seguro que /home/container/tmp en algunos hostings
+const TMP_DIR = path.join(process.cwd(), "tmp", "dvyer-facebook");
 
 const cooldowns = new Map();
 
-if (!fs.existsSync(TMP_DIR)) {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
+ensureTmpDir();
+
+function ensureTmpDir() {
+  try {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+  } catch {}
 }
 
 function safeFileName(name) {
@@ -35,6 +52,15 @@ function safeFileName(name) {
 function normalizeMp4Name(name) {
   const clean = safeFileName(String(name || "facebook-video").replace(/\.mp4$/i, ""));
   return `${clean || "facebook-video"}.mp4`;
+}
+
+function buildTempPath(fileName) {
+  ensureTmpDir();
+
+  return path.join(
+    TMP_DIR,
+    `${Date.now()}-${randomUUID()}-${normalizeMp4Name(fileName)}`
+  );
 }
 
 function getCooldownRemaining(untilMs) {
@@ -79,7 +105,7 @@ function resolveUserInput(ctx) {
 
 function extractFacebookUrl(text) {
   const match = String(text || "").match(
-    /https?:\/\/(?:www\.)?(?:facebook\.com|fb\.watch)\/[^\s]+/i
+    /https?:\/\/(?:www\.)?(?:facebook\.com|m\.facebook\.com|fb\.watch)\/[^\s]+/i
   );
   return match ? match[0].trim() : "";
 }
@@ -89,6 +115,7 @@ function extractApiError(data, status) {
     data?.detail ||
     data?.error?.message ||
     data?.message ||
+    data?.error ||
     (status ? `HTTP ${status}` : "Error de API")
   );
 }
@@ -104,9 +131,7 @@ function parseContentDispositionFileName(headerValue) {
   }
 
   const normalMatch = text.match(/filename="?([^"]+)"?/i);
-  if (normalMatch?.[1]) {
-    return normalMatch[1].trim();
-  }
+  if (normalMatch?.[1]) return normalMatch[1].trim();
 
   return "";
 }
@@ -136,6 +161,12 @@ async function apiGet(url, params, timeout = 45000) {
   const response = await axios.get(url, {
     timeout,
     params: withDvyerApiKey(params),
+    headers: withDvyerApiKeyHeader({
+      Accept: "application/json,text/plain,*/*",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+      Referer: `${API_BASE}/`,
+    }),
     validateStatus: () => true,
   });
 
@@ -152,6 +183,22 @@ async function apiGet(url, params, timeout = 45000) {
   return data;
 }
 
+function pickApiDownloadUrl(data) {
+  return (
+    data?.download_url_full ||
+    data?.stream_url_full ||
+    data?.download_url ||
+    data?.stream_url ||
+    data?.url ||
+    data?.result?.download_url_full ||
+    data?.result?.stream_url_full ||
+    data?.result?.download_url ||
+    data?.result?.stream_url ||
+    data?.result?.url ||
+    ""
+  );
+}
+
 async function requestFacebookMeta(videoUrl) {
   const data = await apiGet(API_FACEBOOK_URL, {
     mode: "link",
@@ -160,45 +207,66 @@ async function requestFacebookMeta(videoUrl) {
   });
 
   return {
-    title: safeFileName(data?.title || "Facebook Video"),
-    description: String(data?.description || "").trim() || null,
-    duration: String(data?.duration || "").trim() || null,
-    thumbnail: data?.thumbnail || null,
-    fileName: normalizeMp4Name(data?.filename || data?.file_name || "facebook-video.mp4"),
+    title: safeFileName(data?.title || data?.result?.title || "Facebook Video"),
+    description: String(data?.description || data?.result?.description || "").trim() || null,
+    duration: String(data?.duration || data?.result?.duration || "").trim() || null,
+    thumbnail: data?.thumbnail || data?.result?.thumbnail || null,
+    fileName: normalizeMp4Name(
+      data?.filename || data?.file_name || data?.result?.filename || "facebook-video.mp4"
+    ),
+    downloadUrl: pickApiDownloadUrl(data),
   };
 }
 
-async function downloadFacebookVideo(videoUrl, outputPath) {
-  const response = await axios.get(API_FACEBOOK_URL, {
+async function downloadFacebookVideo(videoUrl, outputPath, directUrl = "") {
+  ensureTmpDir();
+
+  const hasDirectUrl = /^https?:\/\//i.test(String(directUrl || "").trim());
+  const requestUrl = hasDirectUrl
+    ? appendDvyerApiKeyToUrl(directUrl)
+    : API_FACEBOOK_URL;
+
+  const requestConfig = {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
-    params: {
-      mode: "file",
-      quality: VIDEO_QUALITY,
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
+    maxRedirects: 5,
+    headers: withDvyerApiKeyHeader({
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
       Accept: "*/*",
       Referer: `${API_BASE}/`,
-    },
+    }),
     validateStatus: () => true,
-    maxRedirects: 5,
-  });
+  };
+
+  if (!hasDirectUrl) {
+    requestConfig.params = withDvyerApiKey({
+      mode: "file",
+      quality: VIDEO_QUALITY,
+      url: videoUrl,
+    });
+  }
+
+  const response = await axios.get(requestUrl, requestConfig);
 
   if (response.status >= 400) {
     const errorText = await readStreamToText(response.data).catch(() => "");
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(errorText);
+    } catch {}
+
     throw new Error(
       extractApiError(
-        { message: errorText || "No se pudo descargar el video." },
+        parsed || { message: errorText || "No se pudo descargar el video." },
         response.status
       )
     );
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
+
   if (contentLength && contentLength > MAX_VIDEO_BYTES) {
     throw new Error("El video es demasiado grande para enviarlo por WhatsApp.");
   }
@@ -207,16 +275,36 @@ async function downloadFacebookVideo(videoUrl, outputPath) {
 
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
+
     if (downloaded > MAX_VIDEO_BYTES) {
-      response.data.destroy(new Error("El video es demasiado grande para enviarlo por WhatsApp."));
+      response.data.destroy(
+        new Error("El video es demasiado grande para enviarlo por WhatsApp.")
+      );
     }
   });
 
   try {
+    ensureTmpDir();
     await pipeline(response.data, fs.createWriteStream(outputPath));
   } catch (error) {
     deleteFileSafe(outputPath);
-    throw error;
+
+    const isEnoent = String(error?.message || "")
+      .toUpperCase()
+      .includes("ENOENT");
+
+    if (!isEnoent) throw error;
+
+    ensureTmpDir();
+
+    const retryResponse = await axios.get(requestUrl, requestConfig);
+
+    if (retryResponse.status >= 400) {
+      const retryErrorText = await readStreamToText(retryResponse.data).catch(() => "");
+      throw new Error(retryErrorText || "Error al descargar el video.");
+    }
+
+    await pipeline(retryResponse.data, fs.createWriteStream(outputPath));
   }
 
   if (!fs.existsSync(outputPath)) {
@@ -224,9 +312,10 @@ async function downloadFacebookVideo(videoUrl, outputPath) {
   }
 
   const size = fs.statSync(outputPath).size;
+
   if (!size || size < 100000) {
     deleteFileSafe(outputPath);
-    throw new Error("El archivo descargado es invalido.");
+    throw new Error("El archivo descargado es inválido.");
   }
 
   if (size > MAX_VIDEO_BYTES) {
@@ -255,7 +344,11 @@ async function sendVideoOrDocument(sock, from, quoted, options) {
     size = 0,
   } = options;
 
-  const finalCaption = caption || `DVYER API\n\n${title || fileName}`;
+  const finalCaption =
+    caption ||
+    `╭━━〔 🎬 *FACEBOOK MP4* 〕━━⬣\n` +
+      `┃ 📌 ${title || fileName}\n` +
+      `╰━━━━━━━━━━━━━━━━━━⬣`;
 
   if (size > documentThreshold) {
     await sock.sendMessage(
@@ -269,6 +362,7 @@ async function sendVideoOrDocument(sock, from, quoted, options) {
       },
       quoted
     );
+
     return "document";
   }
 
@@ -284,6 +378,7 @@ async function sendVideoOrDocument(sock, from, quoted, options) {
       },
       quoted
     );
+
     return "video";
   } catch (error) {
     console.error("send video failed:", error?.message || error);
@@ -299,6 +394,7 @@ async function sendVideoOrDocument(sock, from, quoted, options) {
       },
       quoted
     );
+
     return "document";
   }
 }
@@ -306,6 +402,7 @@ async function sendVideoOrDocument(sock, from, quoted, options) {
 export default {
   command: ["facebook", "fb", "fbmp4"],
   category: "descarga",
+  description: "Descarga videos públicos de Facebook usando DVYER API.",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -318,6 +415,7 @@ export default {
 
     if (COOLDOWN_TIME > 0) {
       const until = cooldowns.get(userId);
+
       if (until && until > Date.now()) {
         return sock.sendMessage(from, {
           text: `Espera ${getCooldownRemaining(until)}s`,
@@ -329,21 +427,33 @@ export default {
     }
 
     try {
+      ensureTmpDir();
+
       const rawInput = resolveUserInput(ctx);
       const videoUrl = extractFacebookUrl(rawInput);
 
       if (!videoUrl) {
         cooldowns.delete(userId);
-        return sock.sendMessage(from, {
-          text: "Uso: .facebook <link publico de Facebook> o responde a un mensaje con el link",
-          ...global.channelInfo,
-        });
+
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              "╭━━〔 ❌ *USO INCORRECTO* 〕━━⬣\n" +
+              "┃ Uso: .facebook <link público de Facebook>\n" +
+              "┃ También puedes responder a un mensaje con el link.\n" +
+              "╰━━━━━━━━━━━━━━━━━━⬣",
+            ...global.channelInfo,
+          },
+          quoted
+        );
       }
 
       downloadCharge = await chargeDownloadRequest(ctx, {
         feature: "facebook",
         videoUrl,
       });
+
       if (!downloadCharge.ok) {
         cooldowns.delete(userId);
         return;
@@ -352,7 +462,11 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `Preparando Facebook...\n\nAPI: ${API_BASE}`,
+          text:
+            "╭━━〔 ⬇️ *PREPARANDO FACEBOOK* 〕━━⬣\n" +
+            `┃ 🔗 API: ${API_BASE}\n` +
+            "┃ 🔑 API Key: Activa\n" +
+            "╰━━━━━━━━━━━━━━━━━━⬣",
           ...global.channelInfo,
         },
         quoted
@@ -361,9 +475,19 @@ export default {
       const info = await requestFacebookMeta(videoUrl);
 
       if (info.thumbnail) {
-        const previewLines = ["DVYER API", "", info.title];
-        if (info.duration) previewLines.push(`Duracion: ${info.duration}`);
-        if (info.description) previewLines.push("", info.description);
+        const previewLines = [
+          "╭━━〔 🎬 *FACEBOOK VIDEO* 〕━━⬣",
+          `┃ 📌 ${info.title}`,
+        ];
+
+        if (info.duration) previewLines.push(`┃ ⏱️ Duración: ${info.duration}`);
+
+        previewLines.push("╰━━━━━━━━━━━━━━━━━━⬣");
+
+        if (info.description) {
+          previewLines.push("");
+          previewLines.push(info.description.slice(0, 400));
+        }
 
         await sock.sendMessage(
           from,
@@ -376,11 +500,23 @@ export default {
         );
       }
 
-      tempPath = path.join(TMP_DIR, `${Date.now()}-${info.fileName}`);
-      const downloaded = await downloadFacebookVideo(videoUrl, tempPath);
+      tempPath = buildTempPath(info.fileName);
 
-      const captionLines = ["DVYER API", "", info.title];
-      if (info.duration) captionLines.push(`Duracion: ${info.duration}`);
+      const downloaded = await downloadFacebookVideo(
+        videoUrl,
+        tempPath,
+        info.downloadUrl
+      );
+
+      const captionLines = [
+        "╭━━〔 ✅ *FACEBOOK ENVIADO* 〕━━⬣",
+        `┃ 📌 ${info.title}`,
+      ];
+
+      if (info.duration) captionLines.push(`┃ ⏱️ Duración: ${info.duration}`);
+
+      captionLines.push(`┃ 📦 Peso: ${(downloaded.size / 1024 / 1024).toFixed(2)} MB`);
+      captionLines.push("╰━━━━━━━━━━━━━━━━━━⬣");
 
       await sendVideoOrDocument(sock, from, quoted, {
         filePath: downloaded.tempPath,
@@ -392,15 +528,25 @@ export default {
       });
     } catch (error) {
       console.error("FACEBOOK ERROR:", error?.message || error);
+
       refundDownloadCharge(ctx, downloadCharge, {
         feature: "facebook",
         error: String(error?.message || error || "unknown_error"),
       });
 
-      await sock.sendMessage(from, {
-        text: String(error?.message || "No se pudo procesar el video de Facebook."),
-        ...global.channelInfo,
-      });
+      cooldowns.delete(userId);
+
+      await sock.sendMessage(
+        from,
+        {
+          text:
+            "╭━━〔 ❌ *ERROR FACEBOOK* 〕━━⬣\n" +
+            `┃ ${String(error?.message || "No se pudo procesar el video de Facebook.")}\n` +
+            "╰━━━━━━━━━━━━━━━━━━⬣",
+          ...global.channelInfo,
+        },
+        quoted
+      );
     } finally {
       deleteFileSafe(tempPath);
     }

@@ -10,8 +10,11 @@ function cleanText(value = "") {
 
 function formatUptime(seconds = 0) {
   const total = Math.max(0, Math.floor(Number(seconds || 0)));
-  const h = Math.floor(total / 3600);
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
+
+  if (d > 0) return `${d}d ${h}h ${m}m`;
   return `${h}h ${m}m`;
 }
 
@@ -19,6 +22,7 @@ function getPrimaryPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
     return settings.prefix.find((value) => cleanText(value)) || ".";
   }
+
   return cleanText(settings?.prefix || ".") || ".";
 }
 
@@ -27,32 +31,80 @@ function getPrefixLabel(settings) {
     const values = settings.prefix.map((value) => cleanText(value)).filter(Boolean);
     return values.length ? values.join(" | ") : ".";
   }
+
   return cleanText(settings?.prefix || ".") || ".";
 }
 
 function normalizeCategoryKey(value = "") {
   const key = cleanText(value).toLowerCase();
+
   const aliases = {
     descarga: "descargas",
     download: "descargas",
+    downloads: "descargas",
+
+    busquedas: "busqueda",
+    buscar: "busqueda",
+    search: "busqueda",
+
     grupo: "grupos",
     group: "grupos",
+    groups: "grupos",
+
+    herramienta: "herramientas",
     tool: "herramientas",
     tools: "herramientas",
+
     game: "juegos",
     games: "juegos",
+
+    economy: "economia",
+    banco: "economia",
+
     ia: "ia",
     ai: "ia",
+
+    system: "sistema",
+
+    owner: "owner",
+    dueño: "owner",
+    dueno: "owner",
+
+    admin: "admin",
   };
-  return aliases[key] || key;
+
+  return aliases[key] || key || "otros";
 }
 
 function normalizeCategoryLabel(value = "") {
-  return cleanText(value).replace(/_/g, " ").toUpperCase();
+  const key = normalizeCategoryKey(value);
+
+  const labels = {
+    menu: "MENÚ",
+    descargas: "DESCARGAS",
+    busqueda: "BÚSQUEDA",
+    freefire: "FREE FIRE",
+    juegos: "JUEGOS",
+    herramientas: "HERRAMIENTAS",
+    grupos: "GRUPOS",
+    subbots: "SUBBOTS",
+    economia: "ECONOMÍA",
+    sistema: "SISTEMA",
+    ia: "IA",
+    media: "MULTIMEDIA",
+    anime: "ANIME",
+    admin: "ADMIN",
+    owner: "OWNER",
+    vip: "VIP",
+    otros: "OTROS",
+  };
+
+  return labels[key] || cleanText(value).replace(/_/g, " ").toUpperCase();
 }
 
 function getCategoryIcon(category = "") {
   const key = normalizeCategoryKey(category);
+
   const icons = {
     menu: "📜",
     descargas: "📥",
@@ -68,8 +120,11 @@ function getCategoryIcon(category = "") {
     media: "🖼️",
     anime: "🌸",
     admin: "👑",
+    owner: "🛠️",
     vip: "💎",
+    otros: "✦",
   };
+
   return icons[key] || "✦";
 }
 
@@ -89,7 +144,9 @@ function getCategorySortIndex(category = "") {
     "media",
     "anime",
     "admin",
+    "owner",
     "vip",
+    "otros",
   ];
 
   const index = order.indexOf(normalizeCategoryKey(category));
@@ -106,26 +163,36 @@ function getMenuContext({ settings, botId = "", botLabel = "" }) {
 
   if (!normalizedBotId || normalizedBotId === "main") {
     return {
-      title: "FSOCIETY BOT PRINCIPAL",
+      title: "FSOCIETY BOT",
+      subtitle: "MENÚ PRINCIPAL",
       botLine: settings?.botName || "Fsociety Bot",
     };
   }
 
   const slot = getSubbotSlot(normalizedBotId);
+
   const subbotName =
     (slot >= 1 && Array.isArray(settings?.subbots) && settings.subbots[slot - 1]?.name) ||
     cleanText(botLabel) ||
     `Fsociety Subbot ${slot || 1}`;
 
   return {
-    title: `MENU SUBBOT FSOCIETY ${slot || 1}`,
+    title: `FSOCIETY SUBBOT ${slot || 1}`,
+    subtitle: "MENÚ SUBBOT",
     botLine: subbotName,
   };
 }
 
 function resolveMenuImagePath() {
   const base = path.join(process.cwd(), "imagenes", "menu");
-  const candidates = [`${base}.png`, `${base}.jpg`, `${base}.jpeg`, `${base}.webp`];
+
+  const candidates = [
+    `${base}.png`,
+    `${base}.jpg`,
+    `${base}.jpeg`,
+    `${base}.webp`,
+  ];
+
   return candidates.find((filePath) => fs.existsSync(filePath)) || "";
 }
 
@@ -142,41 +209,67 @@ function getMenuImageBuffer() {
     }
 
     const buffer = fs.readFileSync(imagePath);
+
     menuImageCache = buffer;
     menuImageCacheKey = cacheKey;
+
     return buffer;
   } catch {
     return null;
   }
 }
 
-function getMainCommand(cmd) {
-  const commandRaw = cmd?.command;
+function getCommandNames(cmd) {
+  const commandRaw = cmd?.command || cmd?.commands || cmd?.cmd;
 
   if (Array.isArray(commandRaw)) {
-    const first = commandRaw.map((value) => cleanText(value)).find(Boolean);
-    return first ? first.toLowerCase() : "";
+    return commandRaw
+      .map((value) => cleanText(value).toLowerCase())
+      .filter(Boolean);
   }
 
-  return cleanText(commandRaw).toLowerCase();
+  const single = cleanText(commandRaw).toLowerCase();
+  return single ? [single] : [];
 }
 
-function collectCategories(comandos) {
-  const categorias = {};
+function getMainCommand(cmd) {
+  const names = getCommandNames(cmd);
+  return names[0] || "";
+}
+
+function getCommandCategory(cmd) {
+  return normalizeCategoryKey(cmd?.categoria || cmd?.category || "otros");
+}
+
+function isHiddenCommand(cmd) {
+  return Boolean(cmd?.hidden || cmd?.hide || cmd?.oculto);
+}
+
+function collectCommandData(comandos) {
+  const categories = {};
 
   for (const cmd of new Set(comandos.values())) {
-    const categoryRaw = cmd?.categoria || cmd?.category;
-    if (!categoryRaw) continue;
+    if (!cmd || isHiddenCommand(cmd)) continue;
 
-    const principal = getMainCommand(cmd);
-    if (!principal) continue;
+    const main = getMainCommand(cmd);
+    if (!main) continue;
 
-    const category = normalizeCategoryKey(categoryRaw);
-    if (!categorias[category]) categorias[category] = new Set();
-    categorias[category].add(principal);
+    const category = getCommandCategory(cmd);
+
+    if (!categories[category]) {
+      categories[category] = new Set();
+    }
+
+    categories[category].add(main);
   }
 
-  return categorias;
+  const cleanCategories = {};
+
+  for (const [category, set] of Object.entries(categories)) {
+    cleanCategories[category] = Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+
+  return cleanCategories;
 }
 
 function buildTopPanel({
@@ -186,20 +279,39 @@ function buildTopPanel({
   totalCommands,
   prefixLabel,
   menuTitle,
+  menuSubtitle,
   botLine,
 }) {
   return [
-    `╭━━━〔 ${menuTitle} 〕━━━⬣`,
+    `╭━━〔 ⚡ *${menuTitle}* ⚡ 〕━━⬣`,
+    `┃ ${menuSubtitle}`,
     "┃",
-    `┃ 🤖 *Bot:* ${botLine || settings?.botName || "BOT"}`,
+    `┃ 🤖 *Bot:* ${botLine || settings?.botName || "Fsociety Bot"}`,
     `┃ 👑 *Owner:* ${settings?.ownerName || "Owner"}`,
-    `┃ 🔰 *Prefijos:* ${prefixLabel}`,
-    `┃ ⏳ *Uptime:* ${uptime}`,
+    `┃ 🔰 *Prefijo:* ${prefixLabel}`,
+    `┃ ⏳ *Activo:* ${uptime}`,
     `┃ 🗂️ *Categorías:* ${totalCategories}`,
     `┃ 📌 *Comandos:* ${totalCommands}`,
     "┃",
-    "┃ ✦ *Menú principal del bot*",
-    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "┃ _Escribe el prefijo + comando._",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+function buildCategoryIndex(categoryNames, categories) {
+  const list = categoryNames
+    .map((category) => {
+      const icon = getCategoryIcon(category);
+      const label = normalizeCategoryLabel(category);
+      const count = categories[category]?.length || 0;
+      return `${icon} ${label}(${count})`;
+    })
+    .join(" • ");
+
+  return [
+    "╭─〔 🧭 *CATEGORÍAS* 〕",
+    `┃ ${list}`,
+    "╰────────────⬣",
   ].join("\n");
 }
 
@@ -208,27 +320,47 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
   const title = normalizeCategoryLabel(category);
 
   const lines = [
-    `╭─〔 ${icon} ${title} 〕`,
-    ...commands.map((name) => `│ • \`${primaryPrefix}${name}\``),
-    "╰────────────⬣",
+    `╭─〔 ${icon} *${title}* 〕`,
   ];
+
+  const commandLines = commands.map((name) => `┃ ✦ *${primaryPrefix}${name}*`);
+  lines.push(...commandLines);
+
+  lines.push("╰────────────⬣");
 
   return lines.join("\n");
 }
 
 function buildFooter(primaryPrefix) {
   return [
-    "╭─〔 AYUDA 〕",
-    `│ • \`${primaryPrefix}status\` → estado del bot`,
-    `│ • \`${primaryPrefix}owner\` → soporte`,
-    `│ • \`${primaryPrefix}menu\` → abrir este menú`,
+    "╭─〔 💡 *AYUDA* 〕",
+    `┃ ${primaryPrefix}menu → ver menú`,
+    `┃ ${primaryPrefix}status → estado`,
+    `┃ ${primaryPrefix}owner → soporte`,
     "╰────────────⬣",
   ].join("\n");
+}
+
+function makeSingleCaption(fullCaption, primaryPrefix) {
+  const maxLength = 3900;
+
+  if (fullCaption.length <= maxLength) {
+    return fullCaption;
+  }
+
+  return (
+    `${fullCaption.slice(0, 3800)}\n\n` +
+    "╭─〔 ⚠️ *MENÚ RECORTADO* 〕\n" +
+    "┃ Hay demasiados comandos para un solo mensaje.\n" +
+    `┃ Usa ${primaryPrefix}menu para ver lo principal.\n` +
+    "╰────────────⬣"
+  );
 }
 
 async function react(sock, msg, emoji) {
   try {
     if (!msg?.key) return;
+
     await sock.sendMessage(msg.key.remoteJid, {
       react: {
         text: emoji,
@@ -239,9 +371,9 @@ async function react(sock, msg, emoji) {
 }
 
 export default {
-  command: ["menu"],
+  command: ["menu", "help", "comandos"],
   categoria: "menu",
-  description: "Menu principal con imagen",
+  description: "Muestra el menú principal del bot.",
 
   run: async ({ sock, msg, from, settings, comandos, botId, botLabel }) => {
     try {
@@ -249,80 +381,99 @@ export default {
 
       if (!comandos) {
         await react(sock, msg, "❌");
-        return await sock.sendMessage(
-          from,
-          { text: "Error interno del menú.", ...global.channelInfo },
-          { quoted: msg }
-        );
-      }
 
-      const imageBuffer = getMenuImageBuffer();
-      if (!imageBuffer) {
-        await react(sock, msg, "❌");
         return await sock.sendMessage(
           from,
           {
-            text: "No encontré la imagen del menú en imagenes/menu.(png|jpg|jpeg|webp).",
+            text:
+              "╭━━〔 ❌ *ERROR MENÚ* 〕━━⬣\n" +
+              "┃ No se encontró la lista de comandos.\n" +
+              "╰━━━━━━━━━━━━━━━━━━━━⬣",
             ...global.channelInfo,
           },
           { quoted: msg }
         );
       }
 
+      const imageBuffer = getMenuImageBuffer();
+
       const uptime = formatUptime(process.uptime());
       const primaryPrefix = getPrimaryPrefix(settings);
       const prefixLabel = getPrefixLabel(settings);
       const menuContext = getMenuContext({ settings, botId, botLabel });
-      const categorias = collectCategories(comandos);
+      const categories = collectCommandData(comandos);
 
-      const categoryNames = Object.keys(categorias).sort((a, b) => {
+      const categoryNames = Object.keys(categories).sort((a, b) => {
         const byOrder = getCategorySortIndex(a) - getCategorySortIndex(b);
         if (byOrder !== 0) return byOrder;
         return String(a).localeCompare(String(b));
       });
 
       const totalCommands = categoryNames.reduce(
-        (sum, category) => sum + categorias[category].size,
+        (sum, category) => sum + categories[category].length,
         0
       );
 
+      const topPanel = buildTopPanel({
+        settings,
+        uptime,
+        totalCategories: categoryNames.length,
+        totalCommands,
+        prefixLabel,
+        menuTitle: menuContext.title,
+        menuSubtitle: menuContext.subtitle,
+        botLine: menuContext.botLine,
+      });
+
       const textParts = [
-        buildTopPanel({
-          settings,
-          uptime,
-          totalCategories: categoryNames.length,
-          totalCommands,
-          prefixLabel,
-          menuTitle: menuContext.title,
-          botLine: menuContext.botLine,
-        }),
+        topPanel,
+        buildCategoryIndex(categoryNames, categories),
         ...categoryNames.map((category) =>
-          buildCategoryBlock(
-            category,
-            Array.from(categorias[category]).sort((a, b) => a.localeCompare(b)),
-            primaryPrefix
-          )
+          buildCategoryBlock(category, categories[category], primaryPrefix)
         ),
         buildFooter(primaryPrefix),
       ];
 
-      await sock.sendMessage(
-        from,
-        {
-          image: imageBuffer,
-          caption: textParts.join("\n\n").trim(),
-          ...global.channelInfo,
-        },
-        { quoted: msg }
-      );
+      const fullCaption = textParts.join("\n\n").trim();
+      const finalCaption = makeSingleCaption(fullCaption, primaryPrefix);
+
+      if (imageBuffer) {
+        await sock.sendMessage(
+          from,
+          {
+            image: imageBuffer,
+            caption: finalCaption,
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      } else {
+        await sock.sendMessage(
+          from,
+          {
+            text: finalCaption,
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
 
       await react(sock, msg, "✅");
     } catch (error) {
       console.error("MENU ERROR:", error);
+
       await react(sock, msg, "❌");
+
       await sock.sendMessage(
         from,
-        { text: "Error al mostrar el menú.", ...global.channelInfo },
+        {
+          text:
+            "╭━━〔 ❌ *ERROR MENÚ* 〕━━⬣\n" +
+            "┃ No se pudo mostrar el menú.\n" +
+            `┃ ${String(error?.message || "Error desconocido")}\n` +
+            "╰━━━━━━━━━━━━━━━━━━━━⬣",
+          ...global.channelInfo,
+        },
         { quoted: msg }
       );
     }

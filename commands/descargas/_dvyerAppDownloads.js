@@ -3,17 +3,26 @@ import path from "path";
 import os from "os";
 import axios from "axios";
 import { pipeline } from "stream/promises";
-import { appendDvyerApiKeyToUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
-import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 
-const LEGACY_DVYER_BASE_URL = "https://dv-yer-api.online";
-const PREFERRED_DVYER_BASE_URL = "https://dvyer-api.onrender.com";
+import {
+  appendDvyerApiKeyToUrl,
+  getDvyerBaseUrl,
+  withDvyerApiKey,
+  withDvyerApiKeyHeader,
+} from "../../lib/api-manager.js";
+
+import {
+  chargeDownloadRequest,
+  refundDownloadCharge,
+} from "../economia/download-access.js";
+
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
-const SEARCH_TIMEOUT = 45000;
+const SEARCH_TIMEOUT = 45_000;
 const MAX_FILE_BYTES = 800 * 1024 * 1024;
-const MIN_FILE_BYTES = 20000;
+const MIN_FILE_BYTES = 20_000;
 const TMP_ROOT = path.join(os.tmpdir(), "dvyer-app-downloads");
 const COOLDOWN_TIME = 0;
+
 const cooldowns = new Map();
 
 const COMMAND_CONFIG = {
@@ -36,6 +45,7 @@ const COMMAND_CONFIG = {
     selectionText: "Selecciona la app Android que quieres descargar.",
     tooLargeLabel: "app Android",
   },
+
   windows: {
     key: "windows",
     name: "Windows",
@@ -55,6 +65,7 @@ const COMMAND_CONFIG = {
     selectionText: "Selecciona el programa de Windows que quieres descargar.",
     tooLargeLabel: "programa Windows",
   },
+
   mac: {
     key: "mac",
     name: "Mac",
@@ -76,8 +87,12 @@ const COMMAND_CONFIG = {
   },
 };
 
-if (!fs.existsSync(TMP_ROOT)) {
-  fs.mkdirSync(TMP_ROOT, { recursive: true });
+ensureTmpRoot();
+
+function ensureTmpRoot() {
+  try {
+    fs.mkdirSync(TMP_ROOT, { recursive: true });
+  } catch {}
 }
 
 function getCommandConfig(kind) {
@@ -86,15 +101,13 @@ function getCommandConfig(kind) {
 }
 
 function apiBaseLabel() {
-  const configured = String(getDvyerBaseUrl() || "")
+  const configured = String(getDvyerBaseUrl() || "https://dv-yer-api.online")
     .trim()
     .replace(/\/+$/, "");
 
-  if (!configured || configured === LEGACY_DVYER_BASE_URL) {
-    return PREFERRED_DVYER_BASE_URL;
-  }
-
-  return configured;
+  // ✅ Para tu endpoint real:
+  // https://dv-yer-api.online/apkdl?mode=link&q=freefire&pick=1&prefer=auto&lang=es&apikey=...
+  return configured || "https://dv-yer-api.online";
 }
 
 function buildApiUrl(endpoint = "") {
@@ -104,14 +117,17 @@ function buildApiUrl(endpoint = "") {
   if (!suffix) return base;
   if (/^https?:\/\//i.test(suffix)) return suffix;
   if (suffix.startsWith("/")) return `${base}${suffix}`;
+
   return `${base}/${suffix}`;
 }
 
 function normalizeApiUrl(url) {
   const value = String(url || "").trim();
+
   if (!value) return "";
   if (/^https?:\/\//i.test(value)) return value;
   if (value.startsWith("/")) return `${apiBaseLabel()}${value}`;
+
   return `${apiBaseLabel()}/${value}`;
 }
 
@@ -120,6 +136,7 @@ function extractApiError(data, status) {
     data?.detail ||
     data?.error?.message ||
     data?.message ||
+    data?.error ||
     (status ? `HTTP ${status}` : "Error de API")
   );
 }
@@ -130,7 +147,9 @@ function cleanText(value = "") {
 
 function clipText(value = "", max = 72) {
   const normalized = cleanText(value);
+
   if (normalized.length <= max) return normalized;
+
   return `${normalized.slice(0, Math.max(1, max - 3))}...`;
 }
 
@@ -146,13 +165,20 @@ function safeFileName(name) {
 
 function normalizeDownloadFileName(name, fallbackBase = "file", fallbackExt = "bin") {
   const parsed = path.parse(String(name || "").trim());
-  const ext = String(parsed.ext || `.${fallbackExt}`).replace(/^\./, "").toLowerCase() || fallbackExt;
+
+  const ext =
+    String(parsed.ext || `.${fallbackExt}`)
+      .replace(/^\./, "")
+      .toLowerCase() || fallbackExt;
+
   const base = safeFileName(parsed.name || fallbackBase);
+
   return `${base}.${ext}`;
 }
 
 function mimeFromFileName(fileName) {
   const lower = String(fileName || "").toLowerCase();
+
   if (lower.endsWith(".xapk")) return "application/xapk-package-archive";
   if (lower.endsWith(".apk")) return "application/vnd.android.package-archive";
   if (lower.endsWith(".exe")) return "application/vnd.microsoft.portable-executable";
@@ -162,6 +188,7 @@ function mimeFromFileName(fileName) {
   if (lower.endsWith(".zip")) return "application/zip";
   if (lower.endsWith(".7z")) return "application/x-7z-compressed";
   if (lower.endsWith(".rar")) return "application/vnd.rar";
+
   return "application/octet-stream";
 }
 
@@ -214,6 +241,7 @@ function resolveUserInput(ctx) {
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
   const quotedMessage = getQuotedMessage(ctx, msg);
   const quotedText = extractTextFromMessage(quotedMessage);
+
   return argsText || quotedText || "";
 }
 
@@ -235,7 +263,12 @@ function isHttpUrl(value) {
 
 function resolveCommandSocket(ctx = {}) {
   const candidates = [ctx?.sock, ctx?.conn, ctx?.client];
-  return candidates.find((entry) => entry && typeof entry.sendMessage === "function") || null;
+
+  return (
+    candidates.find(
+      (entry) => entry && typeof entry.sendMessage === "function"
+    ) || null
+  );
 }
 
 function resolveTargetJid(ctx = {}) {
@@ -247,8 +280,9 @@ async function safeSendMessage(sock, from, payload, quoted, options = {}) {
   const throwOnUnavailable = options?.throwOnUnavailable === true;
 
   if (!sock || typeof sock.sendMessage !== "function" || !from) {
-    const error = new Error("La conexion del bot no esta disponible ahora.");
+    const error = new Error("La conexión del bot no está disponible ahora.");
     console.warn(`[${label || "command"}]`, error.message);
+
     if (throwOnUnavailable) throw error;
     return false;
   }
@@ -258,6 +292,7 @@ async function safeSendMessage(sock, from, payload, quoted, options = {}) {
     return true;
   } catch (error) {
     console.error(`[${label || "command"}] sendMessage error:`, error?.message || error);
+
     if (throwOnUnavailable) throw error;
     return false;
   }
@@ -265,6 +300,7 @@ async function safeSendMessage(sock, from, payload, quoted, options = {}) {
 
 function parseSelectionInput(value) {
   const raw = cleanText(value);
+
   const patterns = [
     /^--pick=(\d+)\s+(.+)$/i,
     /^pick[:=](\d+)\s+(.+)$/i,
@@ -315,6 +351,7 @@ function parseContentDispositionFileName(headerValue) {
   }
 
   const normalMatch = text.match(/filename="?([^"]+)"?/i);
+
   if (normalMatch?.[1]) {
     return normalMatch[1].trim();
   }
@@ -347,6 +384,12 @@ async function apiGet(url, params, timeout = SEARCH_TIMEOUT) {
   const response = await axios.get(url, {
     timeout,
     params: withDvyerApiKey(params),
+    headers: withDvyerApiKeyHeader({
+      Accept: "application/json,text/plain,*/*",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+      Referer: `${apiBaseLabel()}/`,
+    }),
     validateStatus: () => true,
   });
 
@@ -368,7 +411,7 @@ async function downloadThumbnailBuffer(url) {
 
   const response = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 15000,
+    timeout: 15_000,
     validateStatus: () => true,
   });
 
@@ -391,8 +434,9 @@ async function requestSearchResults(input, config) {
   );
 
   const results = Array.isArray(data?.results) ? data.results.slice(0, 10) : [];
+
   if (!results.length) {
-    throw new Error(`No encontre resultados de ${config.name}.`);
+    throw new Error(`No encontré resultados de ${config.name}.`);
   }
 
   return results;
@@ -402,22 +446,27 @@ async function requestDownloadMeta(input, config, options = {}) {
   const params = {
     mode: "link",
     lang: "es",
+    prefer: "auto",
     pick: Math.max(1, Math.min(10, Number(options?.pick || 1))),
   };
 
-  if (isHttpUrl(input)) params.url = input;
-  else params.q = input;
+  if (isHttpUrl(input)) {
+    params.url = input;
+  } else {
+    params.q = input;
+  }
 
   const data = await apiGet(buildApiUrl(config.downloadPath), params, SEARCH_TIMEOUT);
   const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
 
   if (!downloadUrl) {
-    throw new Error("La API no devolvio enlace interno de descarga.");
+    throw new Error("La API no devolvió enlace interno de descarga.");
   }
 
-  const inferredExt = String(data?.format || data?.download_type || config.defaultExtension)
-    .trim()
-    .toLowerCase() || config.defaultExtension;
+  const inferredExt =
+    String(data?.format || data?.download_type || config.defaultExtension)
+      .trim()
+      .toLowerCase() || config.defaultExtension;
 
   return {
     title: safeFileName(data?.title || data?.package_name || `${config.name} File`),
@@ -430,23 +479,27 @@ async function requestDownloadMeta(input, config, options = {}) {
     format: inferredExt,
     icon: data?.icon || null,
     description: cleanText(data?.description || "") || null,
-    sizeBytes: Number(data?.size_bytes || data?.content_length || data?.filesize_bytes || 0) || null,
+    sizeBytes:
+      Number(data?.size_bytes || data?.content_length || data?.filesize_bytes || 0) ||
+      null,
     downloadUrl,
     packageName: String(data?.package_name || "").trim() || null,
   };
 }
 
 async function downloadAbsoluteFile(downloadUrl, outputPath) {
-  const response = await axios.get(appendDvyerApiKeyToUrl(downloadUrl), {
+  const finalUrl = appendDvyerApiKeyToUrl(downloadUrl);
+
+  const response = await axios.get(finalUrl, {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
     maxRedirects: 5,
-    headers: {
+    headers: withDvyerApiKeyHeader({
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
       Accept: "*/*",
       Referer: `${apiBaseLabel()}/`,
-    },
+    }),
     validateStatus: () => true,
   });
 
@@ -467,6 +520,7 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
+
   if (contentLength && contentLength > MAX_FILE_BYTES) {
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
@@ -475,8 +529,11 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
 
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
+
     if (downloaded > MAX_FILE_BYTES) {
-      response.data.destroy(new Error("El archivo es demasiado grande para enviarlo por WhatsApp."));
+      response.data.destroy(
+        new Error("El archivo es demasiado grande para enviarlo por WhatsApp.")
+      );
     }
   });
 
@@ -492,9 +549,10 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
   }
 
   const size = fs.statSync(outputPath).size;
+
   if (!size || size < MIN_FILE_BYTES) {
     deleteFileSafe(outputPath);
-    throw new Error("El archivo descargado es invalido.");
+    throw new Error("El archivo descargado es inválido.");
   }
 
   if (size > MAX_FILE_BYTES) {
@@ -513,16 +571,19 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
 
 function buildPreviewCaption(info, config) {
   const lines = [
-    "*FSOCIETY BOT*",
-    "",
-    `${config.rowLabel} *${info.title || `${config.name} File`}*`,
+    "╭━━〔 📦 *FSOCIETY DOWNLOAD* 〕━━⬣",
+    `┃ ${config.rowLabel} *${info.title || `${config.name} File`}*`,
   ];
 
-  if (info.version) lines.push(`Version: *${info.version}*`);
-  if (info.packageName) lines.push(`Paquete: *${info.packageName}*`);
-  if (info.format) lines.push(`Formato: *${String(info.format).toUpperCase()}*`);
+  if (info.version) lines.push(`┃ 🧩 Versión: *${info.version}*`);
+  if (info.packageName) lines.push(`┃ 📛 Paquete: *${info.packageName}*`);
+  if (info.format) lines.push(`┃ 📁 Formato: *${String(info.format).toUpperCase()}*`);
+
   const sizeText = humanBytes(info.sizeBytes);
-  if (sizeText) lines.push(`Tamano: *${sizeText}*`);
+  if (sizeText) lines.push(`┃ 📦 Tamaño: *${sizeText}*`);
+
+  lines.push("╰━━━━━━━━━━━━━━━━━━⬣");
+
   if (info.description) {
     lines.push("");
     lines.push(clipText(info.description, 260));
@@ -546,6 +607,7 @@ async function sendPreviewCard(sock, from, quoted, info, config) {
       quoted,
       { label: `${config.key}:preview`, throwOnUnavailable: true }
     );
+
     return;
   }
 
@@ -564,17 +626,25 @@ async function sendPreviewCard(sock, from, quoted, info, config) {
 async function sendSearchPicker(ctx, query, results, config) {
   const { sock, from, quoted, settings } = ctx;
   const prefix = getPrefix(settings);
+
   const rows = results.map((result, index) => ({
     header: `${index + 1}`,
-    title: clipText(result.title || "Sin titulo", 72),
+    title: clipText(result.title || "Sin título", 72),
     description: clipText(
-      `${config.rowLabel} | ${String(result.format || config.defaultExtension).toUpperCase()} | ${result.version || "Sin version"}${humanBytes(result.filesize_bytes) ? ` | ${humanBytes(result.filesize_bytes)}` : ""}`,
+      `${config.rowLabel} | ${String(
+        result.format || config.defaultExtension
+      ).toUpperCase()} | ${result.version || "Sin versión"}${
+        humanBytes(result.filesize_bytes || result.size_bytes)
+          ? ` | ${humanBytes(result.filesize_bytes || result.size_bytes)}`
+          : ""
+      }`,
       72
     ),
     id: `${prefix}${config.primaryCommand} --pick=${index + 1} ${query}`,
   }));
 
   let thumbBuffer = null;
+
   try {
     thumbBuffer = await downloadThumbnailBuffer(results[0]?.icon);
   } catch (error) {
@@ -585,15 +655,17 @@ async function sendSearchPicker(ctx, query, results, config) {
     ? {
         image: thumbBuffer,
         caption:
-          `🟢 *FSOCIETY BOT*\n\n` +
-          `🔎 Resultado para: *${clipText(query, 80)}*\n` +
-          `📌 Primer resultado: *${clipText(results[0]?.title || "Sin titulo", 80)}*\n\n` +
+          `╭━━〔 🔎 *FSOCIETY BOT* 〕━━⬣\n` +
+          `┃ Resultado para: *${clipText(query, 80)}*\n` +
+          `┃ Primer resultado: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
+          `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
           `${config.selectionText}`,
       }
     : {
         text:
-          `🟢 *FSOCIETY BOT*\n\n` +
-          `🔎 Resultado para: *${clipText(query, 80)}*\n\n` +
+          `╭━━〔 🔎 *FSOCIETY BOT* 〕━━⬣\n` +
+          `┃ Resultado para: *${clipText(query, 80)}*\n` +
+          `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
           `${config.selectionText}`,
       };
 
@@ -659,11 +731,19 @@ async function sendSearchPicker(ctx, query, results, config) {
 
 async function sendFileDocument(sock, from, quoted, info, filePath, fileName, size) {
   const extra = [];
-  if (info.version) extra.push(`Version: ${info.version}`);
-  if (info.packageName) extra.push(`Paquete: ${info.packageName}`);
-  if (info.format) extra.push(`Formato: ${String(info.format).toUpperCase()}`);
+
+  if (info.version) extra.push(`┃ 🧩 Versión: ${info.version}`);
+  if (info.packageName) extra.push(`┃ 📛 Paquete: ${info.packageName}`);
+  if (info.format) extra.push(`┃ 📁 Formato: ${String(info.format).toUpperCase()}`);
+
   const sizeText = humanBytes(size);
-  if (sizeText) extra.push(`Tamano: ${sizeText}`);
+  if (sizeText) extra.push(`┃ 📦 Tamaño: ${sizeText}`);
+
+  const caption =
+    `╭━━〔 ✅ *DESCARGA LISTA* 〕━━⬣\n` +
+    `┃ 📌 ${info.title}\n` +
+    `${extra.length ? `${extra.join("\n")}\n` : ""}` +
+    `╰━━━━━━━━━━━━━━━━━━⬣`;
 
   await safeSendMessage(
     sock,
@@ -672,7 +752,7 @@ async function sendFileDocument(sock, from, quoted, info, filePath, fileName, si
       document: { url: filePath },
       mimetype: mimeFromFileName(fileName),
       fileName,
-      caption: `*FSOCIETY BOT*\n\n${info.title}${extra.length ? `\n${extra.join("\n")}` : ""}`,
+      caption,
       ...global.channelInfo,
     },
     quoted,
@@ -682,14 +762,17 @@ async function sendFileDocument(sock, from, quoted, info, filePath, fileName, si
 
 async function sendLargeFileLink(sock, from, quoted, info, config) {
   const sizeText = humanBytes(info.sizeBytes);
+
   await safeSendMessage(
     sock,
     from,
     {
       text:
-        `*FSOCIETY BOT*\n\n` +
-        `El ${config.tooLargeLabel} supera el limite de envio directo.${sizeText ? `\nTamano: *${sizeText}*` : ""}\n\n` +
-        `Enlace interno de descarga:\n${info.downloadUrl}`,
+        `╭━━〔 ⚠️ *ARCHIVO GRANDE* 〕━━⬣\n` +
+        `┃ El ${config.tooLargeLabel} supera el límite de envío directo.\n` +
+        `${sizeText ? `┃ Tamaño: *${sizeText}*\n` : ""}` +
+        `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
+        `No envío el enlace con API key por seguridad.`,
       ...global.channelInfo,
     },
     quoted,
@@ -699,7 +782,10 @@ async function sendLargeFileLink(sock, from, quoted, info, config) {
 
 export function buildDvyerAppCommand(kind) {
   const config = getCommandConfig(kind);
-  const commandNames = Array.isArray(config.aliases) ? config.aliases : [config.primaryCommand];
+
+  const commandNames = Array.isArray(config.aliases)
+    ? config.aliases
+    : [config.primaryCommand];
 
   return {
     name: config.primaryCommand,
@@ -714,6 +800,7 @@ export function buildDvyerAppCommand(kind) {
       const msg = ctx.m || ctx.msg || null;
       const quoted = msg?.key ? { quoted: msg } : undefined;
       const userId = `${from || ctx?.botId || "unknown"}:${config.key}`;
+
       const runtimeCtx = {
         ...ctx,
         sock,
@@ -732,6 +819,7 @@ export function buildDvyerAppCommand(kind) {
 
         if (COOLDOWN_TIME > 0) {
           const until = cooldowns.get(userId);
+
           if (until && until > Date.now()) {
             return await safeSendMessage(
               sock,
@@ -753,6 +841,7 @@ export function buildDvyerAppCommand(kind) {
 
         if (!userInput) {
           cooldowns.delete(userId);
+
           return await safeSendMessage(
             sock,
             from,
@@ -767,7 +856,14 @@ export function buildDvyerAppCommand(kind) {
 
         if (!parsedInput.explicitPick && !isHttpUrl(userInput)) {
           const results = await requestSearchResults(userInput, config);
-          await sendSearchPicker({ sock, from, quoted, settings }, userInput, results, config);
+
+          await sendSearchPicker(
+            { sock, from, quoted, settings },
+            userInput,
+            results,
+            config
+          );
+
           cooldowns.delete(userId);
           return;
         }
@@ -788,7 +884,12 @@ export function buildDvyerAppCommand(kind) {
           sock,
           from,
           {
-            text: `${config.preparing}\n\nEntrada: ${userInput}`,
+            text:
+              `╭━━〔 ⬇️ *PREPARANDO* 〕━━⬣\n` +
+              `┃ ${config.preparing}\n` +
+              `┃ Entrada: ${clipText(userInput, 120)}\n` +
+              `┃ 🔑 API Key: Activa\n` +
+              `╰━━━━━━━━━━━━━━━━━━⬣`,
             ...global.channelInfo,
           },
           quoted,
@@ -798,6 +899,7 @@ export function buildDvyerAppCommand(kind) {
         downloadInfo = await requestDownloadMeta(userInput, config, {
           pick: parsedInput.pick,
         });
+
         await sendPreviewCard(sock, from, quoted, downloadInfo, config);
 
         if (downloadInfo.sizeBytes && downloadInfo.sizeBytes > MAX_FILE_BYTES) {
@@ -807,12 +909,18 @@ export function buildDvyerAppCommand(kind) {
         }
 
         const tmpDir = path.join(TMP_ROOT, config.key);
+
         if (!fs.existsSync(tmpDir)) {
           fs.mkdirSync(tmpDir, { recursive: true });
         }
 
         tempPath = path.join(tmpDir, `${Date.now()}-${downloadInfo.fileName}`);
-        const downloaded = await downloadAbsoluteFile(downloadInfo.downloadUrl, tempPath);
+
+        const downloaded = await downloadAbsoluteFile(
+          downloadInfo.downloadUrl,
+          tempPath
+        );
+
         const finalFileName = normalizeDownloadFileName(
           downloaded.fileName || downloadInfo.fileName,
           downloadInfo.title,
@@ -830,18 +938,24 @@ export function buildDvyerAppCommand(kind) {
         );
       } catch (error) {
         console.error(`${config.key.toUpperCase()} ERROR:`, error?.message || error);
+
         refundDownloadCharge(runtimeCtx, downloadCharge, {
           commandName: config.primaryCommand,
           reason: error?.message || "download_error",
         });
+
         cooldowns.delete(userId);
 
         const detail = String(error?.message || "No se pudo procesar la descarga.");
+
         await safeSendMessage(
           sock,
           from,
           {
-            text: `❌ ${detail}`,
+            text:
+              `╭━━〔 ❌ *ERROR* 〕━━⬣\n` +
+              `┃ ${detail}\n` +
+              `╰━━━━━━━━━━━━━━━━━━⬣`,
             ...global.channelInfo,
           },
           quoted,

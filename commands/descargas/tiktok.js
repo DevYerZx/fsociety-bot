@@ -4,8 +4,18 @@ import os from "os";
 import axios from "axios";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
-import { getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
-import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+
+import {
+  getDvyerBaseUrl,
+  withDvyerApiKey,
+  withDvyerApiKeyHeader,
+  appendDvyerApiKeyToUrl,
+} from "../../lib/api-manager.js";
+
+import {
+  chargeDownloadRequest,
+  refundDownloadCharge,
+} from "../economia/download-access.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_TIKTOK_URL = `${API_BASE}/ttdlmp4`;
@@ -16,6 +26,7 @@ const API_LANG = "es";
 const REQUEST_TIMEOUT = 60000;
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 40 * 1024 * 1024;
+
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-tiktok");
 const TMP_FILE_PREFIX = "dvyer-tt-";
 const TMP_MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -23,7 +34,6 @@ const TMP_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const cooldowns = new Map();
 
 ensureTmpDir();
-
 cleanupOldTempFiles();
 
 function ensureTmpDir() {
@@ -34,6 +44,7 @@ function ensureTmpDir() {
 
 function cleanupOldTempFiles() {
   ensureTmpDir();
+
   try {
     const now = Date.now();
     const files = fs.readdirSync(TMP_DIR);
@@ -45,6 +56,7 @@ function cleanupOldTempFiles() {
       const stat = fs.statSync(fullPath);
 
       if (!stat.isFile()) continue;
+
       if (now - stat.mtimeMs > TMP_MAX_AGE_MS) {
         fs.unlinkSync(fullPath);
       }
@@ -88,6 +100,7 @@ function extractApiError(data, status) {
     data?.detail ||
     data?.error?.message ||
     data?.message ||
+    data?.error ||
     (status ? `HTTP ${status}` : "Error de API")
   );
 }
@@ -95,8 +108,15 @@ function extractApiError(data, status) {
 function normalizeApiUrl(url) {
   const value = String(url || "").trim();
   if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
-  if (value.startsWith("/")) return `${API_BASE}${value}`;
+
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  if (value.startsWith("/")) {
+    return `${API_BASE}${value}`;
+  }
+
   return `${API_BASE}/${value}`;
 }
 
@@ -139,6 +159,7 @@ function extractTikTokUrl(text) {
   const match = String(text || "").match(
     /https?:\/\/(?:www\.)?(?:tiktok\.com|m\.tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|douyin\.com)\/[^\s]+/i
   );
+
   return match ? match[0].trim() : "";
 }
 
@@ -176,17 +197,21 @@ function normalizeTikTokQuality(value = "") {
 
 function resolveTikTokQuality(ctx) {
   const tokens = Array.isArray(ctx?.args) ? ctx.args : [];
+
   for (const token of tokens) {
     const quality = normalizeTikTokQuality(token);
     if (quality) return quality;
   }
+
   return DEFAULT_VIDEO_QUALITY;
 }
 
 function formatTikTokQualityLabel(quality = "") {
   const q = String(quality || "").trim().toLowerCase();
+
   if (q === "hd" || q === "best") return "HD";
   if (/^\d+$/.test(q)) return `Slot ${q}`;
+
   return q || DEFAULT_VIDEO_QUALITY;
 }
 
@@ -201,6 +226,7 @@ function parseContentDispositionFileName(headerValue) {
   }
 
   const normalMatch = text.match(/filename="?([^"]+)"?/i);
+
   if (normalMatch?.[1]) {
     return normalMatch[1].trim();
   }
@@ -225,6 +251,11 @@ async function apiGet(url, params, timeout = REQUEST_TIMEOUT) {
   const response = await axios.get(url, {
     timeout,
     params: withDvyerApiKey(params),
+    headers: withDvyerApiKeyHeader({
+      Accept: "application/json,text/plain,*/*",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+    }),
     validateStatus: () => true,
   });
 
@@ -254,14 +285,17 @@ async function requestTikTokMeta(videoUrl, qualityHint) {
       });
 
       const title = safeFileName(data?.title || data?.result?.title || "tiktok");
+
       const fileName = normalizeMp4Name(
         data?.filename || data?.file_name || title || "tiktok"
       );
 
+      const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
+
       return {
         title,
         fileName,
-        downloadUrl: normalizeApiUrl(pickApiDownloadUrl(data)),
+        downloadUrl,
       };
     } catch (error) {
       lastError = error?.message || "Error desconocido";
@@ -272,38 +306,52 @@ async function requestTikTokMeta(videoUrl, qualityHint) {
   throw new Error(lastError);
 }
 
-async function downloadTikTokViaApi(videoUrl, fileName, qualityHint, directUrl = "") {
+async function downloadTikTokViaApi(
+  videoUrl,
+  fileName,
+  qualityHint,
+  directUrl = ""
+) {
   ensureTmpDir();
 
   const finalName = normalizeMp4Name(fileName || "tiktok.mp4");
+
   const tempPath = path.join(
     TMP_DIR,
     `${TMP_FILE_PREFIX}${Date.now()}-${randomUUID()}-${finalName}`
   );
 
   const normalizedDirectUrl = normalizeApiUrl(directUrl);
-  const requestUrl = normalizedDirectUrl || API_TIKTOK_URL;
+
+  // ✅ AQUÍ ESTÁ LA CORRECCIÓN:
+  // Si la API devuelve un link directo, también le agregamos ?apikey=
+  const secureDirectUrl = normalizedDirectUrl
+    ? appendDvyerApiKeyToUrl(normalizedDirectUrl)
+    : "";
+
+  const requestUrl = secureDirectUrl || API_TIKTOK_URL;
+
   const requestConfig = {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
     maxRedirects: 5,
-    headers: {
+    headers: withDvyerApiKeyHeader({
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
       Accept: "*/*",
       Referer: `${API_BASE}/`,
-    },
+    }),
     validateStatus: () => true,
   };
 
-  if (!normalizedDirectUrl) {
-    requestConfig.params = {
+  // Si NO hay link directo, usamos endpoint normal con params + apikey
+  if (!secureDirectUrl) {
+    requestConfig.params = withDvyerApiKey({
       mode: "file",
       quality: qualityHint,
       lang: API_LANG,
       url: videoUrl,
-      ...withDvyerApiKey(),
-    };
+    });
   }
 
   const response = await axios.get(requestUrl, requestConfig);
@@ -325,6 +373,7 @@ async function downloadTikTokViaApi(videoUrl, fileName, qualityHint, directUrl =
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
+
   if (contentLength && contentLength > MAX_VIDEO_BYTES) {
     throw new Error("El video es demasiado grande para enviarlo por WhatsApp.");
   }
@@ -333,8 +382,11 @@ async function downloadTikTokViaApi(videoUrl, fileName, qualityHint, directUrl =
 
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
+
     if (downloaded > MAX_VIDEO_BYTES) {
-      response.data.destroy(new Error("El video es demasiado grande para enviarlo por WhatsApp."));
+      response.data.destroy(
+        new Error("El video es demasiado grande para enviarlo por WhatsApp.")
+      );
     }
   });
 
@@ -342,15 +394,25 @@ async function downloadTikTokViaApi(videoUrl, fileName, qualityHint, directUrl =
     await pipeline(response.data, fs.createWriteStream(tempPath));
   } catch (error) {
     deleteFileSafe(tempPath);
-    const isEnoent = String(error?.message || "").toUpperCase().includes("ENOENT");
+
+    const isEnoent = String(error?.message || "")
+      .toUpperCase()
+      .includes("ENOENT");
+
     if (!isEnoent) throw error;
 
-    // Si el proveedor limpia /tmp entre requests, recreamos carpeta y reintentamos una vez.
     ensureTmpDir();
+
     const retryResponse = await axios.get(requestUrl, requestConfig);
+
     if (retryResponse.status >= 400) {
-      throw new Error("Error al descargar el video.");
+      const retryErrorText = await readStreamToText(retryResponse.data).catch(
+        () => ""
+      );
+
+      throw new Error(retryErrorText || "Error al descargar el video.");
     }
+
     await pipeline(retryResponse.data, fs.createWriteStream(tempPath));
   }
 
@@ -381,12 +443,24 @@ async function downloadTikTokViaApi(videoUrl, fileName, qualityHint, directUrl =
   };
 }
 
-async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title, size }) {
+async function sendTikTokVideo(
+  sock,
+  from,
+  quoted,
+  { filePath, fileName, title, size }
+) {
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error("No se encontró el archivo temporal de TikTok.");
   }
 
   const videoBuffer = fs.readFileSync(filePath);
+
+  const caption =
+    `╭━━〔 🎬 *TIKTOK MP4* 〕━━⬣\n` +
+    `┃ 📌 *Título:* ${title}\n` +
+    `┃ 📦 *Peso:* ${(size / 1024 / 1024).toFixed(2)} MB\n` +
+    `┃ ⚡ *API:* DVYER\n` +
+    `╰━━━━━━━━━━━━━━━━━━⬣`;
 
   if (size > VIDEO_AS_DOCUMENT_THRESHOLD) {
     await sock.sendMessage(
@@ -395,11 +469,12 @@ async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title, 
         document: videoBuffer,
         mimetype: "video/mp4",
         fileName,
-        caption: `api dvyer\n\n🎬 ${title}\n📦 Enviado como documento`,
+        caption: `${caption}\n\n📦 Enviado como documento porque pesa mucho.`,
         ...global.channelInfo,
       },
       quoted
     );
+
     return "document";
   }
 
@@ -410,11 +485,12 @@ async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title, 
         video: videoBuffer,
         mimetype: "video/mp4",
         fileName,
-        caption: `api dvyer\n\n🎬 ${title}`,
+        caption,
         ...global.channelInfo,
       },
       quoted
     );
+
     return "video";
   } catch (e1) {
     console.error("send local video failed:", e1?.message || e1);
@@ -425,18 +501,20 @@ async function sendTikTokVideo(sock, from, quoted, { filePath, fileName, title, 
         document: videoBuffer,
         mimetype: "video/mp4",
         fileName,
-        caption: `api dvyer\n\n🎬 ${title}\n📦 Enviado como documento`,
+        caption: `${caption}\n\n📦 Enviado como documento por compatibilidad.`,
         ...global.channelInfo,
       },
       quoted
     );
+
     return "document";
   }
 }
 
 export default {
-  command: ["tiktok", "ttdlmp4"],
+  command: ["tiktok", "ttdlmp4", "tt"],
   category: "descarga",
+  description: "Descarga videos de TikTok usando API DVYER.",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -449,6 +527,7 @@ export default {
 
     if (COOLDOWN_TIME > 0) {
       const until = cooldowns.get(userId);
+
       if (until && until > Date.now()) {
         return sock.sendMessage(from, {
           text: `⏳ Espera ${getCooldownRemaining(until)}s`,
@@ -466,18 +545,28 @@ export default {
 
       if (!videoUrl) {
         cooldowns.delete(userId);
-        return sock.sendMessage(from, {
-          text:
-            "❌ Uso: .tiktok <link de TikTok>\n" +
-            "Opcional calidad: .tiktok hd <link> | .tiktok 2 <link>",
-          ...global.channelInfo,
-        });
+
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              `╭━━〔 ❌ *USO INCORRECTO* 〕━━⬣\n` +
+              `┃ Usa:\n` +
+              `┃ .tiktok <link de TikTok>\n` +
+              `┃ .tiktok hd <link>\n` +
+              `┃ .tiktok 2 <link>\n` +
+              `╰━━━━━━━━━━━━━━━━━━⬣`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
       }
 
       downloadCharge = await chargeDownloadRequest(ctx, {
         feature: "tiktok",
         videoUrl,
       });
+
       if (!downloadCharge.ok) {
         cooldowns.delete(userId);
         return;
@@ -487,22 +576,25 @@ export default {
         from,
         {
           text:
-            `⬇️ Preparando TikTok...\n\n` +
-            `🎬 api dvyer\n` +
-            `🎞️ Calidad: ${qualityLabel}\n` +
-            `🌐 ${API_BASE}`,
+            `╭━━〔 ⬇️ *PREPARANDO TIKTOK* 〕━━⬣\n` +
+            `┃ 🎬 *API:* DVYER\n` +
+            `┃ 🎞️ *Calidad:* ${qualityLabel}\n` +
+            `┃ 🔑 *Key:* Activa\n` +
+            `╰━━━━━━━━━━━━━━━━━━⬣`,
           ...global.channelInfo,
         },
         quoted
       );
 
       const meta = await requestTikTokMeta(videoUrl, qualityHint);
+
       const downloaded = await downloadTikTokViaApi(
         videoUrl,
         meta.fileName,
         qualityHint,
         meta.downloadUrl
       );
+
       tempPath = downloaded.tempPath;
 
       await sendTikTokVideo(sock, from, quoted, {
@@ -513,16 +605,25 @@ export default {
       });
     } catch (err) {
       console.error("TIKTOK ERROR:", err?.message || err);
+
       refundDownloadCharge(ctx, downloadCharge, {
         feature: "tiktok",
         error: String(err?.message || err || "unknown_error"),
       });
+
       cooldowns.delete(userId);
 
-      await sock.sendMessage(from, {
-        text: `❌ ${String(err?.message || "No se pudo procesar el video.")}`,
-        ...global.channelInfo,
-      });
+      await sock.sendMessage(
+        from,
+        {
+          text:
+            `╭━━〔 ❌ *ERROR TIKTOK* 〕━━⬣\n` +
+            `┃ ${String(err?.message || "No se pudo procesar el video.")}\n` +
+            `╰━━━━━━━━━━━━━━━━━━⬣`,
+          ...global.channelInfo,
+        },
+        quoted
+      );
     } finally {
       deleteFileSafe(tempPath);
     }
