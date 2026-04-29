@@ -245,6 +245,10 @@ function isHiddenCommand(cmd) {
   return Boolean(cmd?.hidden || cmd?.hide || cmd?.oculto);
 }
 
+function getCommandDescription(cmd) {
+  return cleanText(cmd?.description || cmd?.desc || cmd?.help || "");
+}
+
 function collectCommandData(comandos) {
   const categories = {};
 
@@ -257,19 +261,63 @@ function collectCommandData(comandos) {
     const category = getCommandCategory(cmd);
 
     if (!categories[category]) {
-      categories[category] = new Set();
+      categories[category] = new Map();
     }
 
-    categories[category].add(main);
+    categories[category].set(main, {
+      name: main,
+      description: getCommandDescription(cmd),
+    });
   }
 
   const cleanCategories = {};
 
-  for (const [category, set] of Object.entries(categories)) {
-    cleanCategories[category] = Array.from(set).sort((a, b) => a.localeCompare(b));
+  for (const [category, map] of Object.entries(categories)) {
+    cleanCategories[category] = Array.from(map.values()).sort((a, b) =>
+      String(a.name || "").localeCompare(String(b.name || ""))
+    );
   }
 
   return cleanCategories;
+}
+
+function getCategoryDescription(category = "", count = 0) {
+  const key = normalizeCategoryKey(category);
+
+  const descriptions = {
+    menu: "Panel principal del bot",
+    descargas: "Audio, video y descargas",
+    busqueda: "Busqueda y resultados rapidos",
+    freefire: "Utilidades para Free Fire",
+    juegos: "Diversion y minijuegos",
+    herramientas: "Herramientas y utilidades",
+    grupos: "Ajustes y control de grupos",
+    subbots: "Gestion de subbots",
+    economia: "Sistema economico del bot",
+    sistema: "Estado, update y control",
+    ia: "Funciones de inteligencia artificial",
+    media: "Imagen, stickers y multimedia",
+    anime: "Comandos de anime",
+    admin: "Comandos administrativos",
+    owner: "Funciones exclusivas owner",
+    vip: "Funciones premium o vip",
+    otros: "Otros comandos disponibles",
+  };
+
+  const base = descriptions[key] || "Categoria del bot";
+  return `${base} · ${count} comandos`;
+}
+
+function chunkRows(rows, size = 10) {
+  const list = Array.isArray(rows) ? rows : [];
+  const chunkSize = Math.max(1, Number(size || 10));
+  const chunks = [];
+
+  for (let index = 0; index < list.length; index += chunkSize) {
+    chunks.push(list.slice(index, index + chunkSize));
+  }
+
+  return chunks;
 }
 
 function buildTopPanel({
@@ -323,7 +371,7 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
     `╭─〔 ${icon} *${title}* 〕`,
   ];
 
-  const commandLines = commands.map((name) => `┃ ✦ *${primaryPrefix}${name}*`);
+  const commandLines = commands.map((item) => `┃ ✦ *${primaryPrefix}${item.name}*`);
   lines.push(...commandLines);
 
   lines.push("╰────────────⬣");
@@ -335,6 +383,7 @@ function buildFooter(primaryPrefix) {
   return [
     "╭─〔 💡 *AYUDA* 〕",
     `┃ ${primaryPrefix}menu → ver menú`,
+    `┃ ${primaryPrefix}menu descargas → abrir categoría`,
     `┃ ${primaryPrefix}status → estado`,
     `┃ ${primaryPrefix}owner → soporte`,
     "╰────────────⬣",
@@ -370,12 +419,125 @@ async function react(sock, msg, emoji) {
   } catch {}
 }
 
+function buildCategoryRows(categoryNames, categories, primaryPrefix) {
+  return categoryNames.map((category) => {
+    const icon = getCategoryIcon(category);
+    const label = normalizeCategoryLabel(category);
+    const count = categories[category]?.length || 0;
+
+    return {
+      header: icon,
+      title: label,
+      description: getCategoryDescription(category, count),
+      id: `${primaryPrefix}menu ${category}`,
+    };
+  });
+}
+
+function buildCategorySections(categoryNames, categories, primaryPrefix) {
+  const rows = buildCategoryRows(categoryNames, categories, primaryPrefix);
+  return [{ title: "Categorias del bot", rows }];
+}
+
+function buildCommandSections(category, commands, primaryPrefix) {
+  const icon = getCategoryIcon(category);
+  const label = normalizeCategoryLabel(category);
+  const rows = commands.map((item) => ({
+    header: icon,
+    title: `${primaryPrefix}${item.name}`,
+    description: item.description || `Abrir comando ${item.name}`,
+    id: `${primaryPrefix}${item.name}`,
+  }));
+
+  const sections = chunkRows(rows, 10).map((chunk, index) => ({
+    title:
+      rows.length > 10
+        ? `${label} ${index + 1}/${Math.ceil(rows.length / 10)}`
+        : label,
+    rows: chunk,
+  }));
+
+  sections.push({
+    title: "Navegacion",
+    rows: [
+      {
+        header: "MENU",
+        title: "Volver al menu principal",
+        description: "Regresar a todas las categorias",
+        id: `${primaryPrefix}menu`,
+      },
+    ],
+  });
+
+  return sections;
+}
+
+function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
+  return [
+    `╭━━〔 ⚡ *${menuContext.title}* ⚡ 〕━━⬣`,
+    `┃ ${menuContext.subtitle}`,
+    "┃",
+    `┃ 🤖 *Bot:* ${menuContext.botLine || settings?.botName || "Fsociety Bot"}`,
+    `┃ 👑 *Owner:* ${settings?.ownerName || "Owner"}`,
+    `┃ 🔰 *Prefijo:* ${prefixLabel}`,
+    `┃ ⏳ *Activo:* ${uptime}`,
+    `┃ 🗂️ *Categorías:* ${totalCategories}`,
+    `┃ 📌 *Comandos:* ${totalCommands}`,
+    "┃",
+    "┃ Presiona la lista para abrir categorías.",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+function buildCategoryMenuText(category, commands, primaryPrefix) {
+  const icon = getCategoryIcon(category);
+  const label = normalizeCategoryLabel(category);
+  const count = commands.length;
+  const preview = commands
+    .slice(0, 6)
+    .map((item) => `${primaryPrefix}${item.name}`)
+    .join(" • ");
+
+  return [
+    `╭━━〔 ${icon} *${label}* 〕━━⬣`,
+    `┃ ${getCategoryDescription(category, count)}`,
+    "┃",
+    `┃ 📌 *Comandos:* ${count}`,
+    `┃ 🔎 *Vista:* ${preview || "Sin comandos"}`,
+    "┃",
+    "┃ Presiona la lista para escoger un comando.",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+async function sendInteractiveMenu(sock, from, quoted, payload, fallbackText) {
+  try {
+    return await sock.sendMessage(
+      from,
+      {
+        ...payload,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  } catch {
+    return await sock.sendMessage(
+      from,
+      {
+        text: fallbackText,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  }
+}
+
 export default {
-  command: ["menu", "help", "comandos"],
+  command: ["menu", "help", "comandos", "menucat"],
   categoria: "menu",
   description: "Muestra el menú principal del bot.",
 
-  run: async ({ sock, msg, from, settings, comandos, botId, botLabel }) => {
+  run: async ({ sock, msg, from, settings, comandos, botId, botLabel, args = [] }) => {
     try {
       await react(sock, msg, "📜");
 
@@ -395,13 +557,12 @@ export default {
         );
       }
 
-      const imageBuffer = getMenuImageBuffer();
-
       const uptime = formatUptime(process.uptime());
       const primaryPrefix = getPrimaryPrefix(settings);
       const prefixLabel = getPrefixLabel(settings);
       const menuContext = getMenuContext({ settings, botId, botLabel });
       const categories = collectCommandData(comandos);
+      const requestedCategory = normalizeCategoryKey(args.join(" "));
 
       const categoryNames = Object.keys(categories).sort((a, b) => {
         const byOrder = getCategorySortIndex(a) - getCategorySortIndex(b);
@@ -413,6 +574,53 @@ export default {
         (sum, category) => sum + categories[category].length,
         0
       );
+
+      if (requestedCategory && requestedCategory !== "menu" && categories[requestedCategory]) {
+        const commandList = categories[requestedCategory];
+        const categoryText = buildCategoryMenuText(
+          requestedCategory,
+          commandList,
+          primaryPrefix
+        );
+
+        const fallbackText = makeSingleCaption(
+          [
+            categoryText,
+            buildCategoryBlock(requestedCategory, commandList, primaryPrefix),
+            buildFooter(primaryPrefix),
+          ].join("\n\n"),
+          primaryPrefix
+        );
+
+        await sendInteractiveMenu(
+          sock,
+          from,
+          { quoted: msg },
+          {
+            text: categoryText,
+            title: menuContext.title,
+            subtitle: normalizeCategoryLabel(requestedCategory),
+            footer: "Selecciona un comando",
+            interactiveButtons: [
+              {
+                name: "single_select",
+                buttonParamsJson: JSON.stringify({
+                  title: `Abrir ${normalizeCategoryLabel(requestedCategory)}`,
+                  sections: buildCommandSections(
+                    requestedCategory,
+                    commandList,
+                    primaryPrefix
+                  ),
+                }),
+              },
+            ],
+          },
+          fallbackText
+        );
+
+        await react(sock, msg, "✅");
+        return;
+      }
 
       const topPanel = buildTopPanel({
         settings,
@@ -436,27 +644,40 @@ export default {
 
       const fullCaption = textParts.join("\n\n").trim();
       const finalCaption = makeSingleCaption(fullCaption, primaryPrefix);
+      const landingText = buildMenuLandingText(
+        menuContext,
+        settings,
+        uptime,
+        categoryNames.length,
+        totalCommands,
+        prefixLabel
+      );
 
-      if (imageBuffer) {
-        await sock.sendMessage(
-          from,
-          {
-            image: imageBuffer,
-            caption: finalCaption,
-            ...global.channelInfo,
-          },
-          { quoted: msg }
-        );
-      } else {
-        await sock.sendMessage(
-          from,
-          {
-            text: finalCaption,
-            ...global.channelInfo,
-          },
-          { quoted: msg }
-        );
-      }
+      await sendInteractiveMenu(
+        sock,
+        from,
+        { quoted: msg },
+        {
+          text: landingText,
+          title: menuContext.title,
+          subtitle: menuContext.subtitle,
+          footer: "Selecciona una categoria",
+          interactiveButtons: [
+            {
+              name: "single_select",
+              buttonParamsJson: JSON.stringify({
+                title: "Abrir menu",
+                sections: buildCategorySections(
+                  categoryNames,
+                  categories,
+                  primaryPrefix
+                ),
+              }),
+            },
+          ],
+        },
+        finalCaption
+      );
 
       await react(sock, msg, "✅");
     } catch (error) {
