@@ -8,11 +8,7 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
-import {
-  buildDvyerUrl,
-  getDvyerBaseUrl,
-  withDvyerApiKey,
-} from "../../lib/api-manager.js";
+import { withDvyerApiKey } from "../../lib/api-manager.js";
 import {
   chargeDownloadRequest,
   refundDownloadCharge,
@@ -24,16 +20,12 @@ import {
   runWithProviderCircuit,
 } from "../../lib/provider-guard.js";
 
-const API_YTMP3_URL = buildDvyerUrl("/ytmp3");
 const API_YTMP3DL_URL = "https://dv-yer-api.online/ytmp3dl";
 
-const DVYER_API_BASE_URL = getDvyerBaseUrl();
-
-const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
+const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3dl");
 
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
 const API_LINK_TIMEOUT = 90_000;
-const PROBE_TIMEOUT = 18_000;
 
 const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 80 * 1024 * 1024;
@@ -42,18 +34,18 @@ const MIN_AUDIO_BYTES = 20 * 1024;
 const RATE_LIMIT_MAX = 6;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-const PROVIDER_NAME = "dvyer_ytmp3";
+const PROVIDER_NAME = "dvyer_ytmp3dl";
 
 const HTTP_AGENT = new http.Agent({
   keepAlive: true,
-  maxSockets: 30,
-  maxFreeSockets: 15,
+  maxSockets: 40,
+  maxFreeSockets: 20,
 });
 
 const HTTPS_AGENT = new https.Agent({
   keepAlive: true,
-  maxSockets: 30,
-  maxFreeSockets: 15,
+  maxSockets: 40,
+  maxFreeSockets: 20,
 });
 
 const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
@@ -123,6 +115,11 @@ function cleanText(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function clipText(value = "", max = 70) {
+  const text = cleanText(value);
+  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3))}...`;
+}
+
 function humanBytes(bytes = 0) {
   const size = Number(bytes || 0);
 
@@ -156,11 +153,6 @@ function formatDuration(seconds = 0) {
   }
 
   return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function clipText(value = "", max = 70) {
-  const text = cleanText(value);
-  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3))}...`;
 }
 
 function safeFileName(name) {
@@ -330,17 +322,9 @@ function scoreUrl(url = "") {
 
   if (!text) return 0;
 
-  if (text.includes("dv-yer-api.online") || text.includes("dvyer-api.onrender.com")) {
-    return 100;
-  }
-
-  if (text.includes("/download/stream/")) {
-    return 90;
-  }
-
-  if (text.includes("googlevideo.com")) {
-    return 40;
-  }
+  if (text.includes("dv-yer-api.online")) return 100;
+  if (text.includes("/download/stream/")) return 90;
+  if (text.includes("googlevideo.com")) return 40;
 
   return 60;
 }
@@ -360,66 +344,6 @@ function pickDownloadUrl(data, baseUrl) {
     .sort((a, b) => scoreUrl(b) - scoreUrl(a));
 
   return candidates[0] || "";
-}
-
-function pickAllDownloadUrls(data, baseUrl) {
-  const candidates = [
-    data?.download_url_full,
-    data?.stream_url_full,
-    data?.direct_url,
-    data?.download_url,
-    data?.stream_url,
-    data?.url,
-    data?.provider_direct_url,
-  ]
-    .map((item) => resolveAbsoluteUrl(item, baseUrl))
-    .filter(Boolean);
-
-  return [...new Set(candidates)].sort((a, b) => scoreUrl(b) - scoreUrl(a));
-}
-
-async function probeRemoteUrl(url) {
-  const target = String(url || "").trim();
-  if (!target) return false;
-
-  let response = null;
-
-  try {
-    response = await axios.get(target, {
-      responseType: "stream",
-      timeout: PROBE_TIMEOUT,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-        Accept: "*/*",
-        Range: "bytes=0-4095",
-      },
-      httpAgent: HTTP_AGENT,
-      httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
-      validateStatus: () => true,
-    });
-
-    response.data?.destroy?.();
-
-    return response.status >= 200 && response.status < 400;
-  } catch {
-    try {
-      response?.data?.destroy?.();
-    } catch {}
-    return false;
-  }
-}
-
-async function pickWorkingUrlFromData(data, baseUrl) {
-  const urls = pickAllDownloadUrls(data, baseUrl);
-
-  for (const url of urls) {
-    const ok = await probeRemoteUrl(url);
-    if (ok) return url;
-  }
-
-  return "";
 }
 
 async function resolveInputToUrl(input) {
@@ -453,54 +377,6 @@ async function resolveInputToUrl(input) {
   };
 }
 
-async function getYtmp3Data(videoUrl) {
-  const response = await axios.get(API_YTMP3_URL, {
-    timeout: API_LINK_TIMEOUT,
-    params: {
-      mode: "link",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "application/json",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
-    maxRedirects: 5,
-    validateStatus: () => true,
-  });
-
-  if (response.status >= 400 || !response.data?.ok) {
-    throw new Error(
-      response.data?.detail ||
-        response.data?.error?.message ||
-        response.data?.message ||
-        `HTTP ${response.status}`
-    );
-  }
-
-  const data = response.data;
-  const remoteUrl = await pickWorkingUrlFromData(data, API_YTMP3_URL);
-
-  if (!remoteUrl) {
-    throw new Error("La API /ytmp3 devolvió enlaces bloqueados o expirados.");
-  }
-
-  return {
-    remoteUrl,
-    title: cleanText(data.title || "YouTube MP3"),
-    fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
-    thumbnail: data.thumbnail || null,
-    provider: data.provider || "dvyer",
-    sourceApi: "ytmp3",
-    quality: data.quality || "",
-    duration: data.duration || 0,
-    cached: Boolean(data.cached),
-  };
-}
-
 async function getYtmp3DlData(videoUrl) {
   const response = await axios.get(API_YTMP3DL_URL, {
     timeout: API_LINK_TIMEOUT,
@@ -531,10 +407,10 @@ async function getYtmp3DlData(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrl = await pickWorkingUrlFromData(data, API_YTMP3DL_URL);
+  const remoteUrl = pickDownloadUrl(data, API_YTMP3DL_URL);
 
   if (!remoteUrl) {
-    throw new Error("La API /ytmp3dl devolvió enlaces bloqueados o expirados.");
+    throw new Error("La API /ytmp3dl no devolvió link válido.");
   }
 
   return {
@@ -543,67 +419,9 @@ async function getYtmp3DlData(videoUrl) {
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
     thumbnail: data.thumbnail || null,
     provider: data.provider || "vidssave",
-    sourceApi: "ytmp3dl",
-    quality: data.quality || "",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
   };
-}
-
-async function getBestYtmp3Data(videoUrl) {
-  const tasks = [
-    getYtmp3Data(videoUrl),
-    getYtmp3DlData(videoUrl),
-  ];
-
-  try {
-    return await Promise.any(tasks);
-  } catch (error) {
-    const errors = error?.errors || [];
-
-    const errorText = errors
-      .map((err) => cleanErrorText(err))
-      .filter(Boolean)
-      .join(" | ");
-
-    throw new Error(errorText || "Ninguna API pudo generar un MP3 válido.");
-  }
-}
-
-async function requestYtmp3Stream(videoUrl) {
-  const response = await axios.get(API_YTMP3_URL, {
-    responseType: "stream",
-    timeout: REQUEST_TIMEOUT,
-    params: {
-      mode: "stream",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "*/*",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
-    maxRedirects: 5,
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    validateStatus: () => true,
-  });
-
-  if (response.status >= 400) {
-    const errorText = await readStreamToText(response.data).catch(() => "");
-    let parsed = null;
-
-    try {
-      parsed = JSON.parse(errorText);
-    } catch {}
-
-    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
-  }
-
-  return response;
 }
 
 async function requestYtmp3DlStream(videoUrl) {
@@ -721,29 +539,41 @@ async function saveResponseToFile(response, outputPath, fallbackName) {
   };
 }
 
-async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null) {
+async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = null) {
   await ensureTmpDir();
 
-  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
+  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3dl.mp3`);
 
   const attempts = [
     async () => {
-      if (!knownLinkData?.remoteUrl) throw new Error("No hay enlace remoto conocido.");
+      if (!knownLinkData?.remoteUrl) {
+        throw new Error("No hay enlace remoto conocido.");
+      }
+
       const response = await requestRemoteYtmp3Stream(knownLinkData.remoteUrl);
-      return await saveResponseToFile(response, outputPath, knownLinkData.fileName || preferredName);
+
+      return await saveResponseToFile(
+        response,
+        outputPath,
+        knownLinkData.fileName || preferredName
+      );
     },
-    async () => {
-      const response = await requestYtmp3Stream(videoUrl);
-      return await saveResponseToFile(response, outputPath, preferredName);
-    },
+
     async () => {
       const response = await requestYtmp3DlStream(videoUrl);
+
       return await saveResponseToFile(response, outputPath, preferredName);
     },
+
     async () => {
-      const linkData = await getBestYtmp3Data(videoUrl);
+      const linkData = await getYtmp3DlData(videoUrl);
       const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
-      return await saveResponseToFile(response, outputPath, linkData.fileName || preferredName);
+
+      return await saveResponseToFile(
+        response,
+        outputPath,
+        linkData.fileName || preferredName
+      );
     },
   ];
 
@@ -797,7 +627,6 @@ function buildDownloadingCaption(data = {}) {
     duration ? `┃ ⏱️ *Duración:* ${duration}` : "",
     "┃",
     "┃ 📥 *Descargando audio...*",
-    "┃ 🚀 *Preparando envío...*",
     "╰━━━━━━━━━━━━━━━━━━⬣",
   ]
     .filter(Boolean)
@@ -843,30 +672,19 @@ async function sendDownloadingImage(sock, from, quoted, data = {}) {
 }
 
 async function sendRemoteMp3(sock, from, quoted, data) {
-  const stillWorks = await probeRemoteUrl(data.remoteUrl);
+  await sock.sendMessage(
+    from,
+    {
+      audio: { url: data.remoteUrl },
+      mimetype: "audio/mpeg",
+      fileName: data.fileName,
+      ptt: false,
+      ...global.channelInfo,
+    },
+    quoted
+  );
 
-  if (!stillWorks) {
-    throw new Error("El enlace remoto expiró antes de enviarlo.");
-  }
-
-  try {
-    await sock.sendMessage(
-      from,
-      {
-        audio: { url: data.remoteUrl },
-        mimetype: "audio/mpeg",
-        fileName: data.fileName,
-        ptt: false,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-
-    return "audio";
-  } catch (error) {
-    console.error("SEND REMOTE AUDIO ERROR:", error?.message || error);
-    throw error;
-  }
+  return "audio";
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
@@ -908,7 +726,7 @@ export default {
   command: ["ytmp3", "yta", "ytaudio"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube con doble API rápida",
+  description: "Descarga audio MP3 de YouTube usando ytmp3dl rápido",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -936,7 +754,7 @@ export default {
       );
 
       const limitState = checkRateLimit({
-        scope: `ytmp3:${identity}`,
+        scope: `ytmp3dl:${identity}`,
         limit: RATE_LIMIT_MAX,
         windowMs: RATE_LIMIT_WINDOW_MS,
       });
@@ -988,7 +806,7 @@ export default {
       }
 
       downloadCharge = await chargeDownloadRequest(ctx, {
-        feature: "ytmp3",
+        feature: "ytmp3dl",
         videoUrl: resolved.url,
       });
 
@@ -999,7 +817,7 @@ export default {
 
       const apiData = await runWithProviderCircuit(
         PROVIDER_NAME,
-        () => getBestYtmp3Data(resolved.url),
+        () => getYtmp3DlData(resolved.url),
         {
           failureThreshold: 4,
           cooldownMs: 90_000,
@@ -1012,8 +830,6 @@ export default {
             if (text.includes("uso:")) return false;
             if (text.includes("supera el limite")) return false;
             if (text.includes("demasiado grande")) return false;
-            if (text.includes("expiró")) return false;
-            if (text.includes("expiro")) return false;
             if (text.includes("403")) return false;
 
             return true;
@@ -1038,7 +854,7 @@ export default {
         console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
       }
 
-      const downloaded = await downloadYtmp3Fallback(
+      const downloaded = await downloadYtmp3DlFallback(
         resolved.url,
         finalData.fileName || resolved.title,
         finalData
@@ -1056,11 +872,11 @@ export default {
       sentSuccessfully = true;
       await react(sock, msg, "✅");
     } catch (error) {
-      console.error("YTMP3 ERROR:", error?.message || error);
+      console.error("YTMP3DL ERROR:", error?.message || error);
 
       if (!sentSuccessfully) {
         refundDownloadCharge(ctx, downloadCharge, {
-          feature: "ytmp3",
+          feature: "ytmp3dl",
           error: String(error?.message || error || "unknown_error"),
         });
       }
