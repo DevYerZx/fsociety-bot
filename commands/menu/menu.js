@@ -439,39 +439,6 @@ function buildCategorySections(categoryNames, categories, primaryPrefix) {
   return [{ title: "Categorias del bot", rows }];
 }
 
-function buildCommandSections(category, commands, primaryPrefix) {
-  const icon = getCategoryIcon(category);
-  const label = normalizeCategoryLabel(category);
-  const rows = commands.map((item) => ({
-    header: icon,
-    title: `${primaryPrefix}${item.name}`,
-    description: item.description || `Abrir comando ${item.name}`,
-    id: `${primaryPrefix}${item.name}`,
-  }));
-
-  const sections = chunkRows(rows, 10).map((chunk, index) => ({
-    title:
-      rows.length > 10
-        ? `${label} ${index + 1}/${Math.ceil(rows.length / 10)}`
-        : label,
-    rows: chunk,
-  }));
-
-  sections.push({
-    title: "Navegacion",
-    rows: [
-      {
-        header: "MENU",
-        title: "Volver al menu principal",
-        description: "Regresar a todas las categorias",
-        id: `${primaryPrefix}menu`,
-      },
-    ],
-  });
-
-  return sections;
-}
-
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
     `╭━━〔 ⚡ *${menuContext.title}* ⚡ 〕━━⬣`,
@@ -493,20 +460,41 @@ function buildCategoryMenuText(category, commands, primaryPrefix) {
   const icon = getCategoryIcon(category);
   const label = normalizeCategoryLabel(category);
   const count = commands.length;
-  const preview = commands
-    .slice(0, 6)
-    .map((item) => `${primaryPrefix}${item.name}`)
-    .join(" • ");
+  const commandBlocks = chunkRows(commands, 8).map((chunk, index) => {
+    const title =
+      commands.length > 8
+        ? `╭─〔 ${icon} *${label} ${index + 1}/${Math.ceil(commands.length / 8)}* 〕`
+        : `╭─〔 ${icon} *${label}* 〕`;
+
+    const lines = [title];
+
+    for (const item of chunk) {
+      lines.push(`┃ ✦ *${primaryPrefix}${item.name}*`);
+      lines.push(`┃   ${item.description || "Comando disponible del bot."}`);
+      lines.push("┃");
+    }
+
+    if (lines[lines.length - 1] === "┃") {
+      lines.pop();
+    }
+
+    lines.push("╰────────────⬣");
+    return lines.join("\n");
+  });
 
   return [
     `╭━━〔 ${icon} *${label}* 〕━━⬣`,
     `┃ ${getCategoryDescription(category, count)}`,
     "┃",
     `┃ 📌 *Comandos:* ${count}`,
-    `┃ 🔎 *Vista:* ${preview || "Sin comandos"}`,
+    `┃ 🧾 *Detalle:* uso rapido y funcion`,
     "┃",
-    "┃ Presiona la lista para escoger un comando.",
+    "┃ Usa el prefijo + comando para ejecutarlo.",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    "",
+    ...commandBlocks,
+    "",
+    buildFooter(primaryPrefix),
   ].join("\n");
 }
 
@@ -557,6 +545,7 @@ export default {
         );
       }
 
+      const imageBuffer = getMenuImageBuffer();
       const uptime = formatUptime(process.uptime());
       const primaryPrefix = getPrimaryPrefix(settings);
       const prefixLabel = getPrefixLabel(settings);
@@ -583,39 +572,13 @@ export default {
           primaryPrefix
         );
 
-        const fallbackText = makeSingleCaption(
-          [
-            categoryText,
-            buildCategoryBlock(requestedCategory, commandList, primaryPrefix),
-            buildFooter(primaryPrefix),
-          ].join("\n\n"),
-          primaryPrefix
-        );
-
-        await sendInteractiveMenu(
-          sock,
+        await sock.sendMessage(
           from,
-          { quoted: msg },
           {
-            text: categoryText,
-            title: menuContext.title,
-            subtitle: normalizeCategoryLabel(requestedCategory),
-            footer: "Selecciona un comando",
-            interactiveButtons: [
-              {
-                name: "single_select",
-                buttonParamsJson: JSON.stringify({
-                  title: `Abrir ${normalizeCategoryLabel(requestedCategory)}`,
-                  sections: buildCommandSections(
-                    requestedCategory,
-                    commandList,
-                    primaryPrefix
-                  ),
-                }),
-              },
-            ],
+            text: makeSingleCaption(categoryText, primaryPrefix),
+            ...global.channelInfo,
           },
-          fallbackText
+          { quoted: msg }
         );
 
         await react(sock, msg, "✅");
@@ -652,6 +615,16 @@ export default {
         totalCommands,
         prefixLabel
       );
+
+      if (imageBuffer) {
+        await sock.sendMessage(
+          from,
+          {
+            image: imageBuffer,
+          },
+          { quoted: msg }
+        );
+      }
 
       await sendInteractiveMenu(
         sock,
