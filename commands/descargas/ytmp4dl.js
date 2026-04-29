@@ -25,8 +25,8 @@ const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
-const QUALITY_PATTERN = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
-const QUALITY_OPTIONS = ["1080p", "720p", "480p", "360p", "240p", "144p"];
+const QUALITY_PATTERN = /^(720p|360p|240p|best|hd|sd|\d{3,4}p?)$/i;
+const QUALITY_OPTIONS = ["720p", "360p", "240p"];
 
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -87,16 +87,12 @@ function normalizeQuality(value) {
   if (!text) return DEFAULT_QUALITY;
   if (text === "hd") return "720p";
   if (text === "sd") return "360p";
-  if (text === "best") return QUALITY_OPTIONS[0];
+  if (text === "best") return "720p";
   const match = text.match(/(\d{3,4})/);
   const numeric = Number(match?.[1] || 0);
-  if (numeric >= 1080) return "1080p";
   if (numeric >= 720) return "720p";
-  if (numeric >= 480) return "480p";
   if (numeric >= 360) return "360p";
-  if (numeric >= 240) return "240p";
-  if (numeric >= 144) return "144p";
-  return DEFAULT_QUALITY;
+  return "240p";
 }
 
 function buildFallbackQualities(preferred) {
@@ -696,7 +692,7 @@ export default {
               "┃ 📌 *.ytmp4dl <link o nombre>*",
               "┃ 📌 *.ytmp4dl 720p <link o nombre>*",
               "┃",
-              "┃ 🎚️ *Calidades:* 1080p, 720p, 480p, 360p, 240p, 144p",
+              "┃ 🎚️ *Calidades:* 720p, 360p, 240p",
               "┃ 🔎 *Busca por nombre:* sí",
               "┃ 🛟 *Fallback:* baja a menor calidad si falla",
               "╰━━━━━━━━━━━━━━━━━━━━⬣",
