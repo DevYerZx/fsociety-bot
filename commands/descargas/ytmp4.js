@@ -21,20 +21,25 @@ import {
 const API_YTMP4_URL = buildDvyerUrl("/ytmp4");
 const DVYER_API_BASE_URL = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
+
 const API_REQUEST_TIMEOUT_MS = 20_000;
 const REMOTE_DOWNLOAD_TIMEOUT_MS = 70_000;
 const THUMB_TIMEOUT_MS = 15_000;
+
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
+
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
+
 const QUALITY_PATTERN = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
 
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const PROVIDER_NAME = "dvyer_ytmp4";
 const TMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
+
 const DEFAULT_QUALITY = "360p";
 const FALLBACK_QUALITIES = ["360p", "240p", "144p"];
 const COMMAND_TIMEOUT_MS = 165_000;
@@ -55,13 +60,16 @@ function clipText(value = "", max = 90) {
 function humanBytes(bytes = 0) {
   const size = Number(bytes || 0);
   if (!Number.isFinite(size) || size <= 0) return "N/D";
+
   const units = ["B", "KB", "MB", "GB"];
   let value = size;
   let index = 0;
+
   while (value >= 1024 && index < units.length - 1) {
     value /= 1024;
     index++;
   }
+
   return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 }
 
@@ -90,17 +98,36 @@ function formatDuration(value = "") {
 function normalizeQuality(value) {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return DEFAULT_QUALITY;
+
   if (text === "hd") return "720p";
   if (text === "sd") return DEFAULT_QUALITY;
   if (text === "best") return DEFAULT_QUALITY;
+
   const match = text.match(/(\d{3,4})/);
   const normalized = match ? `${match[1]}p` : DEFAULT_QUALITY;
+
   return FALLBACK_QUALITIES.includes(normalized) ? normalized : DEFAULT_QUALITY;
 }
 
 function uniqueQualities(preferred) {
   const list = [normalizeQuality(preferred), ...FALLBACK_QUALITIES];
   return [...new Set(list)].filter(Boolean);
+}
+
+async function reactSafe(sock, msg, emoji = "") {
+  try {
+    if (!sock || !msg?.key || !emoji) return;
+
+    const jid = msg.key.remoteJid || msg.chat || msg.from;
+    if (!jid) return;
+
+    await sock.sendMessage(jid, {
+      react: {
+        text: emoji,
+        key: msg.key,
+      },
+    });
+  } catch {}
 }
 
 async function getBuffer(url) {
@@ -122,6 +149,7 @@ async function getBuffer(url) {
     });
 
     if (response.status >= 400 || !response.data) return null;
+
     const buffer = Buffer.from(response.data);
     return buffer.length ? buffer : null;
   } catch {
@@ -132,6 +160,7 @@ async function getBuffer(url) {
 async function deleteFileSafe(filePath) {
   const target = String(filePath || "").trim();
   if (!target) return true;
+
   try {
     await fsp.unlink(target);
     return true;
@@ -143,14 +172,19 @@ async function deleteFileSafe(filePath) {
 
 async function cleanupOldFiles(maxAgeMs = TMP_FILE_MAX_AGE_MS) {
   await ensureTmpDir();
+
   const now = Date.now();
   const entries = await fsp.readdir(TMP_DIR, { withFileTypes: true }).catch(() => []);
+
   for (const entry of entries) {
     if (!entry?.isFile?.()) continue;
+
     const fullPath = path.join(TMP_DIR, entry.name);
     const stat = await fsp.stat(fullPath).catch(() => null);
+
     if (!stat?.mtimeMs) continue;
     if (now - stat.mtimeMs < maxAgeMs) continue;
+
     await deleteFileSafe(fullPath);
   }
 }
@@ -187,6 +221,7 @@ function resolveRawInput(ctx) {
   const msg = ctx.m || ctx.msg || null;
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
   const quotedText = extractTextFromMessage(getQuotedMessage(ctx, msg));
+
   return cleanText(argsText || quotedText || "");
 }
 
@@ -194,6 +229,7 @@ function extractYouTubeUrl(text) {
   const match = String(text || "").match(
     /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i
   );
+
   return match ? match[0].trim() : "";
 }
 
@@ -204,6 +240,7 @@ function extractYouTubeVideoId(urlValue = "") {
   try {
     const parsed = new URL(urlText);
     const host = String(parsed.hostname || "").replace(/^www\./i, "").toLowerCase();
+
     if (host === "youtu.be") {
       return String(parsed.pathname || "")
         .replace(/^\/+/, "")
@@ -229,11 +266,13 @@ function extractYouTubeVideoId(urlValue = "") {
   const fallbackMatch = urlText.match(
     /(?:youtu\.be\/|youtube\.com\/(?:shorts|embed|live)\/|[?&]v=)([A-Za-z0-9_-]{6,})/i
   );
+
   return cleanText(fallbackMatch?.[1] || "");
 }
 
 function extractQualityAndQuery(input) {
   const tokens = cleanText(input).split(/\s+/).filter(Boolean);
+
   let quality = DEFAULT_QUALITY;
   let fast = true;
   const remaining = [];
@@ -269,6 +308,7 @@ function extractQualityAndQuery(input) {
 
 async function resolveInputToUrl(input) {
   const directUrl = extractYouTubeUrl(input);
+
   if (directUrl) {
     return {
       url: directUrl,
@@ -325,13 +365,14 @@ async function getYtmp4Data(videoUrl, quality, fast = true, signal = null) {
   if (response.status >= 400 || !response.data?.ok) {
     throw new Error(
       response.data?.detail ||
-      response.data?.error?.message ||
-      response.data?.message ||
-      `HTTP ${response.status}`
+        response.data?.error?.message ||
+        response.data?.message ||
+        `HTTP ${response.status}`
     );
   }
 
   const data = response.data;
+
   const remoteUrl =
     data.direct_url ||
     data.provider_direct_url ||
@@ -361,6 +402,7 @@ async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true,
 
   for (const quality of uniqueQualities(preferredQuality)) {
     throwIfAborted(signal);
+
     try {
       const data = await getYtmp4Data(videoUrl, quality, fast, signal);
       return { ...data, qualityUsed: quality };
@@ -400,23 +442,28 @@ async function downloadRemoteMp4(remoteUrl, preferredName, signal = null) {
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
+
   if (contentLength > MAX_VIDEO_BYTES) {
     throw new Error(`El video pesa ${humanBytes(contentLength)} y supera el limite del bot.`);
   }
 
   const writeStream = fs.createWriteStream(outputPath);
+
   const unbindAbort = bindAbort(signal, () => {
     try {
       response.data?.destroy?.(new Error("Descarga cancelada."));
     } catch {}
+
     try {
       writeStream.destroy?.(new Error("Descarga cancelada."));
     } catch {}
   });
 
   let downloaded = 0;
+
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
+
     if (downloaded > MAX_VIDEO_BYTES) {
       response.data.destroy(new Error("El video es demasiado grande para enviarlo por WhatsApp."));
     }
@@ -429,9 +476,11 @@ async function downloadRemoteMp4(remoteUrl, preferredName, signal = null) {
     await deleteFileSafe(outputPath);
     throw error;
   }
+
   unbindAbort();
 
   const stat = await fsp.stat(outputPath).catch(() => null);
+
   if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
     await deleteFileSafe(outputPath);
     throw new Error("El archivo MP4 descargado es inválido.");
@@ -475,6 +524,7 @@ async function sendRemoteMp4(sock, from, quoted, data) {
       },
       quoted
     );
+
     return "video";
   } catch {}
 
@@ -512,6 +562,7 @@ async function sendLocalMp4(sock, from, quoted, data) {
         },
         quoted
       );
+
       return "video";
     } catch {}
   }
@@ -547,6 +598,8 @@ export default {
     let sentSuccessfully = false;
 
     try {
+      await reactSafe(sock, msg, "🔎");
+
       cleanupOldFiles().catch(() => {});
       throwIfAborted(abortSignal);
 
@@ -608,6 +661,7 @@ export default {
         feature: "ytmp4",
         videoUrl: resolved.url,
       });
+
       if (!downloadCharge?.ok) return;
 
       const apiData = await runWithProviderCircuit(
@@ -618,12 +672,14 @@ export default {
           cooldownMs: 90_000,
           shouldCountFailure: (error) => {
             const text = String(error?.message || error || "").toLowerCase();
+
             if (!text) return false;
             if (text.includes("no encontré resultados")) return false;
             if (text.includes("no encontre resultados")) return false;
             if (text.includes("uso:")) return false;
             if (text.includes("supera el limite")) return false;
             if (text.includes("demasiado grande")) return false;
+
             return true;
           },
         }
@@ -631,6 +687,7 @@ export default {
 
       try {
         throwIfAborted(abortSignal);
+
         await sendRemoteMp4(sock, from, quoted, {
           ...apiData,
           title: apiData.title || resolved.title,
@@ -638,7 +695,9 @@ export default {
           quality: apiData.quality || apiData.qualityUsed || DEFAULT_QUALITY,
           thumbnail: apiData.thumbnail || resolved.thumbnail,
         });
+
         sentSuccessfully = true;
+        await reactSafe(sock, msg, "✅");
         return;
       } catch {}
 
@@ -652,10 +711,12 @@ export default {
       );
 
       throwIfAborted(abortSignal);
+
       const downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName, abortSignal);
       tempPath = downloaded.tempPath;
 
       throwIfAborted(abortSignal);
+
       await sendLocalMp4(sock, from, quoted, {
         ...downloaded,
         title: apiData.title || resolved.title,
@@ -665,6 +726,7 @@ export default {
       });
 
       sentSuccessfully = true;
+      await reactSafe(sock, msg, "✅");
     } catch (error) {
       console.error("YTMP4 ERROR:", error?.message || error);
 
@@ -676,12 +738,11 @@ export default {
       }
 
       if (!sentSuccessfully) {
-        const shownError =
-          abortSignal?.aborted
-            ? "La descarga demoro demasiado y fue cancelada. Intenta con otro video o usa .ytmp4 nofast."
-            : error?.code === "PROVIDER_CIRCUIT_OPEN"
-            ? String(error?.message || "Servicio temporalmente no autorizado para video.")
-            : String(error?.message || "No se pudo preparar el MP4.");
+        const shownError = abortSignal?.aborted
+          ? "La descarga demoro demasiado y fue cancelada. Intenta con otro video o usa .ytmp4 nofast."
+          : error?.code === "PROVIDER_CIRCUIT_OPEN"
+          ? String(error?.message || "Servicio temporalmente no autorizado para video.")
+          : String(error?.message || "No se pudo preparar el MP4.");
 
         await sock.sendMessage(
           from,
