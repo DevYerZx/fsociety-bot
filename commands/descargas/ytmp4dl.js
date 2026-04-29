@@ -320,9 +320,9 @@ async function getYtmp4dlData(videoUrl, quality) {
   const data = response.data;
   const remoteUrl =
     data.direct_url ||
-    data.provider_direct_url ||
     data.stream_url_full ||
     data.download_url_full ||
+    data.provider_direct_url ||
     data.url;
 
   if (!remoteUrl) {
