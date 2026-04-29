@@ -8,7 +8,7 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
-import { buildDvyerUrl, withDvyerApiKey } from "../../lib/api-manager.js";
+import { buildDvyerUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import {
   buildRateIdentity,
@@ -18,6 +18,7 @@ import {
 } from "../../lib/provider-guard.js";
 
 const API_YTMP3_URL = buildDvyerUrl("/ytmp3");
+const DVYER_API_BASE_URL = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
 const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
@@ -93,6 +94,11 @@ function humanBytes(bytes = 0) {
     index += 1;
   }
   return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function clipText(value = "", max = 70) {
+  const text = cleanText(value);
+  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3))}...`;
 }
 
 function safeFileName(name) {
@@ -404,6 +410,29 @@ async function react(sock, msg, emoji) {
   } catch {}
 }
 
+function buildShortCaption(data = {}) {
+  return [
+    "🎧 *DVYER MP3*",
+    `📌 ${clipText(data.title || data.fileName || "YouTube MP3", 70)}`,
+    `🌐 ${DVYER_API_BASE_URL}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildAudioContextInfo(data = {}) {
+  return {
+    externalAdReply: {
+      title: clipText(data.title || data.fileName || "YouTube MP3", 60),
+      body: DVYER_API_BASE_URL,
+      sourceUrl: DVYER_API_BASE_URL,
+      mediaType: 1,
+      renderLargerThumbnail: false,
+      showAdAttribution: false,
+    },
+  };
+}
+
 async function sendRemoteMp3(sock, from, quoted, data) {
   try {
     await sock.sendMessage(
@@ -413,6 +442,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
         mimetype: "audio/mpeg",
         fileName: data.fileName,
         ptt: false,
+        contextInfo: buildAudioContextInfo(data),
         ...global.channelInfo,
       },
       quoted
@@ -426,6 +456,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
       document: { url: data.remoteUrl },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
+      caption: buildShortCaption(data),
       ...global.channelInfo,
     },
     quoted
@@ -444,6 +475,7 @@ async function sendLocalMp3(sock, from, quoted, data) {
           mimetype: "audio/mpeg",
           fileName: data.fileName,
           ptt: false,
+          contextInfo: buildAudioContextInfo(data),
           ...global.channelInfo,
         },
         quoted
@@ -458,6 +490,7 @@ async function sendLocalMp3(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
+      caption: buildShortCaption(data),
       ...global.channelInfo,
     },
     quoted
