@@ -34,6 +34,7 @@ import {
   getAutoCleanState,
   setAutoCleanConfig,
 } from "./lib/autoclean.js";
+import { cleanupManagedTempRoots } from "./lib/temp-cleanup.js";
 import {
   findGroupParticipant as findCompatGroupParticipant,
   isGroupMetadataOwner as isCompatGroupMetadataOwner,
@@ -9339,6 +9340,9 @@ async function iniciarInstanciaBot(config) {
 
 async function start() {
   getManagedProcessBotConfigs().forEach((config) => ensureBotState(config));
+  cleanupManagedTempRoots({
+    maxAgeMs: 45 * 60 * 1000,
+  });
   await cargarComandos();
   await banner();
   await syncManagedProcessBots();
@@ -9413,6 +9417,9 @@ process.on("SIGINT", () => {
       clearInterval(liveConsoleTelemetryInterval);
       liveConsoleTelemetryInterval = null;
     }
+    cleanupManagedTempRoots({
+      maxAgeMs: 2 * 60 * 1000,
+    });
     writeAtomicJsonFile(USAGE_STATS_FILE, usageStats);
     if (structuredLogStream) {
       try {

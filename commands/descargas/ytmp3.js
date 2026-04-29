@@ -278,7 +278,66 @@ async function getYtmp3Data(videoUrl) {
   };
 }
 
-async function downloadYtmp3Fallback(videoUrl, preferredName) {
+async function requestYtmp3Stream(videoUrl) {
+  const response = await axios.get(API_YTMP3_URL, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    params: {
+      mode: "stream",
+      url: videoUrl,
+      ...withDvyerApiKey(),
+    },
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    let parsed = null;
+    try {
+      parsed = JSON.parse(errorText);
+    } catch {}
+    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
+  }
+
+  return response;
+}
+
+async function requestRemoteYtmp3Stream(remoteUrl) {
+  const response = await axios.get(remoteUrl, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    throw new Error(extractApiError({ message: errorText }, response.status));
+  }
+
+  return response;
+}
+
+async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null) {
   await ensureTmpDir();
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
 
@@ -321,59 +380,13 @@ async function downloadYtmp3Fallback(videoUrl, preferredName) {
   };
 
   try {
-    const response = await axios.get(API_YTMP3_URL, {
-      responseType: "stream",
-      timeout: REQUEST_TIMEOUT,
-      params: {
-        mode: "stream",
-        url: videoUrl,
-      },
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-        Accept: "*/*",
-      },
-      httpAgent: HTTP_AGENT,
-      httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400) {
-      const errorText = await readStreamToText(response.data).catch(() => "");
-      let parsed = null;
-      try {
-        parsed = JSON.parse(errorText);
-      } catch {}
-      throw new Error(extractApiError(parsed || { message: errorText }, response.status));
-    }
-
+    const response = await requestYtmp3Stream(videoUrl);
     return await saveResponseStream(response, preferredName);
   } catch (error) {
     await deleteFileSafe(outputPath);
 
-    const linkData = await getYtmp3Data(videoUrl);
-    const response = await axios.get(linkData.remoteUrl, {
-      responseType: "stream",
-      timeout: REQUEST_TIMEOUT,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-        Accept: "*/*",
-      },
-      httpAgent: HTTP_AGENT,
-      httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400) {
-      throw error;
-    }
+    const linkData = knownLinkData?.remoteUrl ? knownLinkData : await getYtmp3Data(videoUrl);
+    const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
 
     return await saveResponseStream(response, linkData.fileName || preferredName);
   }
@@ -550,7 +563,11 @@ export default {
         return;
       } catch {}
 
-      const downloaded = await downloadYtmp3Fallback(resolved.url, apiData.fileName || resolved.title);
+      const downloaded = await downloadYtmp3Fallback(
+        resolved.url,
+        apiData.fileName || resolved.title,
+        apiData
+      );
       tempPath = downloaded.tempPath;
 
       await sendLocalMp3(sock, from, quoted, downloaded);

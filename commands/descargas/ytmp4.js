@@ -33,6 +33,8 @@ const PROVIDER_NAME = "dvyer_ytmp4";
 const TMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
 const DEFAULT_QUALITY = "360p";
 const FALLBACK_QUALITIES = ["360p", "240p", "144p"];
+const DELETE_RETRIES = 4;
+const DELETE_RETRY_DELAY_MS = 120;
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -127,13 +129,26 @@ async function getBuffer(url) {
 async function deleteFileSafe(filePath) {
   const target = String(filePath || "").trim();
   if (!target) return true;
-  try {
-    await fsp.unlink(target);
-    return true;
-  } catch (e) {
-    if (String(e?.code || "").toUpperCase() === "ENOENT") return true;
-    return false;
+
+  for (let attempt = 0; attempt <= DELETE_RETRIES; attempt += 1) {
+    try {
+      await fsp.unlink(target);
+      return true;
+    } catch (e) {
+      const code = String(e?.code || "").toUpperCase();
+      if (code === "ENOENT") return true;
+      const isRetryable = code === "EBUSY" || code === "EPERM" || code === "EACCES";
+      if (isRetryable && attempt < DELETE_RETRIES) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, DELETE_RETRY_DELAY_MS * (attempt + 1))
+        );
+        continue;
+      }
+      return false;
+    }
   }
+
+  return false;
 }
 
 async function cleanupOldFiles(maxAgeMs = TMP_FILE_MAX_AGE_MS) {
@@ -365,31 +380,22 @@ async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true)
   throw lastError || new Error("No se pudo obtener el video.");
 }
 
-async function downloadRemoteMp4(remoteUrl, preferredName) {
-  await ensureTmpDir();
-
-  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp4.mp4`);
-
-  const response = await axios.get(remoteUrl, {
-    responseType: "stream",
-    timeout: REQUEST_TIMEOUT,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "*/*",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
-    maxRedirects: 5,
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    validateStatus: () => true,
+async function readStreamError(response, fallbackStatus) {
+  const errorText = await new Promise((resolve) => {
+    let data = "";
+    response?.data?.on?.("data", (chunk) => {
+      data += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      if (data.length > 12000) data = data.slice(-12000);
+    });
+    response?.data?.on?.("end", () => resolve(data));
+    response?.data?.on?.("error", () => resolve(""));
+    setTimeout(() => resolve(data), 2000).unref?.();
   });
 
-  if (response.status >= 400) {
-    throw new Error(`No se pudo descargar el MP4 remoto. HTTP ${response.status}`);
-  }
+  return extractApiError({ message: errorText }, fallbackStatus);
+}
 
+async function saveMp4Stream(response, outputPath, preferredName) {
   const contentLength = Number(response.headers?.["content-length"] || 0);
   if (contentLength > MAX_VIDEO_BYTES) {
     throw new Error(`El video pesa ${humanBytes(contentLength)} y supera el limite del bot.`);
@@ -424,27 +430,73 @@ async function downloadRemoteMp4(remoteUrl, preferredName) {
   };
 }
 
+async function downloadRemoteMp4(remoteUrl, preferredName) {
+  await ensureTmpDir();
+
+  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp4.mp4`);
+
+  const response = await axios.get(remoteUrl, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamError(response, response.status);
+    throw new Error(`No se pudo descargar el MP4 remoto. ${errorText}`);
+  }
+
+  return await saveMp4Stream(response, outputPath, preferredName);
+}
+
+async function downloadYtmp4ViaApi(videoUrl, preferredName, quality, fast = true) {
+  await ensureTmpDir();
+  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp4-api.mp4`);
+
+  const response = await axios.get(API_YTMP4_URL, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    params: {
+      mode: "stream",
+      url: videoUrl,
+      quality,
+      fast,
+      ...withDvyerApiKey(),
+    },
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamError(response, response.status);
+    throw new Error(errorText);
+  }
+
+  return await saveMp4Stream(response, outputPath, preferredName);
+}
+
 async function sendVideoPreview(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
-
-  const caption = [
-    "╭━━━〔 🎬 *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VISTA PREVIA DEL VIDEO*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || "YouTube Video", 75)}`,
-    "┃",
-    `┃ ⏱️ *Duración:* ${formatDuration(data.duration)}`,
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    data.author ? `┃ 👤 *Canal:* ${clipText(data.author, 40)}` : null,
-    `┃ 🚀 *Estado:* ${data.cached ? "En caché" : "Procesando"}`,
-    "┃",
-    "┃ ⌛ *Preparando tu video...*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const caption = clipText(data.title || "YouTube Video", 90);
 
   if (thumbBuffer) {
     return await sock.sendMessage(
@@ -471,23 +523,6 @@ async function sendVideoPreview(sock, from, quoted, data) {
 async function sendRemoteMp4(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
 
-  const caption = [
-    "╭━━━〔 ✅ *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VIDEO LISTO PARA VER*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || data.fileName, 75)}`,
-    "┃",
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    `┃ ⚡ *Entrega:* ${data.cached ? "Caché rápida" : "Directa"}`,
-    "┃",
-    "┃ 🍿 *Disfrútalo*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
   try {
     await sock.sendMessage(
       from,
@@ -495,7 +530,6 @@ async function sendRemoteMp4(sock, from, quoted, data) {
         video: { url: data.remoteUrl },
         mimetype: "video/mp4",
         fileName: data.fileName,
-        caption,
         gifPlayback: false,
         jpegThumbnail: thumbBuffer || undefined,
         ...global.channelInfo,
@@ -511,7 +545,6 @@ async function sendRemoteMp4(sock, from, quoted, data) {
       document: { url: data.remoteUrl },
       mimetype: "video/mp4",
       fileName: data.fileName,
-      caption,
       ...global.channelInfo,
     },
     quoted
@@ -523,24 +556,6 @@ async function sendRemoteMp4(sock, from, quoted, data) {
 async function sendLocalMp4(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
 
-  const caption = [
-    "╭━━━〔 ✅ *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VIDEO LISTO PARA VER*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || data.fileName, 75)}`,
-    "┃",
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    data.size ? `┃ 💾 *Peso:* ${humanBytes(data.size)}` : null,
-    "┃ 🛟 *Entrega:* Respaldo local",
-    "┃",
-    "┃ 🍿 *Disfrútalo*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
   if (Number(data?.size || 0) <= VIDEO_AS_DOCUMENT_THRESHOLD) {
     try {
       await sock.sendMessage(
@@ -549,7 +564,6 @@ async function sendLocalMp4(sock, from, quoted, data) {
           video: { url: data.tempPath },
           mimetype: "video/mp4",
           fileName: data.fileName,
-          caption,
           gifPlayback: false,
           jpegThumbnail: thumbBuffer || undefined,
           ...global.channelInfo,
@@ -566,7 +580,6 @@ async function sendLocalMp4(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: "video/mp4",
       fileName: data.fileName,
-      caption,
       ...global.channelInfo,
     },
     quoted
@@ -698,7 +711,17 @@ export default {
         quoted
       );
 
-      const downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName);
+      let downloaded = null;
+      try {
+        downloaded = await downloadYtmp4ViaApi(
+          resolved.url,
+          apiData.fileName,
+          apiData.qualityUsed || quality || DEFAULT_QUALITY,
+          fast
+        );
+      } catch {
+        downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName);
+      }
       tempPath = downloaded.tempPath;
 
       await sendLocalMp4(sock, from, quoted, {

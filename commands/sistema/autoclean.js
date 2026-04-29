@@ -43,7 +43,8 @@ export default {
             `*AUTO CLEAN EJECUTADO*\n\n` +
             `Archivos borrados: *${result.removedFiles}*\n` +
             `Carpetas vacias borradas: *${result.removedDirs || 0}*\n` +
-            `Espacio liberado: *${result.freedLabel}*`,
+            `Espacio liberado: *${result.freedLabel}*\n` +
+            `TMP descargas limpiado: *${result.managedTempRemovedFiles || 0} archivos / ${result.managedTempFreedLabel || formatBytes(0)}*`,
           ...global.channelInfo,
         },
         { quoted: msg }
@@ -87,6 +88,7 @@ export default {
           `Limite TMP: *${formatTmpLimit(state.maxTmpTotalBytes)}*\n` +
           `Ultima ejecucion: *${state.lastRunAt ? new Date(state.lastRunAt).toLocaleString("es-PE") : "Nunca"}*\n` +
           `Ultimo borrado: *${state.lastSummary.removedFiles} archivos / ${formatBytes(state.lastSummary.freedBytes)}*\n` +
+          `TMP descargas: *${state.lastSummary.managedTempRemovedFiles || 0} archivos / ${state.lastSummary.managedTempFreedLabel || formatBytes(0)}*\n` +
           `TMP: *${formatBytes(state.lastSummary.tmpTotalBytes)}* / *${formatTmpLimit(state.lastSummary.tmpLimitBytes || state.maxTmpTotalBytes)}*` +
           `${state.lastSummary.tmpOverLimit ? " (recorte por limite)" : ""}\n\n` +
           `Uso:\n` +
