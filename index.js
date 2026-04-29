@@ -6902,6 +6902,12 @@ async function cargarComandos() {
 
         if (!cmd || typeof cmd.run !== "function") continue;
 
+        try {
+          const relativeSource = path.relative(base, ruta).split(path.sep).join("/");
+          cmd.__sourceFile = ruta;
+          cmd.__pluginKey = relativeSource || ruta;
+        } catch {}
+
         commandModules.add(cmd);
         if (typeof cmd.onMessage === "function") messageHookModules.push(cmd);
         if (typeof cmd.onGroupUpdate === "function") groupUpdateHookModules.push(cmd);

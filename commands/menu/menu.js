@@ -249,14 +249,28 @@ function getCommandDescription(cmd) {
   return cleanText(cmd?.description || cmd?.desc || cmd?.help || "");
 }
 
+function getPluginKey(cmd, fallback = "") {
+  return (
+    cleanText(cmd?.__pluginKey) ||
+    cleanText(cmd?.__sourceFile) ||
+    cleanText(cmd?.name) ||
+    cleanText(fallback)
+  );
+}
+
 function collectCommandData(comandos) {
   const categories = {};
+  const seenPlugins = new Set();
 
   for (const cmd of new Set(comandos.values())) {
     if (!cmd || isHiddenCommand(cmd)) continue;
 
     const main = getMainCommand(cmd);
     if (!main) continue;
+
+    const pluginKey = getPluginKey(cmd, main).toLowerCase();
+    if (!pluginKey || seenPlugins.has(pluginKey)) continue;
+    seenPlugins.add(pluginKey);
 
     const category = getCommandCategory(cmd);
 
@@ -267,6 +281,7 @@ function collectCommandData(comandos) {
     categories[category].set(main, {
       name: main,
       description: getCommandDescription(cmd),
+      pluginKey,
     });
   }
 
@@ -331,18 +346,20 @@ function buildTopPanel({
   botLine,
 }) {
   return [
-    `╭━━〔 ⚡ *${menuTitle}* ⚡ 〕━━⬣`,
-    `┃ ${menuSubtitle}`,
+    "╭══════════════════⬣",
+    `┃ *${menuTitle}*`,
+    `┃ _${menuSubtitle}_`,
+    "┣══════════════════",
     "┃",
-    `┃ 🤖 *Bot:* ${botLine || settings?.botName || "Fsociety Bot"}`,
-    `┃ 👑 *Owner:* ${settings?.ownerName || "Owner"}`,
-    `┃ 🔰 *Prefijo:* ${prefixLabel}`,
-    `┃ ⏳ *Activo:* ${uptime}`,
-    `┃ 🗂️ *Categorías:* ${totalCategories}`,
-    `┃ 📌 *Comandos:* ${totalCommands}`,
+    `┃ ✦ *Bot:* _${botLine || settings?.botName || "Fsociety Bot"}_`,
+    `┃ ✦ *Owner:* _${settings?.ownerName || "Owner"}_`,
+    `┃ ✦ *Prefijo:* *${prefixLabel}*`,
+    `┃ ✦ *Activo:* _${uptime}_`,
+    `┃ ✦ *Categorías:* *${totalCategories}*`,
+    `┃ ✦ *Comandos reales:* *${totalCommands}*`,
     "┃",
-    "┃ _Escribe el prefijo + comando._",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    "┃ _Cuenta exacta por plugin, sin inflar alias._",
+    "╰══════════════════⬣",
   ].join("\n");
 }
 
@@ -357,9 +374,9 @@ function buildCategoryIndex(categoryNames, categories) {
     .join(" • ");
 
   return [
-    "╭─〔 🧭 *CATEGORÍAS* 〕",
-    `┃ ${list}`,
-    "╰────────────⬣",
+    "╭─〔 🧭 *CATEGORÍAS DISPONIBLES* 〕",
+    `┃ _${list}_`,
+    "╰────────────────────⬣",
   ].join("\n");
 }
 
@@ -374,19 +391,19 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
   const commandLines = commands.map((item) => `┃ ✦ *${primaryPrefix}${item.name}*`);
   lines.push(...commandLines);
 
-  lines.push("╰────────────⬣");
+  lines.push("╰────────────────────⬣");
 
   return lines.join("\n");
 }
 
 function buildFooter(primaryPrefix) {
   return [
-    "╭─〔 💡 *AYUDA* 〕",
-    `┃ ${primaryPrefix}menu → ver menú`,
-    `┃ ${primaryPrefix}menu descargas → abrir categoría`,
-    `┃ ${primaryPrefix}status → estado`,
-    `┃ ${primaryPrefix}owner → soporte`,
-    "╰────────────⬣",
+    "╭─〔 💡 *AYUDA RÁPIDA* 〕",
+    `┃ ✦ ${primaryPrefix}menu → abrir panel`,
+    `┃ ✦ ${primaryPrefix}menu descargas → ver categoría`,
+    `┃ ✦ ${primaryPrefix}status → ver estado`,
+    `┃ ✦ ${primaryPrefix}owner → soporte`,
+    "╰────────────────────⬣",
   ].join("\n");
 }
 
@@ -441,18 +458,19 @@ function buildCategorySections(categoryNames, categories, primaryPrefix) {
 
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
-    `╭━━〔 ⚡ *${menuContext.title}* ⚡ 〕━━⬣`,
-    `┃ ${menuContext.subtitle}`,
+    "╭══════════════════⬣",
+    `┃ *${menuContext.title}*`,
+    `┃ _${menuContext.subtitle}_`,
+    "┣══════════════════",
     "┃",
-    `┃ 🤖 *Bot:* ${menuContext.botLine || settings?.botName || "Fsociety Bot"}`,
-    `┃ 👑 *Owner:* ${settings?.ownerName || "Owner"}`,
-    `┃ 🔰 *Prefijo:* ${prefixLabel}`,
-    `┃ ⏳ *Activo:* ${uptime}`,
-    `┃ 🗂️ *Categorías:* ${totalCategories}`,
-    `┃ 📌 *Comandos:* ${totalCommands}`,
+    `┃ ✦ *Bot:* _${menuContext.botLine || settings?.botName || "Fsociety Bot"}_`,
+    `┃ ✦ *Prefijo:* *${prefixLabel}*`,
+    `┃ ✦ *Activo:* _${uptime}_`,
+    `┃ ✦ *Categorías:* *${totalCategories}*`,
+    `┃ ✦ *Comandos reales:* *${totalCommands}*`,
     "┃",
-    "┃ Presiona la lista para abrir categorías.",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    "┃ _Pulsa la lista para abrir categorías._",
+    "╰══════════════════⬣",
   ].join("\n");
 }
 
