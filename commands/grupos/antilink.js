@@ -8,6 +8,8 @@ import {
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antilink.json");
+const WARNS_FILE = path.join(DB_DIR, "antilink_warns.json");
+const MAX_WARNS = 3;
 
 if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
@@ -36,6 +38,7 @@ function normalizeConfig(value = {}) {
   const hasTypedFlags =
     Object.prototype.hasOwnProperty.call(source, "blockWhatsappGroups") ||
     Object.prototype.hasOwnProperty.call(source, "blockWhatsappChannels") ||
+    Object.prototype.hasOwnProperty.call(source, "blockYoutubeLinks") ||
     Object.prototype.hasOwnProperty.call(source, "blockOtherLinks");
   const allowWhatsappLegacy = source.allowWhatsapp !== false;
 
@@ -49,7 +52,8 @@ function normalizeConfig(value = {}) {
     blockWhatsappChannels: hasTypedFlags
       ? source.blockWhatsappChannels !== false
       : !allowWhatsappLegacy,
-    blockOtherLinks: source.blockOtherLinks !== false,
+    blockYoutubeLinks: source.blockYoutubeLinks === true,
+    blockOtherLinks: source.blockOtherLinks === true,
     whitelist: Array.isArray(source.whitelist)
       ? source.whitelist.map((item) => normalizeDomain(item)).filter(Boolean)
       : [],
@@ -84,6 +88,21 @@ function saveStore() {
   fs.writeFileSync(FILE, JSON.stringify(store, null, 2));
 }
 
+function loadWarns() {
+  try {
+    if (!fs.existsSync(WARNS_FILE)) return {};
+    const raw = fs.readFileSync(WARNS_FILE, "utf-8");
+    const data = safeParse(raw);
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveWarns() {
+  fs.writeFileSync(WARNS_FILE, JSON.stringify(warnsCache, null, 2));
+}
+
 function getGroupConfig(groupId) {
   const key = String(groupId || "").trim();
   if (!store[key]) {
@@ -112,7 +131,7 @@ function getPrimaryPrefix(settings) {
 
 function extractLinks(text = "") {
   const matches = String(text || "").match(
-    /((?:https?:\/\/|www\.)[^\s]+|chat\.whatsapp\.com\/[^\s]+|whatsapp\.com\/channel\/[^\s]+|wa\.me\/[^\s]+)/gi
+    /((?:https?:\/\/|www\.)[^\s]+|chat\.whatsapp\.com\/[^\s]+|whatsapp\.com\/channel\/[^\s]+|wa\.me\/[^\s]+|youtu\.be\/[^\s]+)/gi
   );
 
   return (matches || []).map((value) => {
@@ -122,11 +141,19 @@ function extractLinks(text = "") {
     const isWhatsappGroup =
       lowerRaw.includes("chat.whatsapp.com/") || normalized.includes("chat.whatsapp.com");
     const isWhatsappChannel = lowerRaw.includes("whatsapp.com/channel/");
+    const isYoutube =
+      lowerRaw.includes("youtube.com/") ||
+      lowerRaw.includes("youtu.be/") ||
+      normalized === "youtube.com" ||
+      normalized.endsWith(".youtube.com") ||
+      normalized === "youtu.be";
     const linkType = isWhatsappGroup
       ? "wa_group"
       : isWhatsappChannel
         ? "wa_channel"
-        : "other";
+        : isYoutube
+          ? "youtube"
+          : "other";
 
     return {
       raw,
@@ -139,6 +166,7 @@ function extractLinks(text = "") {
 function isTypeBlocked(link, config) {
   if (link?.type === "wa_group") return config.blockWhatsappGroups === true;
   if (link?.type === "wa_channel") return config.blockWhatsappChannels === true;
+  if (link?.type === "youtube") return config.blockYoutubeLinks === true;
   return config.blockOtherLinks === true;
 }
 
@@ -170,6 +198,9 @@ function resolveFilterTarget(value = "") {
   if (["canal", "canales", "channel", "channels", "wachannel", "wacanal"].includes(normalized)) {
     return "channels";
   }
+  if (["youtube", "yt", "youtubelinks", "videosyt"].includes(normalized)) {
+    return "youtube";
+  }
   if (["otros", "other", "others", "externos", "links", "enlaces"].includes(normalized)) {
     return "others";
   }
@@ -177,10 +208,30 @@ function resolveFilterTarget(value = "") {
 }
 
 let store = loadStore();
+let warnsCache = loadWarns();
+
+function getWarnCount(groupId, sender) {
+  return Number(warnsCache?.[groupId]?.[sender] || 0);
+}
+
+function setWarnCount(groupId, sender, count) {
+  if (!warnsCache[groupId]) warnsCache[groupId] = {};
+  warnsCache[groupId][sender] = Math.max(0, Number(count || 0));
+  saveWarns();
+}
+
+function clearWarnCount(groupId, sender) {
+  if (!warnsCache[groupId]) return;
+  delete warnsCache[groupId][sender];
+  if (!Object.keys(warnsCache[groupId]).length) {
+    delete warnsCache[groupId];
+  }
+  saveWarns();
+}
 
 export default {
   name: "antilink",
-  command: ["antilink"],
+  command: ["antilink", "antilinkyoutube"],
   groupOnly: true,
   adminOnly: true,
   category: "grupo",
@@ -190,10 +241,12 @@ export default {
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const config = getGroupConfig(from);
     const prefix = getPrimaryPrefix(settings);
-    const action = String(args[0] || "status").trim().toLowerCase();
+    const invokedCommand = String(msg?.body || msg?.text || "").trim().toLowerCase();
+    const commandStartsYoutube = invokedCommand.startsWith(`${prefix}antilinkyoutube`);
+    const action = String(args[0] || (commandStartsYoutube ? "statusyoutube" : "status")).trim().toLowerCase();
     const value = String(args.slice(1).join(" ") || "").trim();
 
-    if (!args.length || ["status", "estado"].includes(action)) {
+    if (!args.length || ["status", "estado", "statusyoutube"].includes(action)) {
       return sock.sendMessage(
         from,
         {
@@ -201,17 +254,19 @@ export default {
             `*ANTILINK*\n\n` +
             `Estado: *${config.enabled ? "ON" : "OFF"}*\n` +
             `Modo: *${config.mode.toUpperCase()}*\n` +
+            `Avisos antes de expulsar: *${MAX_WARNS}*\n` +
             `Grupos WhatsApp: *${formatToggle(config.blockWhatsappGroups)}*\n` +
             `Canales WhatsApp: *${formatToggle(config.blockWhatsappChannels)}*\n` +
+            `YouTube: *${formatToggle(config.blockYoutubeLinks)}*\n` +
             `Otros enlaces: *${formatToggle(config.blockOtherLinks)}*\n` +
             `Whitelist: ${config.whitelist.length ? config.whitelist.join(", ") : "vacia"}\n\n` +
             `Uso:\n` +
             `${prefix}antilink on\n` +
             `${prefix}antilink off\n` +
             `${prefix}antilink mode delete\n` +
-            `${prefix}antilink mode kick\n` +
             `${prefix}antilink tipo grupos on|off\n` +
             `${prefix}antilink tipo canales on|off\n` +
+            `${prefix}antilinkyoutube on|off\n` +
             `${prefix}antilink tipo otros on|off\n` +
             `${prefix}antilink allow youtube.com\n` +
             `${prefix}antilink remove youtube.com\n` +
@@ -281,6 +336,16 @@ export default {
                         id: `${prefix}antilink tipo canales ${config.blockWhatsappChannels ? "off" : "on"}`,
                       },
                       {
+                        header: "YOUTUBE",
+                        title: config.blockYoutubeLinks
+                          ? "Permitir enlaces de YouTube"
+                          : "Bloquear enlaces de YouTube",
+                        description: config.blockYoutubeLinks
+                          ? "Actualmente: bloqueado"
+                          : "Actualmente: permitido",
+                        id: `${prefix}antilinkyoutube ${config.blockYoutubeLinks ? "off" : "on"}`,
+                      },
+                      {
                         header: "OTROS LINKS",
                         title: config.blockOtherLinks
                           ? "Permitir otros enlaces"
@@ -303,6 +368,18 @@ export default {
     }
 
     if (action === "on") {
+      if (commandStartsYoutube) {
+        config.blockYoutubeLinks = true;
+        saveStore();
+        return sock.sendMessage(
+          from,
+          {
+            text: "AntiLink YouTube activado. Ahora avisara 3 veces antes de expulsar.",
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
       config.enabled = true;
       saveStore();
       return sock.sendMessage(
@@ -316,6 +393,18 @@ export default {
     }
 
     if (action === "off") {
+      if (commandStartsYoutube) {
+        config.blockYoutubeLinks = false;
+        saveStore();
+        return sock.sendMessage(
+          from,
+          {
+            text: "AntiLink YouTube desactivado.",
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
       config.enabled = false;
       saveStore();
       return sock.sendMessage(
@@ -474,6 +563,19 @@ export default {
         );
       }
 
+      if (target === "youtube") {
+        config.blockYoutubeLinks = toggle === null ? !config.blockYoutubeLinks : toggle;
+        saveStore();
+        return sock.sendMessage(
+          from,
+          {
+            text: `YouTube: *${formatToggle(config.blockYoutubeLinks)}*`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+
       config.blockOtherLinks = toggle === null ? !config.blockOtherLinks : toggle;
       saveStore();
       return sock.sendMessage(
@@ -487,9 +589,15 @@ export default {
     }
 
     // Alias cortos para filtros:
-    if (["grupos", "grupo", "canales", "canal", "otros", "other"].includes(action)) {
+    if (["grupos", "grupo", "canales", "canal", "youtube", "yt", "otros", "other"].includes(action)) {
       const target =
-        action.startsWith("grupo") ? "groups" : action.startsWith("canal") ? "channels" : "others";
+        action.startsWith("grupo")
+          ? "groups"
+          : action.startsWith("canal")
+            ? "channels"
+            : action.startsWith("y")
+              ? "youtube"
+              : "others";
       const toggle = parseToggle(args[1]);
 
       if (toggle === undefined) {
@@ -525,6 +633,19 @@ export default {
           from,
           {
             text: `Canales de WhatsApp: *${formatToggle(config.blockWhatsappChannels)}*`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+
+      if (target === "youtube") {
+        config.blockYoutubeLinks = toggle === null ? !config.blockYoutubeLinks : toggle;
+        saveStore();
+        return sock.sendMessage(
+          from,
+          {
+            text: `YouTube: *${formatToggle(config.blockYoutubeLinks)}*`,
             ...global.channelInfo,
           },
           quoted
@@ -619,7 +740,13 @@ export default {
       await sock.sendMessage(from, { delete: msg.key, ...global.channelInfo });
     } catch {}
 
-    if (config.mode === "kick" && esBotAdmin) {
+    const currentWarns = getWarnCount(from, sender) + 1;
+    setWarnCount(from, sender, currentWarns);
+
+    const mentionText = getParticipantDisplayTag(null, sender);
+    const mentionJids = mentionJid ? [mentionJid] : [];
+
+    if (config.mode === "kick" && currentWarns >= MAX_WARNS && esBotAdmin) {
       try {
         const removeResult = await runGroupParticipantAction(
           sock,
@@ -632,24 +759,52 @@ export default {
         if (!removeResult.ok) {
           throw removeResult.error || new Error("No pude expulsar al usuario.");
         }
+        clearWarnCount(from, sender);
 
         await sock.sendMessage(from, {
           text:
-            `Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*\n` +
-            `${getParticipantDisplayTag(null, sender)} expulsado automaticamente.`,
-          mentions: mentionJid ? [mentionJid] : [],
+            `🚫 *ANTILINK*\n` +
+            `${mentionText} llego a *${MAX_WARNS}/${MAX_WARNS}* advertencias.\n` +
+            `🔗 Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*\n` +
+            `✅ Fue expulsado del grupo.`,
+          mentions: mentionJids,
           ...global.channelInfo,
         });
         return;
       } catch {}
     }
 
+    if (config.mode === "kick") {
+      if (currentWarns >= MAX_WARNS) {
+        await sock.sendMessage(from, {
+          text:
+            `🚫 *ANTILINK*\n` +
+            `${mentionText} llego a *${MAX_WARNS}/${MAX_WARNS}* advertencias.\n` +
+            `🔗 Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*\n` +
+            `⚠️ No pude expulsarlo. Verifica si el bot es admin.`,
+          mentions: mentionJids,
+          ...global.channelInfo,
+        });
+        return;
+      }
+
+      await sock.sendMessage(from, {
+        text:
+          `⚠️ *ANTILINK AVISO ${currentWarns}/${MAX_WARNS}*\n` +
+          `${mentionText}, no envies este tipo de enlace.\n` +
+          `🔗 Detectado: *${blockedLink.domain || blockedLink.raw}*\n` +
+          `📌 A la advertencia *${MAX_WARNS}* seras expulsado.`,
+        mentions: mentionJids,
+        ...global.channelInfo,
+      });
+      return;
+    }
+
     await sock.sendMessage(from, {
       text:
-        `Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*.\n` +
-        (config.mode === "kick"
-          ? "No pude expulsar al usuario, asi que solo borre el mensaje."
-          : "El mensaje fue eliminado por anti-link."),
+        `🚫 *ANTILINK*\n` +
+        `🔗 Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*\n` +
+        `🗑️ El mensaje fue eliminado por anti-link.`,
       ...global.channelInfo,
     });
   },
