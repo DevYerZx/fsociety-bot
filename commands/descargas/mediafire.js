@@ -318,12 +318,13 @@ async function sendMediafireDocument(sock, from, quoted, payload) {
   const { filePath, fileName, title, fileSize, size } = payload;
 
   const prettySize = fileSize || humanBytes(size) || "Desconocido";
+  const format = path.extname(fileName).replace(".", "").toUpperCase() || "FILE";
 
   const caption = [
     "╭━━〔 *📦 MEDIAFIRE DOWNLOAD* 〕━━⬣",
     `┃ 📄 *Archivo:* ${title}`,
     `┃ 💾 *Tamaño:* ${prettySize}`,
-    `┃ 🧩 *Formato:* ${path.extname(fileName).replace(".", "").toUpperCase() || "FILE"}`,
+    `┃ 🧩 *Formato:* ${format}`,
     "┃",
     "┃ ✅ *Descarga completada correctamente*",
     "╰━━━━━━━━━━━━━━━━━━⬣",
@@ -413,22 +414,6 @@ export default {
         return;
       }
 
-      await sock.sendMessage(
-        from,
-        {
-          text: [
-            "╭━━〔 *📦 MEDIAFIRE* 〕━━⬣",
-            "┃ 🔎 *Buscando archivo...*",
-            "┃",
-            "┃ ⏳ Procesando tu enlace.",
-            "┃ 📡 Conectando con DVYER API.",
-            "╰━━━━━━━━━━━━━━━━━━⬣",
-          ].join("\n"),
-          ...global.channelInfo,
-        },
-        quoted
-      );
-
       const info = await requestMediafireMeta(fileUrl);
 
       ensureTmpDir();
@@ -444,7 +429,9 @@ export default {
           text: [
             "╭━━〔 *📥 MEDIAFIRE* 〕━━⬣",
             `┃ 📄 *Archivo:* ${info.title}`,
-            info.fileSize ? `┃ 💾 *Tamaño:* ${info.fileSize}` : "┃ 💾 *Tamaño:* Calculando...",
+            info.fileSize
+              ? `┃ 💾 *Tamaño:* ${info.fileSize}`
+              : "┃ 💾 *Tamaño:* Calculando...",
             "┃",
             "┃ 🚀 *Descargando archivo...*",
             "╰━━━━━━━━━━━━━━━━━━⬣",
@@ -478,7 +465,10 @@ export default {
         {
           text: [
             "╭━━〔 *❌ MEDIAFIRE ERROR* 〕━━⬣",
-            `┃ ${String(error?.message || "No se pudo procesar el archivo de MediaFire.")}`,
+            `┃ ${String(
+              error?.message ||
+                "No se pudo procesar el archivo de MediaFire."
+            )}`,
             "╰━━━━━━━━━━━━━━━━━━⬣",
           ].join("\n"),
           ...global.channelInfo,
