@@ -130,6 +130,20 @@ function pickMainLine(result) {
   return lines[0] || "Sin detalle extra.";
 }
 
+function buildUpdateMessage(title, lines = [], footer = "") {
+  const bodyLines = Array.isArray(lines)
+    ? lines.map((line) => String(line || "").trim()).filter(Boolean)
+    : [];
+  const tail = String(footer || "").trim();
+
+  return [
+    `*${String(title || "UPDATE").trim() || "UPDATE"}*`,
+    "",
+    ...bodyLines,
+    ...(tail ? ["", tail] : []),
+  ].join("\n");
+}
+
 function hasRestartSensitiveChanges(changedFiles = []) {
   return uniquePaths(changedFiles).some((filePath) => {
     const normalized = normalizeGitPath(filePath);
@@ -1205,26 +1219,25 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text:
-              "*UPDATE INFO*\n\n" +
-              `Owner detectado: *${info.ownerAccess.isOwner ? "SI" : "NO"}*\n` +
-              `Matches owner: *${info.ownerAccess.matches.join(", ") || "ninguno"}*\n` +
-              `Sender IDs: ${info.ownerAccess.senderIds.join(", ") || "ninguno"}\n` +
-              `Owners config: ${info.ownerAccess.ownerIds.join(", ") || "ninguno"}\n` +
-              `Repo local git: *${info.gitRepoAvailable ? "SI" : "NO"}*\n` +
-              `Metodo update: *${info.updateMode}*\n` +
-              `Origen: *${info.source?.repoLabel || "no detectado"}*\n` +
-              `Branch: *${info.branch}*\n` +
-              `Commit: *${info.head}*\n` +
-              `Entorno: *${info.restartMode.label}*\n` +
-              `Reinicio interno: *${info.restartMode.allowsInternalRestart ? "SI" : "NO"}*\n` +
-              `Hot-reload runtime: *${global?.botRuntime?.applyHotRuntimeRefresh ? "SI" : "NO"}*\n` +
-              `Cambios bloqueantes: *${dirtyCount}*\n\n` +
-              "Modos:\n" +
-              "`.update` = actualiza sin reiniciar\n" +
-              "`.update hot` = actualiza + recarga en caliente\n" +
-              "`.update restart` = actualiza y reinicia si el entorno lo permite\n" +
-              "`.update norestart` = actualiza sin reiniciar",
+            text: buildUpdateMessage(
+              "UPDATE INFO",
+              [
+                `• Owner detectado: *${info.ownerAccess.isOwner ? "SI" : "NO"}*`,
+                `• Matches owner: *${info.ownerAccess.matches.join(", ") || "ninguno"}*`,
+                `• Sender IDs: ${info.ownerAccess.senderIds.join(", ") || "ninguno"}`,
+                `• Owners config: ${info.ownerAccess.ownerIds.join(", ") || "ninguno"}`,
+                `• Repo local git: *${info.gitRepoAvailable ? "SI" : "NO"}*`,
+                `• Metodo: *${info.updateMode}*`,
+                `• Origen: *${info.source?.repoLabel || "no detectado"}*`,
+                `• Rama: *${info.branch}*`,
+                `• Commit: *${info.head}*`,
+                `• Entorno: *${info.restartMode.label}*`,
+                `• Reinicio interno: *${info.restartMode.allowsInternalRestart ? "SI" : "NO"}*`,
+                `• Hot-reload runtime: *${global?.botRuntime?.applyHotRuntimeRefresh ? "SI" : "NO"}*`,
+                `• Cambios bloqueantes: *${dirtyCount}*`,
+              ],
+              "`.update` sin reinicio\n`.update hot` actualiza y recarga\n`.update restart` actualiza y reinicia\n`.update norestart` actualiza sin reiniciar"
+            ),
             ...global.channelInfo,
           },
           quoted
@@ -1233,9 +1246,9 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text:
-              "*ERROR UPDATE INFO*\n\n" +
+            text: buildUpdateMessage("ERROR UPDATE INFO", [
               `${error?.message || "No pude revisar el estado del bot."}`,
+            ]),
             ...global.channelInfo,
           },
           quoted
@@ -1247,12 +1260,15 @@ export default {
       return sock.sendMessage(
         from,
         {
-          text:
-            "*UPDATE BLOQUEADO*\n\n" +
-            "Solo el owner puede usar .update.\n" +
-            `Sender detectado: *${ownerAccess.senderIds.join(", ") || "ninguno"}*\n` +
-            `Owners guardados: *${ownerAccess.ownerIds.join(", ") || "ninguno"}*\n\n` +
-            "Prueba tambien con *.update info* o *.whoami* para revisar el owner.",
+          text: buildUpdateMessage(
+            "UPDATE BLOQUEADO",
+            [
+              "Solo el owner puede usar .update.",
+              `• Sender detectado: *${ownerAccess.senderIds.join(", ") || "ninguno"}*`,
+              `• Owners guardados: *${ownerAccess.ownerIds.join(", ") || "ninguno"}*`,
+            ],
+            "Prueba tambien con *.update info* o *.whoami* para revisar el owner."
+          ),
           ...global.channelInfo,
         },
         quoted
@@ -1291,15 +1307,18 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text:
-            "*UPDATE BOT*\n\n" +
-            (skipRestart
-              ? `${gitRepoAvailable ? "Actualizando con git pull en modo seguro" : "Descargando la ultima version desde GitHub"} sin reiniciar el proceso...\n`
-              : `${gitRepoAvailable ? "Actualizando con git pull" : "Descargando la ultima version desde GitHub"}...\n`) +
-            (requestedHotReload
-              ? "Modo hot-reload: *activo* (intentare recargar comandos/settings)\n"
-              : "") +
-            `Entorno: *${restartMode.label}*`,
+          text: buildUpdateMessage(
+            "UPDATE BOT",
+            [
+              skipRestart
+                ? `• ${gitRepoAvailable ? "Actualizando con git pull" : "Descargando desde GitHub"} sin reiniciar el proceso`
+                : `• ${gitRepoAvailable ? "Actualizando con git pull" : "Descargando desde GitHub"}`,
+              requestedHotReload
+                ? "• Modo hot-reload: *activo*"
+                : "• Modo hot-reload: *inactivo*",
+              `• Entorno: *${restartMode.label}*`,
+            ]
+          ),
           ...global.channelInfo,
         },
         quoted
@@ -1316,11 +1335,17 @@ export default {
         await sock.sendMessage(
           from,
           {
-            text:
-              "*BOT ACTUALIZADO*\n\n" +
-              (updateResult.mode === "git"
-                ? `No habia cambios nuevos en GitHub.\nCommit actual: *${updateResult.newHead}*`
-                : `No detecte archivos nuevos para copiar desde GitHub.\nRama remota: *${updateResult.branch}*`),
+            text: buildUpdateMessage(
+              "BOT ACTUALIZADO",
+              [
+                updateResult.mode === "git"
+                  ? "No habia cambios nuevos en GitHub."
+                  : "No detecte archivos nuevos para copiar desde GitHub.",
+                updateResult.mode === "git"
+                  ? `• Commit actual: *${updateResult.newHead}*`
+                  : `• Rama remota: *${updateResult.branch}*`,
+              ]
+            ),
             ...global.channelInfo,
           },
           quoted
@@ -1361,22 +1386,25 @@ export default {
         await sock.sendMessage(
           from,
           {
-            text:
-              "*UPDATE OK*\n\n" +
-              `Metodo: *${updateResult.methodLabel}*\n` +
-              `Origen: *${updateResult.repoLabel}*\n` +
-              `${summary}\n` +
-              `${changedSummary}\n` +
-              `${depsSummary}\n` +
-              `${updateResult.stashSummary}\n` +
-              `Detalle: ${updateResult.detailLine}\n` +
-              `${updateResult.fallbackNote ? `${updateResult.fallbackNote}\n` : ""}` +
-              `Hot reload: *${hotReloadResult.attempted ? (hotReloadResult.ok ? "OK" : "PARCIAL/ERROR") : "NO EJECUTADO"}*\n` +
-              `${hotReloadResult.attempted ? `Detalle hot: ${hotReloadResult.message}\n` : ""}` +
-              "Aplicacion: *sin reinicio*\n\n" +
-              (restartNeeded
+            text: buildUpdateMessage(
+              "UPDATE OK",
+              [
+                `• Metodo: *${updateResult.methodLabel}*`,
+                `• Origen: *${updateResult.repoLabel}*`,
+                `• ${summary}`,
+                `• ${changedSummary}`,
+                `• ${depsSummary}`,
+                `• ${updateResult.stashSummary}`,
+                `• Detalle: ${updateResult.detailLine}`,
+                ...(updateResult.fallbackNote ? [`• ${updateResult.fallbackNote}`] : []),
+                `• Hot reload: *${hotReloadResult.attempted ? (hotReloadResult.ok ? "OK" : "PARCIAL/ERROR") : "NO EJECUTADO"}*`,
+                ...(hotReloadResult.attempted ? [`• Detalle hot: ${hotReloadResult.message}`] : []),
+                "• Aplicacion: *sin reinicio*",
+              ],
+              restartNeeded
                 ? "Los archivos ya se actualizaron en disco. Aun hay cambios que requieren `.restart` para quedar activos."
-                : "Los cambios quedaron aplicados y cargados sin reinicio."),
+                : "Los cambios quedaron aplicados y cargados sin reinicio."
+            ),
             ...global.channelInfo,
           },
           quoted
@@ -1389,18 +1417,21 @@ export default {
         await sock.sendMessage(
           from,
           {
-            text:
-              "*UPDATE OK*\n\n" +
-              `Metodo: *${updateResult.methodLabel}*\n` +
-              `Origen: *${updateResult.repoLabel}*\n` +
-              `${summary}\n` +
-              `${changedSummary}\n` +
-              `${depsSummary}\n` +
-              `${updateResult.stashSummary}\n` +
-              `Detalle: ${updateResult.detailLine}\n` +
-              `${updateResult.fallbackNote ? `${updateResult.fallbackNote}\n` : ""}` +
-              "Aplicacion: *reinicio manual requerido*\n\n" +
-              "Este hosting no usa reinicio interno seguro desde el bot. Los archivos ya quedaron actualizados, pero debes reiniciar desde tu panel, PM2 o consola cuando quieras cargar el codigo nuevo.",
+            text: buildUpdateMessage(
+              "UPDATE OK",
+              [
+                `• Metodo: *${updateResult.methodLabel}*`,
+                `• Origen: *${updateResult.repoLabel}*`,
+                `• ${summary}`,
+                `• ${changedSummary}`,
+                `• ${depsSummary}`,
+                `• ${updateResult.stashSummary}`,
+                `• Detalle: ${updateResult.detailLine}`,
+                ...(updateResult.fallbackNote ? [`• ${updateResult.fallbackNote}`] : []),
+                "• Aplicacion: *reinicio manual requerido*",
+              ],
+              "Este hosting no usa reinicio interno seguro desde el bot. Los archivos ya quedaron actualizados, pero debes reiniciar desde tu panel, PM2 o consola cuando quieras cargar el codigo nuevo."
+            ),
             ...global.channelInfo,
           },
           quoted
@@ -1412,19 +1443,21 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text:
-            "*UPDATE OK*\n\n" +
-            `Metodo: *${updateResult.methodLabel}*\n` +
-            `Origen: *${updateResult.repoLabel}*\n` +
-            `${summary}\n` +
-            `${changedSummary}\n` +
-            `${depsSummary}\n` +
-            `${updateResult.stashSummary}\n` +
-            `Detalle: ${updateResult.detailLine}\n` +
-            `${updateResult.fallbackNote ? `${updateResult.fallbackNote}\n` : ""}` +
-            `Reinicio: *${restartMode.label}*\n\n` +
-            "Reiniciando el bot en unos segundos.\n" +
-            "La sesion de WhatsApp se conserva, aunque puede haber una reconexion breve.",
+          text: buildUpdateMessage(
+            "UPDATE OK",
+            [
+              `• Metodo: *${updateResult.methodLabel}*`,
+              `• Origen: *${updateResult.repoLabel}*`,
+              `• ${summary}`,
+              `• ${changedSummary}`,
+              `• ${depsSummary}`,
+              `• ${updateResult.stashSummary}`,
+              `• Detalle: ${updateResult.detailLine}`,
+              ...(updateResult.fallbackNote ? [`• ${updateResult.fallbackNote}`] : []),
+              `• Reinicio: *${restartMode.label}*`,
+            ],
+            "Reiniciando el bot en unos segundos.\nLa sesion de WhatsApp se conserva, aunque puede haber una reconexion breve."
+          ),
           ...global.channelInfo,
         },
         quoted
@@ -1440,18 +1473,21 @@ export default {
         await sock.sendMessage(
           from,
           {
-            text:
-              "*UPDATE OK*\n\n" +
-              `Metodo: *${updateResult.methodLabel}*\n` +
-              `Origen: *${updateResult.repoLabel}*\n` +
-              `${summary}\n` +
-              `${changedSummary}\n` +
-              `${depsSummary}\n` +
-              `${updateResult.stashSummary}\n` +
-              `Detalle: ${updateResult.detailLine}\n` +
-              `${updateResult.fallbackNote ? `${updateResult.fallbackNote}\n` : ""}` +
-              "Aplicacion: *reinicio manual requerido*\n\n" +
-              "Bloquee el reinicio interno para no tumbar tu servidor. Reinicia manualmente cuando quieras cargar el codigo nuevo.",
+            text: buildUpdateMessage(
+              "UPDATE OK",
+              [
+                `• Metodo: *${updateResult.methodLabel}*`,
+                `• Origen: *${updateResult.repoLabel}*`,
+                `• ${summary}`,
+                `• ${changedSummary}`,
+                `• ${depsSummary}`,
+                `• ${updateResult.stashSummary}`,
+                `• Detalle: ${updateResult.detailLine}`,
+                ...(updateResult.fallbackNote ? [`• ${updateResult.fallbackNote}`] : []),
+                "• Aplicacion: *reinicio manual requerido*",
+              ],
+              "Bloquee el reinicio interno para no tumbar tu servidor. Reinicia manualmente cuando quieras cargar el codigo nuevo."
+            ),
             ...global.channelInfo,
           },
           quoted
@@ -1462,9 +1498,9 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text:
-            "*ERROR UPDATE*\n\n" +
+          text: buildUpdateMessage("ERROR UPDATE", [
             `${error?.message || "No pude actualizar el bot."}`,
+          ]),
           ...global.channelInfo,
         },
         quoted
