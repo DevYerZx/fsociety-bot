@@ -25,8 +25,8 @@ const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
-const QUALITY_PATTERN = /^(720p|360p|240p|best|hd|sd|\d{3,4}p?)$/i;
-const QUALITY_OPTIONS = ["720p", "360p", "240p"];
+const QUALITY_PATTERN = /^(1080p|720p|360p|240p|best|hd|sd|\d{3,4}p?)$/i;
+const QUALITY_OPTIONS = ["1080p", "720p", "360p", "240p"];
 
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -85,11 +85,12 @@ function formatDuration(value = "") {
 function normalizeQuality(value) {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return DEFAULT_QUALITY;
-  if (text === "hd") return "720p";
+  if (text === "hd") return "1080p";
   if (text === "sd") return "360p";
-  if (text === "best") return "720p";
+  if (text === "best") return "1080p";
   const match = text.match(/(\d{3,4})/);
   const numeric = Number(match?.[1] || 0);
+  if (numeric >= 1080) return "1080p";
   if (numeric >= 720) return "720p";
   if (numeric >= 360) return "360p";
   return "240p";
@@ -395,69 +396,29 @@ async function downloadRemoteMp4(remoteUrl, preferredName) {
   };
 }
 
-async function sendVideoPreview(sock, from, quoted, data) {
-  const thumbBuffer = await getBuffer(data.thumbnail);
+function buildResultCaption(data, deliveryLabel) {
+  const requested = normalizeQuality(data.requestedQuality || data.quality || DEFAULT_QUALITY);
+  const delivered = cleanText(data.quality || DEFAULT_QUALITY);
+  const requestedLabel = requested.toUpperCase();
+  const deliveredLabel = delivered.toUpperCase();
 
-  const caption = [
-    "╭━━━〔 🎬 *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VISTA PREVIA DEL VIDEO*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || "YouTube Video", 75)}`,
-    "┃",
-    `┃ ⏱️ *Duración:* ${formatDuration(data.duration)}`,
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    data.author ? `┃ 👤 *Canal:* ${clipText(data.author, 40)}` : null,
-    `┃ 🚀 *Estado:* ${data.cached ? "En caché" : "Procesando"}`,
-    "┃",
-    "┃ ⌛ *Preparando tu video...*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  return [
+    "🎬 *YTMP4DL*",
+    `• *Video:* ${clipText(data.title || data.fileName || "YouTube Video", 80)}`,
+    data.author ? `• *Canal:* ${clipText(data.author, 44)}` : null,
+    data.duration ? `• *Duración:* ${formatDuration(data.duration)}` : null,
+    `• *Pedido:* ${requestedLabel}`,
+    `• *Entregado:* ${deliveredLabel}`,
+    requestedLabel !== deliveredLabel ? "• *Nota:* se ajustó a una calidad menor compatible." : null,
+    `• *Entrega:* ${deliveryLabel}`,
   ]
     .filter(Boolean)
     .join("\n");
-
-  if (thumbBuffer) {
-    return await sock.sendMessage(
-      from,
-      {
-        image: thumbBuffer,
-        caption,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-  }
-
-  return await sock.sendMessage(
-    from,
-    {
-      text: caption,
-      ...global.channelInfo,
-    },
-    quoted
-  );
 }
 
 async function sendRemoteMp4(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
-
-  const caption = [
-    "╭━━━〔 ✅ *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VIDEO LISTO PARA VER*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || data.fileName, 75)}`,
-    "┃",
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    `┃ ⚡ *Entrega:* ${data.cached ? "Caché rápida" : "Directa"}`,
-    "┃",
-    "┃ 🍿 *Disfrútalo*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const caption = buildResultCaption(data, data.cached ? "rápida" : "directa");
 
   try {
     await sock.sendMessage(
@@ -493,21 +454,9 @@ async function sendRemoteMp4(sock, from, quoted, data) {
 
 async function sendLocalMp4(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
-
   const caption = [
-    "╭━━━〔 ✅ *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VIDEO LISTO PARA VER*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || data.fileName, 75)}`,
-    "┃",
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    data.size ? `┃ 💾 *Peso:* ${humanBytes(data.size)}` : null,
-    "┃ 🛟 *Entrega:* Respaldo local",
-    "┃",
-    "┃ 🍿 *Disfrútalo*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    buildResultCaption(data, "respaldo local"),
+    data.size ? `• *Peso:* ${humanBytes(data.size)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -552,7 +501,7 @@ function buildQualityRows(prefix, resolved, baseQuery = "") {
     header: `${index + 1}`,
     title: `${quality} - MP4`,
     description: clipText(
-      `${resolved.title || "YouTube Video"} | ${resolved.duration || "N/D"} | fallback menor si falla`,
+      `${resolved.title || "YouTube Video"} | ${resolved.duration || "N/D"} | baja sola si falla`,
       72
     ),
     id: `${prefix}ytmp4dl ${quality} ${queryText}`.trim(),
@@ -562,46 +511,21 @@ function buildQualityRows(prefix, resolved, baseQuery = "") {
 async function sendQualityPicker(sock, from, quoted, ctx, resolved, rawQuery) {
   const prefix = cleanText(ctx?.usedPrefix || ctx?.prefix || ".");
   const rows = buildQualityRows(prefix, resolved, rawQuery);
-  const thumbBuffer = await getBuffer(resolved.thumbnail);
-
   const text = [
-    "╭━━━〔 🎬 *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *ELIGE LA CALIDAD*",
-    "┃",
-    `┃ 🏷️ ${clipText(resolved.title || "YouTube Video", 52)}`,
-    `┃ ⏱️ ${formatDuration(resolved.duration)}`,
-    "┃",
-    "┃ Si una calidad falla,",
-    "┃ intentaré una menor automáticamente.",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ].join("\n");
-
-  if (thumbBuffer) {
-    await sock.sendMessage(
-      from,
-      {
-        image: thumbBuffer,
-        caption: text,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-  } else {
-    await sock.sendMessage(
-      from,
-      {
-        text,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-  }
+    "🎬 *YTMP4DL*",
+    `• *Video:* ${clipText(resolved.title || "YouTube Video", 72)}`,
+    resolved.author ? `• *Canal:* ${clipText(resolved.author, 42)}` : null,
+    resolved.duration ? `• *Duración:* ${formatDuration(resolved.duration)}` : null,
+    "• *Calidades:* 1080p, 720p, 360p, 240p",
+    "• *Fallback:* baja sola si una calidad falla",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const interactivePayload = {
-    text: `Selecciona la calidad para ${clipText(resolved.title || "YouTube Video", 64)}`,
+    text,
     title: "🎬 YTMP4DL",
-    subtitle: "Video con selector de calidad",
+    subtitle: "Elige una calidad",
     footer: "DVYER API",
     interactiveButtons: [
       {
@@ -685,17 +609,12 @@ export default {
           from,
           {
             text: [
-              "╭━━━〔 🎬 *DVYER PLAYER* 〕━━━⬣",
-              "┃",
-              "┃ ✦ *USO DEL COMANDO*",
-              "┃",
-              "┃ 📌 *.ytmp4dl <link o nombre>*",
-              "┃ 📌 *.ytmp4dl 720p <link o nombre>*",
-              "┃",
-              "┃ 🎚️ *Calidades:* 720p, 360p, 240p",
-              "┃ 🔎 *Busca por nombre:* sí",
-              "┃ 🛟 *Fallback:* baja a menor calidad si falla",
-              "╰━━━━━━━━━━━━━━━━━━━━⬣",
+              "🎬 *YTMP4DL*",
+              "• *.ytmp4dl <link o nombre>*",
+              "• *.ytmp4dl 1080p <link o nombre>*",
+              "• *Calidades:* 1080p, 720p, 360p, 240p",
+              "• *Busca por nombre:* sí",
+              "• *Fallback:* baja sola si una calidad falla",
             ].join("\n"),
             ...global.channelInfo,
           },
@@ -716,20 +635,10 @@ export default {
       const qualitiesToTry = buildFallbackQualities(quality);
       let apiData = null;
       let lastError = null;
+      let requestedQualityUsed = normalizeQuality(quality);
 
       for (let index = 0; index < qualitiesToTry.length; index += 1) {
         const currentQuality = qualitiesToTry[index];
-
-        if (index > 0) {
-          await sock.sendMessage(
-            from,
-            {
-              text: `⚠️ La calidad anterior falló. Intentaré con una menor: *${currentQuality}*`,
-              ...global.channelInfo,
-            },
-            quoted
-          );
-        }
 
         try {
           apiData = await runWithProviderCircuit(
@@ -750,6 +659,7 @@ export default {
               },
             }
           );
+          requestedQualityUsed = currentQuality;
           break;
         } catch (error) {
           lastError = error;
@@ -760,34 +670,19 @@ export default {
         throw lastError || new Error("No se pudo obtener el video.");
       }
 
-      await sendVideoPreview(sock, from, quoted, {
-        title: apiData.title || resolved.title,
-        duration: resolved.duration,
-        quality: apiData.quality || quality,
-        thumbnail: apiData.thumbnail || resolved.thumbnail,
-        author: resolved.author,
-        cached: apiData.cached,
-      });
-
       try {
         await sendRemoteMp4(sock, from, quoted, {
           ...apiData,
           title: apiData.title || resolved.title,
+          duration: resolved.duration,
           quality: apiData.quality || quality,
           thumbnail: apiData.thumbnail || resolved.thumbnail,
+          author: resolved.author,
+          requestedQuality: requestedQualityUsed,
         });
         sentSuccessfully = true;
         return;
       } catch {}
-
-      await sock.sendMessage(
-        from,
-        {
-          text: "⌛ El envío rápido falló. Usando respaldo local...",
-          ...global.channelInfo,
-        },
-        quoted
-      );
 
       const downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName);
       tempPath = downloaded.tempPath;
@@ -795,8 +690,11 @@ export default {
       await sendLocalMp4(sock, from, quoted, {
         ...downloaded,
         title: apiData.title || resolved.title,
+        duration: resolved.duration,
         quality: apiData.quality || quality,
         thumbnail: apiData.thumbnail || resolved.thumbnail,
+        author: resolved.author,
+        requestedQuality: requestedQualityUsed,
       });
 
       sentSuccessfully = true;
