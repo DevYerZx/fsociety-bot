@@ -9,6 +9,7 @@ import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
 import { buildDvyerUrl, withDvyerApiKey } from "../../lib/api-manager.js";
+import { bindAbort, throwIfAborted } from "../../lib/command-abort.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import {
   buildRateIdentity,
@@ -19,7 +20,9 @@ import {
 
 const API_YTMP4_URL = buildDvyerUrl("/ytmp4");
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
-const REQUEST_TIMEOUT = 15 * 60 * 1000;
+const API_REQUEST_TIMEOUT_MS = 20_000;
+const REMOTE_DOWNLOAD_TIMEOUT_MS = 70_000;
+const THUMB_TIMEOUT_MS = 15_000;
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
@@ -33,6 +36,7 @@ const PROVIDER_NAME = "dvyer_ytmp4";
 const TMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
 const DEFAULT_QUALITY = "360p";
 const FALLBACK_QUALITIES = ["360p", "240p", "144p"];
+const COMMAND_TIMEOUT_MS = 165_000;
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -105,7 +109,7 @@ async function getBuffer(url) {
   try {
     const response = await axios.get(target, {
       responseType: "arraybuffer",
-      timeout: 20_000,
+      timeout: THUMB_TIMEOUT_MS,
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
@@ -295,9 +299,9 @@ async function resolveInputToUrl(input) {
   };
 }
 
-async function getYtmp4Data(videoUrl, quality, fast = true) {
+async function getYtmp4Data(videoUrl, quality, fast = true, signal = null) {
   const response = await axios.get(API_YTMP4_URL, {
-    timeout: REQUEST_TIMEOUT,
+    timeout: API_REQUEST_TIMEOUT_MS,
     params: {
       mode: "link",
       url: videoUrl,
@@ -305,6 +309,7 @@ async function getYtmp4Data(videoUrl, quality, fast = true) {
       fast,
       ...withDvyerApiKey(),
     },
+    signal,
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
@@ -350,12 +355,13 @@ async function getYtmp4Data(videoUrl, quality, fast = true) {
   };
 }
 
-async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true) {
+async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true, signal = null) {
   let lastError = null;
 
   for (const quality of uniqueQualities(preferredQuality)) {
+    throwIfAborted(signal);
     try {
-      const data = await getYtmp4Data(videoUrl, quality, fast);
+      const data = await getYtmp4Data(videoUrl, quality, fast, signal);
       return { ...data, qualityUsed: quality };
     } catch (error) {
       lastError = error;
@@ -365,19 +371,21 @@ async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true)
   throw lastError || new Error("No se pudo obtener el video.");
 }
 
-async function downloadRemoteMp4(remoteUrl, preferredName) {
+async function downloadRemoteMp4(remoteUrl, preferredName, signal = null) {
   await ensureTmpDir();
+  throwIfAborted(signal);
 
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp4.mp4`);
 
   const response = await axios.get(remoteUrl, {
     responseType: "stream",
-    timeout: REQUEST_TIMEOUT,
+    timeout: REMOTE_DOWNLOAD_TIMEOUT_MS,
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
       Accept: "*/*",
     },
+    signal,
     httpAgent: HTTP_AGENT,
     httpsAgent: HTTPS_AGENT,
     maxRedirects: 5,
@@ -395,6 +403,16 @@ async function downloadRemoteMp4(remoteUrl, preferredName) {
     throw new Error(`El video pesa ${humanBytes(contentLength)} y supera el limite del bot.`);
   }
 
+  const writeStream = fs.createWriteStream(outputPath);
+  const unbindAbort = bindAbort(signal, () => {
+    try {
+      response.data?.destroy?.(new Error("Descarga cancelada."));
+    } catch {}
+    try {
+      writeStream.destroy?.(new Error("Descarga cancelada."));
+    } catch {}
+  });
+
   let downloaded = 0;
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
@@ -404,11 +422,13 @@ async function downloadRemoteMp4(remoteUrl, preferredName) {
   });
 
   try {
-    await pipeline(response.data, fs.createWriteStream(outputPath));
+    await pipeline(response.data, writeStream);
   } catch (error) {
+    unbindAbort();
     await deleteFileSafe(outputPath);
     throw error;
   }
+  unbindAbort();
 
   const stat = await fsp.stat(outputPath).catch(() => null);
   if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
@@ -578,11 +598,13 @@ async function sendLocalMp4(sock, from, quoted, data) {
 export default {
   command: ["ytmp4", "ytv", "ytvideo"],
   categoria: "descarga",
+  timeoutMs: COMMAND_TIMEOUT_MS,
 
   run: async (ctx) => {
     const { sock, from } = ctx;
     const msg = ctx.m || ctx.msg || null;
     const quoted = msg?.key ? { quoted: msg } : undefined;
+    const abortSignal = ctx.abortSignal || null;
 
     let tempPath = null;
     let downloadCharge = null;
@@ -590,6 +612,7 @@ export default {
 
     try {
       cleanupOldFiles().catch(() => {});
+      throwIfAborted(abortSignal);
 
       const rawInput = resolveRawInput(ctx);
       const { quality, query, fast } = extractQualityAndQuery(rawInput);
@@ -621,6 +644,7 @@ export default {
       }
 
       const resolved = await resolveInputToUrl(query || rawInput);
+      throwIfAborted(abortSignal);
 
       if (!resolved?.url) {
         return await sock.sendMessage(
@@ -652,7 +676,7 @@ export default {
 
       const apiData = await runWithProviderCircuit(
         PROVIDER_NAME,
-        () => getYtmp4DataWithFallback(resolved.url, quality || DEFAULT_QUALITY, fast),
+        () => getYtmp4DataWithFallback(resolved.url, quality || DEFAULT_QUALITY, fast, abortSignal),
         {
           failureThreshold: 4,
           cooldownMs: 90_000,
@@ -679,6 +703,7 @@ export default {
       });
 
       try {
+        throwIfAborted(abortSignal);
         await sendRemoteMp4(sock, from, quoted, {
           ...apiData,
           title: apiData.title || resolved.title,
@@ -698,9 +723,11 @@ export default {
         quoted
       );
 
-      const downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName);
+      throwIfAborted(abortSignal);
+      const downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName, abortSignal);
       tempPath = downloaded.tempPath;
 
+      throwIfAborted(abortSignal);
       await sendLocalMp4(sock, from, quoted, {
         ...downloaded,
         title: apiData.title || resolved.title,
@@ -721,7 +748,9 @@ export default {
 
       if (!sentSuccessfully) {
         const shownError =
-          error?.code === "PROVIDER_CIRCUIT_OPEN"
+          abortSignal?.aborted
+            ? "La descarga demoro demasiado y fue cancelada. Intenta con otro video o usa .ytmp4 nofast."
+            : error?.code === "PROVIDER_CIRCUIT_OPEN"
             ? String(error?.message || "Servicio temporalmente no autorizado para video.")
             : String(error?.message || "No se pudo preparar el MP4.");
 
