@@ -22,16 +22,29 @@ const API_YTMP4_URL = buildDvyerUrl("/ytmp4");
 const DVYER_API_BASE_URL = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
 
-const API_REQUEST_TIMEOUT_MS = 20_000;
-const REMOTE_DOWNLOAD_TIMEOUT_MS = 70_000;
+/**
+ * Antes estaba en 20_000 y por eso salía:
+ * ❌ timeout of 20000ms exceeded
+ */
+const API_REQUEST_TIMEOUT_MS = 90_000;
+const REMOTE_DOWNLOAD_TIMEOUT_MS = 120_000;
 const THUMB_TIMEOUT_MS = 15_000;
 
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
 
-const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
-const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
+const HTTP_AGENT = new http.Agent({
+  keepAlive: true,
+  maxSockets: 20,
+  maxFreeSockets: 10,
+});
+
+const HTTPS_AGENT = new https.Agent({
+  keepAlive: true,
+  maxSockets: 20,
+  maxFreeSockets: 10,
+});
 
 const QUALITY_PATTERN = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
 
@@ -42,7 +55,12 @@ const TMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
 
 const DEFAULT_QUALITY = "360p";
 const FALLBACK_QUALITIES = ["360p", "240p", "144p"];
-const COMMAND_TIMEOUT_MS = 165_000;
+
+/**
+ * Antes estaba en 165_000.
+ * Lo subimos para que el comando no se corte antes de que la API responda.
+ */
+const COMMAND_TIMEOUT_MS = 240_000;
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -341,60 +359,72 @@ async function resolveInputToUrl(input) {
 }
 
 async function getYtmp4Data(videoUrl, quality, fast = true, signal = null) {
-  const response = await axios.get(API_YTMP4_URL, {
-    timeout: API_REQUEST_TIMEOUT_MS,
-    params: {
-      mode: "link",
-      url: videoUrl,
-      quality,
-      fast,
-      ...withDvyerApiKey(),
-    },
-    signal,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "application/json",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
-    maxRedirects: 5,
-    validateStatus: () => true,
-  });
+  try {
+    const response = await axios.get(API_YTMP4_URL, {
+      timeout: API_REQUEST_TIMEOUT_MS,
+      params: {
+        mode: "link",
+        url: videoUrl,
+        quality,
+        fast,
+        ...withDvyerApiKey(),
+      },
+      signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+        Accept: "application/json",
+      },
+      httpAgent: HTTP_AGENT,
+      httpsAgent: HTTPS_AGENT,
+      maxRedirects: 5,
+      validateStatus: () => true,
+    });
 
-  if (response.status >= 400 || !response.data?.ok) {
-    throw new Error(
-      response.data?.detail ||
-        response.data?.error?.message ||
-        response.data?.message ||
-        `HTTP ${response.status}`
-    );
+    if (response.status >= 400 || !response.data?.ok) {
+      throw new Error(
+        response.data?.detail ||
+          response.data?.error?.message ||
+          response.data?.message ||
+          `HTTP ${response.status}`
+      );
+    }
+
+    const data = response.data;
+
+    const remoteUrl =
+      data.direct_url ||
+      data.provider_direct_url ||
+      data.stream_url_full ||
+      data.download_url_full ||
+      data.url;
+
+    if (!remoteUrl) {
+      throw new Error("La API no devolvió una URL de descarga válida.");
+    }
+
+    return {
+      remoteUrl,
+      title: cleanText(data.title || "YouTube Video"),
+      fileName: normalizeMp4Name(data.filename || data.title || "youtube-video.mp4"),
+      quality: cleanText(data.quality || data.quality_requested || quality || DEFAULT_QUALITY),
+      thumbnail: cleanText(data.thumbnail || ""),
+      cached: Boolean(data.cached),
+      availableQualities: Array.isArray(data.available_qualities) ? data.available_qualities : [],
+      expiresIn: Number(data.expires_in_hint_seconds || 0),
+      request: data.request || {},
+    };
+  } catch (error) {
+    const text = String(error?.message || error || "").toLowerCase();
+
+    if (error?.code === "ECONNABORTED" || text.includes("timeout")) {
+      throw new Error(
+        "La API tardó demasiado en responder. Intenta otra vez o usa una calidad menor como 240p."
+      );
+    }
+
+    throw error;
   }
-
-  const data = response.data;
-
-  const remoteUrl =
-    data.direct_url ||
-    data.provider_direct_url ||
-    data.stream_url_full ||
-    data.download_url_full ||
-    data.url;
-
-  if (!remoteUrl) {
-    throw new Error("La API no devolvió una URL de descarga válida.");
-  }
-
-  return {
-    remoteUrl,
-    title: cleanText(data.title || "YouTube Video"),
-    fileName: normalizeMp4Name(data.filename || data.title || "youtube-video.mp4"),
-    quality: cleanText(data.quality || data.quality_requested || quality || DEFAULT_QUALITY),
-    thumbnail: cleanText(data.thumbnail || ""),
-    cached: Boolean(data.cached),
-    availableQualities: Array.isArray(data.available_qualities) ? data.available_qualities : [],
-    expiresIn: Number(data.expires_in_hint_seconds || 0),
-    request: data.request || {},
-  };
 }
 
 async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true, signal = null) {
@@ -645,6 +675,7 @@ export default {
               "┃ ✦ *USO DEL COMANDO*",
               "┃",
               "┃ 📌 *.ytmp4 <link o nombre>*",
+              "┃ 📌 *.ytmp4 240p <link o nombre>*",
               "┃ 📌 *.ytmp4 fast <link o nombre>*",
               "┃ 📌 *.ytmp4 nofast <link o nombre>*",
               "┃",
@@ -738,8 +769,12 @@ export default {
       }
 
       if (!sentSuccessfully) {
+        const errorText = String(error?.message || error || "").toLowerCase();
+
         const shownError = abortSignal?.aborted
-          ? "La descarga demoro demasiado y fue cancelada. Intenta con otro video o usa .ytmp4 nofast."
+          ? "La descarga demoró demasiado y fue cancelada. Intenta con otro video corto o usa otra calidad."
+          : error?.code === "ECONNABORTED" || errorText.includes("timeout")
+          ? "La API tardó demasiado en responder. Intenta otra vez o usa una calidad menor como 240p."
           : error?.code === "PROVIDER_CIRCUIT_OPEN"
           ? String(error?.message || "Servicio temporalmente no autorizado para video.")
           : String(error?.message || "No se pudo preparar el MP4.");
