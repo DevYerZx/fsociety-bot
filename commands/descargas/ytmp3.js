@@ -32,6 +32,9 @@ const DVYER_API_BASE_URL = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
 
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
+const API_LINK_TIMEOUT = 90_000;
+const PROBE_TIMEOUT = 18_000;
+
 const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 80 * 1024 * 1024;
 const MIN_AUDIO_BYTES = 20 * 1024;
@@ -43,14 +46,14 @@ const PROVIDER_NAME = "dvyer_ytmp3";
 
 const HTTP_AGENT = new http.Agent({
   keepAlive: true,
-  maxSockets: 20,
-  maxFreeSockets: 10,
+  maxSockets: 30,
+  maxFreeSockets: 15,
 });
 
 const HTTPS_AGENT = new https.Agent({
   keepAlive: true,
-  maxSockets: 20,
-  maxFreeSockets: 10,
+  maxSockets: 30,
+  maxFreeSockets: 15,
 });
 
 const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
@@ -142,7 +145,7 @@ function humanBytes(bytes = 0) {
 function formatDuration(seconds = 0) {
   const total = Math.max(0, Math.floor(Number(seconds || 0)));
 
-  if (!total) return "N/D";
+  if (!total) return "";
 
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -282,6 +285,29 @@ function extractApiError(data, status) {
   );
 }
 
+function cleanErrorText(error) {
+  let text = String(error?.message || error || "No se pudo preparar el MP3.");
+
+  try {
+    const parsed = JSON.parse(text);
+    text = parsed?.detail || parsed?.message || text;
+  } catch {}
+
+  if (text.includes("403")) {
+    return "El enlace de audio expiró o fue bloqueado. Intenta otra vez.";
+  }
+
+  if (text.includes("404")) {
+    return "No se encontró el audio o el enlace ya no está disponible.";
+  }
+
+  if (text.toLowerCase().includes("timeout")) {
+    return "La descarga tardó demasiado. Intenta otra vez.";
+  }
+
+  return text;
+}
+
 function resolveAbsoluteUrl(value, baseUrl) {
   const raw = String(value || "").trim();
 
@@ -299,20 +325,98 @@ function resolveAbsoluteUrl(value, baseUrl) {
   return raw;
 }
 
+function scoreUrl(url = "") {
+  const text = String(url || "").toLowerCase();
+
+  if (!text) return 0;
+
+  if (text.includes("dv-yer-api.online") || text.includes("dvyer-api.onrender.com")) {
+    return 100;
+  }
+
+  if (text.includes("/download/stream/")) {
+    return 90;
+  }
+
+  if (text.includes("googlevideo.com")) {
+    return 40;
+  }
+
+  return 60;
+}
+
 function pickDownloadUrl(data, baseUrl) {
   const candidates = [
-    data?.direct_url,
     data?.download_url_full,
     data?.stream_url_full,
-    data?.provider_direct_url,
+    data?.direct_url,
     data?.download_url,
     data?.stream_url,
     data?.url,
-  ];
+    data?.provider_direct_url,
+  ]
+    .map((item) => resolveAbsoluteUrl(item, baseUrl))
+    .filter(Boolean)
+    .sort((a, b) => scoreUrl(b) - scoreUrl(a));
 
-  for (const item of candidates) {
-    const resolved = resolveAbsoluteUrl(item, baseUrl);
-    if (resolved) return resolved;
+  return candidates[0] || "";
+}
+
+function pickAllDownloadUrls(data, baseUrl) {
+  const candidates = [
+    data?.download_url_full,
+    data?.stream_url_full,
+    data?.direct_url,
+    data?.download_url,
+    data?.stream_url,
+    data?.url,
+    data?.provider_direct_url,
+  ]
+    .map((item) => resolveAbsoluteUrl(item, baseUrl))
+    .filter(Boolean);
+
+  return [...new Set(candidates)].sort((a, b) => scoreUrl(b) - scoreUrl(a));
+}
+
+async function probeRemoteUrl(url) {
+  const target = String(url || "").trim();
+  if (!target) return false;
+
+  let response = null;
+
+  try {
+    response = await axios.get(target, {
+      responseType: "stream",
+      timeout: PROBE_TIMEOUT,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+        Accept: "*/*",
+        Range: "bytes=0-4095",
+      },
+      httpAgent: HTTP_AGENT,
+      httpsAgent: HTTPS_AGENT,
+      maxRedirects: 5,
+      validateStatus: () => true,
+    });
+
+    response.data?.destroy?.();
+
+    return response.status >= 200 && response.status < 400;
+  } catch {
+    try {
+      response?.data?.destroy?.();
+    } catch {}
+    return false;
+  }
+}
+
+async function pickWorkingUrlFromData(data, baseUrl) {
+  const urls = pickAllDownloadUrls(data, baseUrl);
+
+  for (const url of urls) {
+    const ok = await probeRemoteUrl(url);
+    if (ok) return url;
   }
 
   return "";
@@ -351,7 +455,7 @@ async function resolveInputToUrl(input) {
 
 async function getYtmp3Data(videoUrl) {
   const response = await axios.get(API_YTMP3_URL, {
-    timeout: REQUEST_TIMEOUT,
+    timeout: API_LINK_TIMEOUT,
     params: {
       mode: "link",
       url: videoUrl,
@@ -378,10 +482,10 @@ async function getYtmp3Data(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrl = pickDownloadUrl(data, API_YTMP3_URL);
+  const remoteUrl = await pickWorkingUrlFromData(data, API_YTMP3_URL);
 
   if (!remoteUrl) {
-    throw new Error("La API /ytmp3 no devolvió link válido.");
+    throw new Error("La API /ytmp3 devolvió enlaces bloqueados o expirados.");
   }
 
   return {
@@ -391,7 +495,7 @@ async function getYtmp3Data(videoUrl) {
     thumbnail: data.thumbnail || null,
     provider: data.provider || "dvyer",
     sourceApi: "ytmp3",
-    quality: data.quality || "MP3",
+    quality: data.quality || "",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
   };
@@ -399,7 +503,7 @@ async function getYtmp3Data(videoUrl) {
 
 async function getYtmp3DlData(videoUrl) {
   const response = await axios.get(API_YTMP3DL_URL, {
-    timeout: REQUEST_TIMEOUT,
+    timeout: API_LINK_TIMEOUT,
     params: {
       mode: "link",
       url: videoUrl,
@@ -427,10 +531,10 @@ async function getYtmp3DlData(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrl = pickDownloadUrl(data, API_YTMP3DL_URL);
+  const remoteUrl = await pickWorkingUrlFromData(data, API_YTMP3DL_URL);
 
   if (!remoteUrl) {
-    throw new Error("La API /ytmp3dl no devolvió link válido.");
+    throw new Error("La API /ytmp3dl devolvió enlaces bloqueados o expirados.");
   }
 
   return {
@@ -440,7 +544,7 @@ async function getYtmp3DlData(videoUrl) {
     thumbnail: data.thumbnail || null,
     provider: data.provider || "vidssave",
     sourceApi: "ytmp3dl",
-    quality: data.quality || "LOW",
+    quality: data.quality || "",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
   };
@@ -448,15 +552,8 @@ async function getYtmp3DlData(videoUrl) {
 
 async function getBestYtmp3Data(videoUrl) {
   const tasks = [
-    getYtmp3Data(videoUrl).then((data) => ({
-      ...data,
-      sourceApi: data.sourceApi || "ytmp3",
-    })),
-
-    getYtmp3DlData(videoUrl).then((data) => ({
-      ...data,
-      sourceApi: data.sourceApi || "ytmp3dl",
-    })),
+    getYtmp3Data(videoUrl),
+    getYtmp3DlData(videoUrl),
   ];
 
   try {
@@ -465,11 +562,11 @@ async function getBestYtmp3Data(videoUrl) {
     const errors = error?.errors || [];
 
     const errorText = errors
-      .map((err) => String(err?.message || err))
+      .map((err) => cleanErrorText(err))
       .filter(Boolean)
       .join(" | ");
 
-    throw new Error(errorText || "Ninguna API pudo generar el MP3.");
+    throw new Error(errorText || "Ninguna API pudo generar un MP3 válido.");
   }
 }
 
@@ -565,10 +662,63 @@ async function requestRemoteYtmp3Stream(remoteUrl) {
 
   if (response.status >= 400) {
     const errorText = await readStreamToText(response.data).catch(() => "");
-    throw new Error(extractApiError({ message: errorText }, response.status));
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(errorText);
+    } catch {}
+
+    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
   }
 
   return response;
+}
+
+async function saveResponseToFile(response, outputPath, fallbackName) {
+  const contentLength = Number(response.headers?.["content-length"] || 0);
+
+  if (contentLength > MAX_AUDIO_BYTES) {
+    throw new Error(`El MP3 pesa ${humanBytes(contentLength)} y supera el límite del bot.`);
+  }
+
+  let downloaded = 0;
+
+  response.data.on("data", (chunk) => {
+    downloaded += chunk.length;
+
+    if (downloaded > MAX_AUDIO_BYTES) {
+      response.data.destroy(
+        new Error("El MP3 es demasiado grande para enviarlo por WhatsApp.")
+      );
+    }
+  });
+
+  try {
+    await pipeline(response.data, fs.createWriteStream(outputPath));
+  } catch (error) {
+    await deleteFileSafe(outputPath);
+    throw error;
+  }
+
+  const stat = await fsp.stat(outputPath).catch(() => null);
+
+  if (!stat?.size || stat.size < MIN_AUDIO_BYTES) {
+    await deleteFileSafe(outputPath);
+    throw new Error("El archivo MP3 descargado es inválido.");
+  }
+
+  const headerName = parseContentDispositionFileName(
+    response.headers?.["content-disposition"]
+  );
+
+  const fileName = normalizeMp3Name(headerName || fallbackName || "youtube-audio.mp3");
+
+  return {
+    tempPath: outputPath,
+    fileName,
+    size: stat.size,
+    contentType: response.headers?.["content-type"] || "audio/mpeg",
+  };
 }
 
 async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null) {
@@ -576,76 +726,39 @@ async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = nu
 
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
 
-  const saveResponseStream = async (response, fallbackName) => {
-    const contentLength = Number(response.headers?.["content-length"] || 0);
+  const attempts = [
+    async () => {
+      if (!knownLinkData?.remoteUrl) throw new Error("No hay enlace remoto conocido.");
+      const response = await requestRemoteYtmp3Stream(knownLinkData.remoteUrl);
+      return await saveResponseToFile(response, outputPath, knownLinkData.fileName || preferredName);
+    },
+    async () => {
+      const response = await requestYtmp3Stream(videoUrl);
+      return await saveResponseToFile(response, outputPath, preferredName);
+    },
+    async () => {
+      const response = await requestYtmp3DlStream(videoUrl);
+      return await saveResponseToFile(response, outputPath, preferredName);
+    },
+    async () => {
+      const linkData = await getBestYtmp3Data(videoUrl);
+      const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
+      return await saveResponseToFile(response, outputPath, linkData.fileName || preferredName);
+    },
+  ];
 
-    if (contentLength > MAX_AUDIO_BYTES) {
-      throw new Error(`El MP3 pesa ${humanBytes(contentLength)} y supera el límite del bot.`);
-    }
+  const errors = [];
 
-    let downloaded = 0;
-
-    response.data.on("data", (chunk) => {
-      downloaded += chunk.length;
-
-      if (downloaded > MAX_AUDIO_BYTES) {
-        response.data.destroy(
-          new Error("El MP3 es demasiado grande para enviarlo por WhatsApp.")
-        );
-      }
-    });
-
+  for (const attempt of attempts) {
     try {
-      await pipeline(response.data, fs.createWriteStream(outputPath));
+      return await attempt();
     } catch (error) {
+      errors.push(cleanErrorText(error));
       await deleteFileSafe(outputPath);
-      throw error;
     }
-
-    const stat = await fsp.stat(outputPath).catch(() => null);
-
-    if (!stat?.size || stat.size < MIN_AUDIO_BYTES) {
-      await deleteFileSafe(outputPath);
-      throw new Error("El archivo MP3 descargado es inválido.");
-    }
-
-    const headerName = parseContentDispositionFileName(
-      response.headers?.["content-disposition"]
-    );
-
-    const fileName = normalizeMp3Name(headerName || fallbackName || "youtube-audio.mp3");
-
-    return {
-      tempPath: outputPath,
-      fileName,
-      size: stat.size,
-      contentType: response.headers?.["content-type"] || "audio/mpeg",
-    };
-  };
-
-  try {
-    const response = await requestYtmp3Stream(videoUrl);
-    return await saveResponseStream(response, preferredName);
-  } catch (mainStreamError) {
-    await deleteFileSafe(outputPath);
-    console.error("YTMP3 STREAM ERROR:", mainStreamError?.message || mainStreamError);
   }
 
-  try {
-    const response = await requestYtmp3DlStream(videoUrl);
-    return await saveResponseStream(response, preferredName);
-  } catch (fallbackStreamError) {
-    await deleteFileSafe(outputPath);
-    console.error("YTMP3DL STREAM ERROR:", fallbackStreamError?.message || fallbackStreamError);
-  }
-
-  const linkData = knownLinkData?.remoteUrl
-    ? knownLinkData
-    : await getBestYtmp3Data(videoUrl);
-
-  const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
-
-  return await saveResponseStream(response, linkData.fileName || preferredName);
+  throw new Error(errors.filter(Boolean).join(" | ") || "No se pudo descargar el MP3.");
 }
 
 async function react(sock, msg, emoji) {
@@ -661,35 +774,6 @@ async function react(sock, msg, emoji) {
   } catch {}
 }
 
-function buildSearchingMessage(input = "") {
-  return [
-    "╭━━〔 *🎧 FSOCIETY YTMP3* 〕━━⬣",
-    "┃ 🔎 *Buscando audio...*",
-    input ? `┃ 📌 *Pedido:* ${clipText(input, 55)}` : "",
-    "┃",
-    "┃ ⚡ *Modo:* doble API rápida",
-    "┃ 🧠 *Motor:* ytmp3 + ytmp3dl",
-    "╰━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function buildSendingMessage(data = {}) {
-  return [
-    "╭━━〔 *📤 ENVIANDO MP3* 〕━━⬣",
-    `┃ 🎵 *Título:* ${clipText(data.title || data.fileName || "YouTube MP3", 55)}`,
-    data.duration ? `┃ ⏱️ *Duración:* ${formatDuration(data.duration)}` : "",
-    data.quality ? `┃ 🎚️ *Calidad:* ${data.quality}` : "",
-    data.sourceApi ? `┃ ⚙️ *API:* ${data.sourceApi}` : "",
-    "┃",
-    "┃ 🚀 *Preparando envío por WhatsApp...*",
-    "╰━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 function buildUsageMessage() {
   return [
     "╭━━〔 *🎧 YTMP3* 〕━━⬣",
@@ -699,9 +783,25 @@ function buildUsageMessage() {
     "┃ *.ytmp3 <link o nombre>*",
     "┃",
     "┃ Ejemplo:",
-    "┃ *.ytmp3 phonk 2026*",
+    "┃ *.ytmp3 ozuna odisea*",
     "╰━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
+}
+
+function buildDownloadingCaption(data = {}) {
+  const duration = formatDuration(data.duration);
+
+  return [
+    "╭━━〔 *🎧 FSOCIETY MP3* 〕━━⬣",
+    `┃ 🎵 *Título:* ${clipText(data.title || data.fileName || "YouTube MP3", 55)}`,
+    duration ? `┃ ⏱️ *Duración:* ${duration}` : "",
+    "┃",
+    "┃ 📥 *Descargando audio...*",
+    "┃ 🚀 *Preparando envío...*",
+    "╰━━━━━━━━━━━━━━━━━━⬣",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildErrorMessage(errorText) {
@@ -712,39 +812,43 @@ function buildErrorMessage(errorText) {
   ].join("\n");
 }
 
-function buildShortCaption(data = {}) {
-  return [
-    "╭━━〔 *🎧 DVYER MP3* 〕━━⬣",
-    `┃ 🎵 *Título:* ${clipText(data.title || data.fileName || "YouTube MP3", 55)}`,
-    data.size ? `┃ 📦 *Peso:* ${humanBytes(data.size)}` : "",
-    data.duration ? `┃ ⏱️ *Duración:* ${formatDuration(data.duration)}` : "",
-    data.quality ? `┃ 🎚️ *Calidad:* ${data.quality}` : "",
-    data.sourceApi ? `┃ ⚙️ *API:* ${data.sourceApi}` : "",
-    "┃",
-    "┃ ✅ *Audio listo*",
-    "╰━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
+async function sendDownloadingImage(sock, from, quoted, data = {}) {
+  const caption = buildDownloadingCaption(data);
 
-function buildAudioContextInfo(data = {}) {
-  return {
-    externalAdReply: {
-      title: clipText(data.title || data.fileName || "YouTube MP3", 60),
-      body: data.sourceApi
-        ? `DVYER API · ${data.sourceApi}`
-        : "DVYER API",
-      sourceUrl: DVYER_API_BASE_URL,
-      thumbnailUrl: data.thumbnail || undefined,
-      mediaType: 1,
-      renderLargerThumbnail: false,
-      showAdAttribution: false,
+  if (data.thumbnail) {
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          image: { url: data.thumbnail },
+          caption,
+          ...global.channelInfo,
+        },
+        quoted
+      );
+      return;
+    } catch (error) {
+      console.error("SEND THUMBNAIL ERROR:", error?.message || error);
+    }
+  }
+
+  await sock.sendMessage(
+    from,
+    {
+      text: caption,
+      ...global.channelInfo,
     },
-  };
+    quoted
+  );
 }
 
 async function sendRemoteMp3(sock, from, quoted, data) {
+  const stillWorks = await probeRemoteUrl(data.remoteUrl);
+
+  if (!stillWorks) {
+    throw new Error("El enlace remoto expiró antes de enviarlo.");
+  }
+
   try {
     await sock.sendMessage(
       from,
@@ -753,7 +857,6 @@ async function sendRemoteMp3(sock, from, quoted, data) {
         mimetype: "audio/mpeg",
         fileName: data.fileName,
         ptt: false,
-        contextInfo: buildAudioContextInfo(data),
         ...global.channelInfo,
       },
       quoted
@@ -762,21 +865,8 @@ async function sendRemoteMp3(sock, from, quoted, data) {
     return "audio";
   } catch (error) {
     console.error("SEND REMOTE AUDIO ERROR:", error?.message || error);
+    throw error;
   }
-
-  await sock.sendMessage(
-    from,
-    {
-      document: { url: data.remoteUrl },
-      mimetype: "audio/mpeg",
-      fileName: data.fileName,
-      caption: buildShortCaption(data),
-      ...global.channelInfo,
-    },
-    quoted
-  );
-
-  return "document";
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
@@ -789,7 +879,6 @@ async function sendLocalMp3(sock, from, quoted, data) {
           mimetype: "audio/mpeg",
           fileName: data.fileName,
           ptt: false,
-          contextInfo: buildAudioContextInfo(data),
           ...global.channelInfo,
         },
         quoted
@@ -807,7 +896,6 @@ async function sendLocalMp3(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
-      caption: buildShortCaption(data),
       ...global.channelInfo,
     },
     quoted
@@ -820,7 +908,7 @@ export default {
   command: ["ytmp3", "yta", "ytaudio"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube usando doble API rápida",
+  description: "Descarga audio MP3 de YouTube con doble API rápida",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -884,15 +972,6 @@ export default {
         );
       }
 
-      await sock.sendMessage(
-        from,
-        {
-          text: buildSearchingMessage(input),
-          ...global.channelInfo,
-        },
-        quoted
-      );
-
       const resolved = await resolveInputToUrl(input);
 
       if (!resolved?.url) {
@@ -933,6 +1012,9 @@ export default {
             if (text.includes("uso:")) return false;
             if (text.includes("supera el limite")) return false;
             if (text.includes("demasiado grande")) return false;
+            if (text.includes("expiró")) return false;
+            if (text.includes("expiro")) return false;
+            if (text.includes("403")) return false;
 
             return true;
           },
@@ -944,14 +1026,7 @@ export default {
         title: apiData.title || resolved.title,
       };
 
-      await sock.sendMessage(
-        from,
-        {
-          text: buildSendingMessage(finalData),
-          ...global.channelInfo,
-        },
-        quoted
-      );
+      await sendDownloadingImage(sock, from, quoted, finalData);
 
       try {
         await sendRemoteMp3(sock, from, quoted, finalData);
@@ -959,8 +1034,8 @@ export default {
         sentSuccessfully = true;
         await react(sock, msg, "✅");
         return;
-      } catch (sendRemoteError) {
-        console.error("REMOTE SEND FINAL ERROR:", sendRemoteError?.message || sendRemoteError);
+      } catch (remoteError) {
+        console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
       }
 
       const downloaded = await downloadYtmp3Fallback(
@@ -975,8 +1050,6 @@ export default {
         ...downloaded,
         title: finalData.title || resolved.title,
         thumbnail: finalData.thumbnail || null,
-        sourceApi: finalData.sourceApi || "local",
-        quality: finalData.quality || null,
         duration: finalData.duration || 0,
       });
 
@@ -996,8 +1069,8 @@ export default {
 
       const errorText =
         error?.code === "PROVIDER_CIRCUIT_OPEN"
-          ? String(error?.message || "Servicio temporalmente no disponible para audio.")
-          : String(error?.message || "No se pudo preparar el MP3.");
+          ? "Servicio temporalmente no disponible para audio. Intenta otra vez."
+          : cleanErrorText(error);
 
       await sock.sendMessage(
         from,
