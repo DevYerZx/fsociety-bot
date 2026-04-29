@@ -8,7 +8,7 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
-import { buildDvyerUrl, withDvyerApiKey } from "../../lib/api-manager.js";
+import { buildDvyerUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import {
   buildRateIdentity,
@@ -18,6 +18,7 @@ import {
 } from "../../lib/provider-guard.js";
 
 const API_YTMP3_URL = buildDvyerUrl("/ytmp3");
+const DVYER_API_BASE_URL = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
 const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
@@ -93,6 +94,11 @@ function humanBytes(bytes = 0) {
     index += 1;
   }
   return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function clipText(value = "", max = 70) {
+  const text = cleanText(value);
+  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3))}...`;
 }
 
 function safeFileName(name) {
@@ -278,7 +284,66 @@ async function getYtmp3Data(videoUrl) {
   };
 }
 
-async function downloadYtmp3Fallback(videoUrl, preferredName) {
+async function requestYtmp3Stream(videoUrl) {
+  const response = await axios.get(API_YTMP3_URL, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    params: {
+      mode: "stream",
+      url: videoUrl,
+      ...withDvyerApiKey(),
+    },
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    let parsed = null;
+    try {
+      parsed = JSON.parse(errorText);
+    } catch {}
+    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
+  }
+
+  return response;
+}
+
+async function requestRemoteYtmp3Stream(remoteUrl) {
+  const response = await axios.get(remoteUrl, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    throw new Error(extractApiError({ message: errorText }, response.status));
+  }
+
+  return response;
+}
+
+async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null) {
   await ensureTmpDir();
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
 
@@ -321,59 +386,13 @@ async function downloadYtmp3Fallback(videoUrl, preferredName) {
   };
 
   try {
-    const response = await axios.get(API_YTMP3_URL, {
-      responseType: "stream",
-      timeout: REQUEST_TIMEOUT,
-      params: {
-        mode: "stream",
-        url: videoUrl,
-      },
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-        Accept: "*/*",
-      },
-      httpAgent: HTTP_AGENT,
-      httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400) {
-      const errorText = await readStreamToText(response.data).catch(() => "");
-      let parsed = null;
-      try {
-        parsed = JSON.parse(errorText);
-      } catch {}
-      throw new Error(extractApiError(parsed || { message: errorText }, response.status));
-    }
-
+    const response = await requestYtmp3Stream(videoUrl);
     return await saveResponseStream(response, preferredName);
   } catch (error) {
     await deleteFileSafe(outputPath);
 
-    const linkData = await getYtmp3Data(videoUrl);
-    const response = await axios.get(linkData.remoteUrl, {
-      responseType: "stream",
-      timeout: REQUEST_TIMEOUT,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-        Accept: "*/*",
-      },
-      httpAgent: HTTP_AGENT,
-      httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400) {
-      throw error;
-    }
+    const linkData = knownLinkData?.remoteUrl ? knownLinkData : await getYtmp3Data(videoUrl);
+    const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
 
     return await saveResponseStream(response, linkData.fileName || preferredName);
   }
@@ -391,6 +410,29 @@ async function react(sock, msg, emoji) {
   } catch {}
 }
 
+function buildShortCaption(data = {}) {
+  return [
+    "🎧 *DVYER MP3*",
+    `📌 ${clipText(data.title || data.fileName || "YouTube MP3", 70)}`,
+    `🌐 ${DVYER_API_BASE_URL}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildAudioContextInfo(data = {}) {
+  return {
+    externalAdReply: {
+      title: clipText(data.title || data.fileName || "YouTube MP3", 60),
+      body: DVYER_API_BASE_URL,
+      sourceUrl: DVYER_API_BASE_URL,
+      mediaType: 1,
+      renderLargerThumbnail: false,
+      showAdAttribution: false,
+    },
+  };
+}
+
 async function sendRemoteMp3(sock, from, quoted, data) {
   try {
     await sock.sendMessage(
@@ -400,6 +442,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
         mimetype: "audio/mpeg",
         fileName: data.fileName,
         ptt: false,
+        contextInfo: buildAudioContextInfo(data),
         ...global.channelInfo,
       },
       quoted
@@ -413,6 +456,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
       document: { url: data.remoteUrl },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
+      caption: buildShortCaption(data),
       ...global.channelInfo,
     },
     quoted
@@ -431,6 +475,7 @@ async function sendLocalMp3(sock, from, quoted, data) {
           mimetype: "audio/mpeg",
           fileName: data.fileName,
           ptt: false,
+          contextInfo: buildAudioContextInfo(data),
           ...global.channelInfo,
         },
         quoted
@@ -445,6 +490,7 @@ async function sendLocalMp3(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
+      caption: buildShortCaption(data),
       ...global.channelInfo,
     },
     quoted
@@ -550,7 +596,11 @@ export default {
         return;
       } catch {}
 
-      const downloaded = await downloadYtmp3Fallback(resolved.url, apiData.fileName || resolved.title);
+      const downloaded = await downloadYtmp3Fallback(
+        resolved.url,
+        apiData.fileName || resolved.title,
+        apiData
+      );
       tempPath = downloaded.tempPath;
 
       await sendLocalMp3(sock, from, quoted, downloaded);

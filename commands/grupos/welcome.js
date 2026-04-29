@@ -5,6 +5,7 @@ import {
   getParticipantDisplayTag,
   getParticipantMentionJid,
 } from "../../lib/group-compat.js";
+import { createWelcomeCard } from "../../lib/welcome-card.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "welcome.json");
@@ -108,29 +109,30 @@ function getConfig(groupId, store) {
 }
 
 function boolLabel(value) {
-  return value ? "ON ✅" : "OFF ❌";
+  return value ? "ON" : "OFF";
 }
 
 function buildStatusText(config, prefix) {
+  const imageLabel = config.image ? "CONFIGURADA" : "FOTO DEL GRUPO";
   return (
-    `╭──〔 🌸 *WELCOME & BYE FSOCIETY* 〕──⬣\n` +
-    `│ Bienvenida: *${boolLabel(config.welcomeEnabled)}*\n` +
-    `│ Despedida: *${boolLabel(config.byeEnabled)}*\n` +
-    `│ Imagen: *${config.image ? "CONFIGURADA" : "AUTO FOTO GRUPO"}*\n` +
-    `│ Texto Welcome: *${config.text ? "SI" : "NO"}*\n` +
-    `│ Texto Bye: *${config.byeText ? "SI" : "NO"}*\n` +
-    `│ Reglas: *${config.rules ? "SI" : "NO"}*\n` +
-    `╰────────────⬣\n\n` +
+    `*WELCOME Y DESPEDIDA*\n\n` +
+    `Bienvenida: *${boolLabel(config.welcomeEnabled)}*\n` +
+    `Despedida: *${boolLabel(config.byeEnabled)}*\n` +
+    `Imagen: *${imageLabel}*\n` +
+    `Texto de bienvenida: *${config.text ? "SI" : "NO"}*\n` +
+    `Texto de despedida: *${config.byeText ? "SI" : "NO"}*\n` +
+    `Reglas: *${config.rules ? "SI" : "NO"}*\n\n` +
     `Comandos:\n` +
-    `${prefix}welcome on\n` +
-    `${prefix}welcome off\n` +
-    `${prefix}welcome bye on\n` +
-    `${prefix}welcome bye off\n` +
-    `${prefix}welcome text Bienvenido a la familia\n` +
-    `${prefix}welcome byetext Gracias por estar aqui\n` +
-    `${prefix}welcome rules Respeta | No spam | Lee fijados\n` +
-    `${prefix}welcome image https://...\n` +
-    `${prefix}welcome reset`
+    `- ${prefix}welcome on\n` +
+    `- ${prefix}welcome off\n` +
+    `- ${prefix}welcome bye on\n` +
+    `- ${prefix}welcome bye off\n` +
+    `- ${prefix}welcome text Bienvenido @user a @group\n` +
+    `- ${prefix}welcome byetext Hasta luego @user\n` +
+    `- ${prefix}welcome rules Respeta | No spam | Lee fijados\n` +
+    `- ${prefix}welcome image https://...\n` +
+    `- ${prefix}welcome reset\n\n` +
+    `Variables disponibles: @user, @group, @members, @bot`
   );
 }
 
@@ -145,6 +147,14 @@ async function getGroupImageUrl(sock, groupId, fallbackImage = "") {
   return "";
 }
 
+async function getProfileImageUrl(sock, jid = "") {
+  try {
+    return await sock.profilePictureUrl(jid, "image");
+  } catch {
+    return "";
+  }
+}
+
 function buildWelcomeMessage({
   userTag,
   groupName,
@@ -154,20 +164,34 @@ function buildWelcomeMessage({
   rules,
   prefix,
 }) {
-  const mainText = customText || `Bienvenido a *${groupName}*`;
-  const rulesBlock = rules ? `\n\n📜 *REGLAS*\n${rules}` : "";
+  const mainText =
+    customText || `Bienvenido @user a @group. Esperamos que disfrutes tu estancia.`;
+  const renderedMainText = renderTemplate(mainText, {
+    userTag,
+    groupName,
+    totalMembers,
+    botName,
+  });
+  const renderedRules = renderTemplate(rules, {
+    userTag,
+    groupName,
+    totalMembers,
+    botName,
+  });
+  const rulesBlock = renderedRules ? `\n\n*Reglas del grupo*\n${renderedRules}` : "";
 
   return (
-    `╭──〔 🌸 *BIENVENIDA FSOCIETY* 〕──⬣\n` +
-    `│ Hola ${userTag}\n` +
-    `│ Grupo: *${groupName}*\n` +
-    `│ Miembro #: *${Math.max(1, totalMembers)}*\n` +
-    `│ Bot: *${botName}*\n` +
-    `╰────────────⬣\n\n` +
-    `${mainText}` +
+    `*BIENVENIDO/A*\n\n` +
+    `Hola ${userTag}\n` +
+    `Grupo: *${groupName}*\n` +
+    `Miembro numero: *${Math.max(1, totalMembers)}*\n` +
+    `Bot: *${botName}*\n\n` +
+    `${renderedMainText}` +
     `${rulesBlock}\n\n` +
     `Comandos utiles:\n` +
-    `${prefix}menu | ${prefix}owner | ${prefix}infochannel`
+    `- ${prefix}menu\n` +
+    `- ${prefix}owner\n` +
+    `- ${prefix}infochannel`
   );
 }
 
@@ -179,17 +203,56 @@ function buildByeMessage({
   byeText,
   prefix,
 }) {
-  const mainText = byeText || `${userTag} salio del grupo.`;
+  const mainText = byeText || `Hasta luego @user. Te esperamos de vuelta en @group.`;
+  const renderedMainText = renderTemplate(mainText, {
+    userTag,
+    groupName,
+    totalMembers,
+    botName,
+  });
 
   return (
-    `╭──〔 👋 *DESPEDIDA FSOCIETY* 〕──⬣\n` +
-    `│ Grupo: *${groupName}*\n` +
-    `│ Miembros ahora: *${Math.max(0, totalMembers)}*\n` +
-    `│ Bot: *${botName}*\n` +
-    `╰────────────⬣\n\n` +
-    `${mainText}\n\n` +
+    `*DESPEDIDA*\n\n` +
+    `Grupo: *${groupName}*\n` +
+    `Miembros ahora: *${Math.max(0, totalMembers)}*\n` +
+    `Bot: *${botName}*\n\n` +
+    `${renderedMainText}\n\n` +
     `Comandos utiles:\n` +
-    `${prefix}reglas | ${prefix}infochannel`
+    `- ${prefix}reglas\n` +
+    `- ${prefix}infochannel`
+  );
+}
+
+function renderTemplate(template, { userTag, groupName, totalMembers, botName }) {
+  return String(template || "")
+    .trim()
+    .replace(/@user/gi, userTag)
+    .replace(/@group/gi, groupName)
+    .replace(/@members/gi, String(Math.max(0, totalMembers)))
+    .replace(/@bot/gi, botName);
+}
+
+function buildCardText(action, config, userTag, groupName, totalMembers, botName) {
+  if (action === "remove") {
+    return renderTemplate(
+      config.byeText || `Hasta luego @user. Te esperamos de vuelta en @group.`,
+      {
+        userTag,
+        groupName,
+        totalMembers,
+        botName,
+      }
+    );
+  }
+
+  return renderTemplate(
+    config.text || `Bienvenido @user a @group. Esperamos que disfrutes tu estancia.`,
+    {
+      userTag,
+      groupName,
+      totalMembers,
+      botName,
+    }
   );
 }
 
@@ -456,6 +519,7 @@ export default {
       const metadataParticipant = findGroupParticipant(metadata || {}, [participant]);
       const mentionJid = getParticipantMentionJid(metadata || {}, metadataParticipant, participant);
       const userTag = getParticipantDisplayTag(metadataParticipant, participant);
+      const profileImageUrl = await getProfileImageUrl(sock, mentionJid || participant);
 
       const text =
         action === "add"
@@ -476,6 +540,30 @@ export default {
               byeText: config.byeText,
               prefix,
             });
+
+      let cardBuffer = null;
+      try {
+        cardBuffer = await createWelcomeCard({
+          action,
+          userTag,
+          groupName,
+          totalMembers,
+          botName,
+          mainText: buildCardText(action, config, userTag, groupName, totalMembers, botName),
+          avatarUrl: profileImageUrl,
+          groupImageUrl: imageUrl,
+        });
+      } catch {}
+
+      if (cardBuffer) {
+        await sock.sendMessage(update.id, {
+          image: cardBuffer,
+          caption: text,
+          mentions: mentionJid ? [mentionJid] : [],
+          ...global.channelInfo,
+        });
+        continue;
+      }
 
       if (imageUrl) {
         await sock.sendMessage(update.id, {

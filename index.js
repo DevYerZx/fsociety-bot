@@ -34,6 +34,7 @@ import {
   getAutoCleanState,
   setAutoCleanConfig,
 } from "./lib/autoclean.js";
+import { cleanupManagedTempRoots } from "./lib/temp-cleanup.js";
 import {
   findGroupParticipant as findCompatGroupParticipant,
   isGroupMetadataOwner as isCompatGroupMetadataOwner,
@@ -8735,6 +8736,12 @@ async function handleIncomingMessages(botState, sock, messages) {
       if (shouldIgnoreJid(from)) continue;
 
       const m = serializeMessage(raw);
+      const executionInfo = await getMessageExecutionInfo(botState, sock, m);
+      const baseContext = createBaseContext(botState, sock, m, executionInfo);
+
+      const blockedByHook = await runMessageHooks(botState, baseContext);
+      if (blockedByHook) continue;
+
       const texto = String(m?.text || "").trim();
       if (!texto) continue;
       const commandData = extractCommandData(texto, settings);
@@ -8751,12 +8758,6 @@ async function handleIncomingMessages(botState, sock, messages) {
 
       const tipo = tipoChat(from);
       mensajesPorTipo[tipo] = (mensajesPorTipo[tipo] || 0) + 1;
-
-      const executionInfo = await getMessageExecutionInfo(botState, sock, m);
-      const baseContext = createBaseContext(botState, sock, m, executionInfo);
-
-      const blockedByHook = await runMessageHooks(botState, baseContext);
-      if (blockedByHook) continue;
 
       if (!commandData) continue;
       const cmd = comandos.get(commandData.commandName);
@@ -9339,6 +9340,9 @@ async function iniciarInstanciaBot(config) {
 
 async function start() {
   getManagedProcessBotConfigs().forEach((config) => ensureBotState(config));
+  cleanupManagedTempRoots({
+    maxAgeMs: 45 * 60 * 1000,
+  });
   await cargarComandos();
   await banner();
   await syncManagedProcessBots();
@@ -9413,6 +9417,9 @@ process.on("SIGINT", () => {
       clearInterval(liveConsoleTelemetryInterval);
       liveConsoleTelemetryInterval = null;
     }
+    cleanupManagedTempRoots({
+      maxAgeMs: 2 * 60 * 1000,
+    });
     writeAtomicJsonFile(USAGE_STATS_FILE, usageStats);
     if (structuredLogStream) {
       try {
