@@ -9,7 +9,9 @@ import {
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antilink.json");
 const WARNS_FILE = path.join(DB_DIR, "antilink_warns.json");
+const LOG_FILE = path.join(DB_DIR, "antilink_logs.json");
 const MAX_WARNS = 3;
+const MAX_LOGS_PER_GROUP = 200;
 
 if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
@@ -101,6 +103,21 @@ function loadWarns() {
 
 function saveWarns() {
   fs.writeFileSync(WARNS_FILE, JSON.stringify(warnsCache, null, 2));
+}
+
+function loadLogs() {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return {};
+    const raw = fs.readFileSync(LOG_FILE, "utf-8");
+    const data = safeParse(raw);
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLogs() {
+  fs.writeFileSync(LOG_FILE, JSON.stringify(logsCache, null, 2));
 }
 
 function getGroupConfig(groupId) {
@@ -209,6 +226,7 @@ function resolveFilterTarget(value = "") {
 
 let store = loadStore();
 let warnsCache = loadWarns();
+let logsCache = loadLogs();
 
 function getWarnCount(groupId, sender) {
   return Number(warnsCache?.[groupId]?.[sender] || 0);
@@ -227,6 +245,26 @@ function clearWarnCount(groupId, sender) {
     delete warnsCache[groupId];
   }
   saveWarns();
+}
+
+function appendAntilinkLog(groupId, payload = {}) {
+  const key = String(groupId || "").trim();
+  if (!key) return;
+
+  if (!Array.isArray(logsCache[key])) {
+    logsCache[key] = [];
+  }
+
+  logsCache[key].push({
+    at: new Date().toISOString(),
+    ...payload,
+  });
+
+  if (logsCache[key].length > MAX_LOGS_PER_GROUP) {
+    logsCache[key] = logsCache[key].slice(-MAX_LOGS_PER_GROUP);
+  }
+
+  saveLogs();
 }
 
 export default {
@@ -270,7 +308,8 @@ export default {
             `${prefix}antilink tipo otros on|off\n` +
             `${prefix}antilink allow youtube.com\n` +
             `${prefix}antilink remove youtube.com\n` +
-            `${prefix}antilink list`,
+            `${prefix}antilink list\n` +
+            `${prefix}antilink logs`,
           footer: "Selecciona desde el panel para cambiar rapido",
           interactiveButtons: [
             {
@@ -702,6 +741,38 @@ export default {
       );
     }
 
+    if (action === "logs" || action === "log") {
+      const entries = Array.isArray(logsCache[from]) ? logsCache[from].slice(-15).reverse() : [];
+      return sock.sendMessage(
+        from,
+        {
+          text:
+            `*LOGS ANTILINK*\n\n` +
+            (entries.length
+              ? entries
+                  .map((entry, index) => {
+                    const when = String(entry?.at || "").replace("T", " ").replace(/\.\d+Z$/, "Z");
+                    const sender = String(entry?.sender || "desconocido");
+                    const actionText = String(entry?.action || "detectado");
+                    const linkText = String(entry?.link || entry?.domain || "sin enlace");
+                    const warns = Number(entry?.warns || 0);
+                    return (
+                      `${index + 1}. ${actionText.toUpperCase()}\n` +
+                      `• Usuario: ${sender}\n` +
+                      `• Link: ${linkText}\n` +
+                      `• Tipo: ${String(entry?.linkType || "other")}\n` +
+                      `• Warns: ${warns}/${MAX_WARNS}\n` +
+                      `• Fecha: ${when}`
+                    );
+                  })
+                  .join("\n\n")
+              : "Sin registros todavia."),
+          ...global.channelInfo,
+        },
+        quoted
+      );
+    }
+
     return sock.sendMessage(
       from,
       {
@@ -745,6 +816,7 @@ export default {
 
     const mentionText = getParticipantDisplayTag(null, sender);
     const mentionJids = mentionJid ? [mentionJid] : [];
+    const senderLog = String(mentionJid || sender || "").trim();
 
     if (config.mode === "kick" && currentWarns >= MAX_WARNS && esBotAdmin) {
       try {
@@ -760,6 +832,15 @@ export default {
           throw removeResult.error || new Error("No pude expulsar al usuario.");
         }
         clearWarnCount(from, sender);
+        appendAntilinkLog(from, {
+          sender: senderLog,
+          link: blockedLink.raw,
+          domain: blockedLink.domain,
+          linkType: blockedLink.type,
+          warns: currentWarns,
+          action: "expulsado",
+          mode: config.mode,
+        });
 
         await sock.sendMessage(from, {
           text:
@@ -776,6 +857,15 @@ export default {
 
     if (config.mode === "kick") {
       if (currentWarns >= MAX_WARNS) {
+        appendAntilinkLog(from, {
+          sender: senderLog,
+          link: blockedLink.raw,
+          domain: blockedLink.domain,
+          linkType: blockedLink.type,
+          warns: currentWarns,
+          action: "sin_expulsion",
+          mode: config.mode,
+        });
         await sock.sendMessage(from, {
           text:
             `🚫 *ANTILINK*\n` +
@@ -788,6 +878,15 @@ export default {
         return;
       }
 
+      appendAntilinkLog(from, {
+        sender: senderLog,
+        link: blockedLink.raw,
+        domain: blockedLink.domain,
+        linkType: blockedLink.type,
+        warns: currentWarns,
+        action: "advertencia",
+        mode: config.mode,
+      });
       await sock.sendMessage(from, {
         text:
           `⚠️ *ANTILINK AVISO ${currentWarns}/${MAX_WARNS}*\n` +
@@ -800,6 +899,15 @@ export default {
       return;
     }
 
+    appendAntilinkLog(from, {
+      sender: senderLog,
+      link: blockedLink.raw,
+      domain: blockedLink.domain,
+      linkType: blockedLink.type,
+      warns: currentWarns,
+      action: "borrado",
+      mode: config.mode,
+    });
     await sock.sendMessage(from, {
       text:
         `🚫 *ANTILINK*\n` +
