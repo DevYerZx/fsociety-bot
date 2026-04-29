@@ -8,7 +8,7 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
-import { buildDvyerUrl, withDvyerApiKey } from "../../lib/api-manager.js";
+import { buildDvyerUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { bindAbort, throwIfAborted } from "../../lib/command-abort.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../../lib/provider-guard.js";
 
 const API_YTMP4_URL = buildDvyerUrl("/ytmp4");
+const DVYER_API_BASE_URL = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
 const API_REQUEST_TIMEOUT_MS = 20_000;
 const REMOTE_DOWNLOAD_TIMEOUT_MS = 70_000;
@@ -444,69 +445,21 @@ async function downloadRemoteMp4(remoteUrl, preferredName, signal = null) {
   };
 }
 
-async function sendVideoPreview(sock, from, quoted, data) {
-  const thumbBuffer = await getBuffer(data.thumbnail);
-
-  const caption = [
-    "╭━━━〔 🎬 *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VISTA PREVIA DEL VIDEO*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || "YouTube Video", 75)}`,
-    "┃",
-    `┃ ⏱️ *Duración:* ${formatDuration(data.duration)}`,
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    data.author ? `┃ 👤 *Canal:* ${clipText(data.author, 40)}` : null,
-    `┃ 🚀 *Estado:* ${data.cached ? "En caché" : "Procesando"}`,
-    "┃",
-    "┃ ⌛ *Preparando tu video...*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+function buildShortCaption(data = {}) {
+  return [
+    "🎬 *DVYER MP4*",
+    `📌 ${clipText(data.title || data.fileName || "YouTube Video", 70)}`,
+    `⏱️ ${formatDuration(data.duration)}`,
+    `📺 ${data.quality || DEFAULT_QUALITY}`,
+    `🌐 ${DVYER_API_BASE_URL}`,
   ]
     .filter(Boolean)
     .join("\n");
-
-  if (thumbBuffer) {
-    return await sock.sendMessage(
-      from,
-      {
-        image: thumbBuffer,
-        caption,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-  }
-
-  return await sock.sendMessage(
-    from,
-    {
-      text: caption,
-      ...global.channelInfo,
-    },
-    quoted
-  );
 }
 
 async function sendRemoteMp4(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
-
-  const caption = [
-    "╭━━━〔 ✅ *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VIDEO LISTO PARA VER*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || data.fileName, 75)}`,
-    "┃",
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    `┃ ⚡ *Entrega:* ${data.cached ? "Caché rápida" : "Directa"}`,
-    "┃",
-    "┃ 🍿 *Disfrútalo*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const caption = buildShortCaption(data);
 
   try {
     await sock.sendMessage(
@@ -542,24 +495,7 @@ async function sendRemoteMp4(sock, from, quoted, data) {
 
 async function sendLocalMp4(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
-
-  const caption = [
-    "╭━━━〔 ✅ *DVYER PLAYER* 〕━━━⬣",
-    "┃",
-    "┃ ✦ *VIDEO LISTO PARA VER*",
-    "┃",
-    "┃ 🏷️ *Título:*",
-    `┃ ${clipText(data.title || data.fileName, 75)}`,
-    "┃",
-    `┃ 📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`,
-    data.size ? `┃ 💾 *Peso:* ${humanBytes(data.size)}` : null,
-    "┃ 🛟 *Entrega:* Respaldo local",
-    "┃",
-    "┃ 🍿 *Disfrútalo*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const caption = buildShortCaption(data);
 
   if (Number(data?.size || 0) <= VIDEO_AS_DOCUMENT_THRESHOLD) {
     try {
@@ -693,20 +629,12 @@ export default {
         }
       );
 
-      await sendVideoPreview(sock, from, quoted, {
-        title: apiData.title || resolved.title,
-        duration: resolved.duration,
-        quality: apiData.quality || apiData.qualityUsed || DEFAULT_QUALITY,
-        thumbnail: apiData.thumbnail || resolved.thumbnail,
-        author: resolved.author,
-        cached: apiData.cached,
-      });
-
       try {
         throwIfAborted(abortSignal);
         await sendRemoteMp4(sock, from, quoted, {
           ...apiData,
           title: apiData.title || resolved.title,
+          duration: resolved.duration,
           quality: apiData.quality || apiData.qualityUsed || DEFAULT_QUALITY,
           thumbnail: apiData.thumbnail || resolved.thumbnail,
         });
@@ -731,6 +659,7 @@ export default {
       await sendLocalMp4(sock, from, quoted, {
         ...downloaded,
         title: apiData.title || resolved.title,
+        duration: resolved.duration,
         quality: apiData.quality || apiData.qualityUsed || DEFAULT_QUALITY,
         thumbnail: apiData.thumbnail || resolved.thumbnail,
       });
