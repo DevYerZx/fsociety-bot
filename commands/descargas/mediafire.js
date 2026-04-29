@@ -8,16 +8,24 @@ import { chargeDownloadRequest, refundDownloadCharge } from "../economia/downloa
 
 const API_BASE = getDvyerBaseUrl();
 const API_MEDIAFIRE_URL = `${API_BASE}/mediafire`;
+
 const COOLDOWN_TIME = 0;
 const REQUEST_TIMEOUT = 120000;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
+
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-mediafire");
 
 const cooldowns = new Map();
 
-if (!fs.existsSync(TMP_DIR)) {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
+function ensureTmpDir() {
+  try {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+  } catch (error) {
+    console.error("TMP DIR ERROR:", error?.message || error);
+  }
 }
+
+ensureTmpDir();
 
 function safeFileName(name) {
   return (
@@ -31,16 +39,25 @@ function safeFileName(name) {
 
 function normalizeFileName(name) {
   const raw = String(name || "mediafire-file").trim();
+
   const extMatch = raw.match(/(\.[a-z0-9]{1,10})$/i);
   const ext = extMatch ? extMatch[1] : "";
-  const base = safeFileName(raw.replace(/\.[^.]+$/i, "") || "mediafire-file");
+
+  const base = safeFileName(
+    raw.replace(/\.[^.]+$/i, "") || "mediafire-file"
+  );
+
   return `${base}${ext}`;
 }
 
 function mimeFromFileName(fileName) {
   const lower = String(fileName || "").toLowerCase();
+
   if (lower.endsWith(".apk")) return "application/vnd.android.package-archive";
   if (lower.endsWith(".xapk")) return "application/xapk-package-archive";
+  if (lower.endsWith(".mcpack")) return "application/octet-stream";
+  if (lower.endsWith(".mcaddon")) return "application/octet-stream";
+  if (lower.endsWith(".mcworld")) return "application/octet-stream";
   if (lower.endsWith(".mp3")) return "audio/mpeg";
   if (lower.endsWith(".mp4")) return "video/mp4";
   if (lower.endsWith(".zip")) return "application/zip";
@@ -50,6 +67,7 @@ function mimeFromFileName(fileName) {
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".png")) return "image/png";
+
   return "application/octet-stream";
 }
 
@@ -90,6 +108,7 @@ function resolveUserInput(ctx) {
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
   const quotedMessage = getQuotedMessage(ctx, msg);
   const quotedText = extractTextFromMessage(quotedMessage);
+
   return argsText || quotedText || "";
 }
 
@@ -97,6 +116,7 @@ function extractMediaFireUrl(text) {
   const match = String(text || "").match(
     /https?:\/\/(?:www\.)?(?:[a-z0-9-]+\.)?mediafire\.com\/[^\s]+/i
   );
+
   return match ? match[0].trim() : "";
 }
 
@@ -111,6 +131,7 @@ function extractApiError(data, status) {
 
 function parseContentDispositionFileName(headerValue) {
   const text = String(headerValue || "");
+
   const utfMatch = text.match(/filename\*=UTF-8''([^;]+)/i);
 
   if (utfMatch?.[1]) {
@@ -120,6 +141,7 @@ function parseContentDispositionFileName(headerValue) {
   }
 
   const normalMatch = text.match(/filename="?([^"]+)"?/i);
+
   if (normalMatch?.[1]) {
     return normalMatch[1].trim();
   }
@@ -137,6 +159,7 @@ function deleteFileSafe(filePath) {
 
 function humanBytes(bytes) {
   const size = Number(bytes || 0);
+
   if (!size || size < 1) return null;
 
   const units = ["B", "KB", "MB", "GB"];
@@ -203,6 +226,8 @@ async function requestMediafireMeta(fileUrl) {
 }
 
 async function downloadMediafireFile(fileUrl, outputPath) {
+  ensureTmpDir();
+
   const response = await axios.get(API_MEDIAFIRE_URL, {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
@@ -238,6 +263,7 @@ async function downloadMediafireFile(fileUrl, outputPath) {
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
+
   if (contentLength && contentLength > MAX_FILE_BYTES) {
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
@@ -246,8 +272,11 @@ async function downloadMediafireFile(fileUrl, outputPath) {
 
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
+
     if (downloaded > MAX_FILE_BYTES) {
-      response.data.destroy(new Error("El archivo es demasiado grande para enviarlo por WhatsApp."));
+      response.data.destroy(
+        new Error("El archivo es demasiado grande para enviarlo por WhatsApp.")
+      );
     }
   });
 
@@ -263,9 +292,10 @@ async function downloadMediafireFile(fileUrl, outputPath) {
   }
 
   const size = fs.statSync(outputPath).size;
+
   if (!size || size < 1) {
     deleteFileSafe(outputPath);
-    throw new Error("El archivo descargado es invalido.");
+    throw new Error("El archivo descargado es inválido.");
   }
 
   if (size > MAX_FILE_BYTES) {
@@ -286,12 +316,18 @@ async function downloadMediafireFile(fileUrl, outputPath) {
 
 async function sendMediafireDocument(sock, from, quoted, payload) {
   const { filePath, fileName, title, fileSize, size } = payload;
-  const lines = ["DVYER API", "", `Archivo: ${title}`];
-  if (fileSize) lines.push(`Tamano: ${fileSize}`);
-  else {
-    const prettySize = humanBytes(size);
-    if (prettySize) lines.push(`Tamano: ${prettySize}`);
-  }
+
+  const prettySize = fileSize || humanBytes(size) || "Desconocido";
+
+  const caption = [
+    "╭━━〔 *📦 MEDIAFIRE DOWNLOAD* 〕━━⬣",
+    `┃ 📄 *Archivo:* ${title}`,
+    `┃ 💾 *Tamaño:* ${prettySize}`,
+    `┃ 🧩 *Formato:* ${path.extname(fileName).replace(".", "").toUpperCase() || "FILE"}`,
+    "┃",
+    "┃ ✅ *Descarga completada correctamente*",
+    "╰━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
 
   await sock.sendMessage(
     from,
@@ -299,7 +335,7 @@ async function sendMediafireDocument(sock, from, quoted, payload) {
       document: { url: filePath },
       mimetype: mimeFromFileName(fileName),
       fileName,
-      caption: lines.join("\n"),
+      caption,
       ...global.channelInfo,
     },
     quoted
@@ -309,9 +345,11 @@ async function sendMediafireDocument(sock, from, quoted, payload) {
 export default {
   command: ["mediafire", "mf"],
   category: "descarga",
+  description: "Descarga archivos públicos de MediaFire",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
+
     const msg = ctx.m || ctx.msg || null;
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const userId = `${from}:mediafire`;
@@ -321,32 +359,55 @@ export default {
 
     if (COOLDOWN_TIME > 0) {
       const until = cooldowns.get(userId);
+
       if (until && until > Date.now()) {
-        return sock.sendMessage(from, {
-          text: `Espera ${getCooldownRemaining(until)}s`,
-          ...global.channelInfo,
-        });
+        return sock.sendMessage(
+          from,
+          {
+            text: `⏳ Espera ${getCooldownRemaining(until)}s antes de usar este comando otra vez.`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
       }
 
       cooldowns.set(userId, Date.now() + COOLDOWN_TIME);
     }
 
     try {
+      ensureTmpDir();
+
       const rawInput = resolveUserInput(ctx);
       const fileUrl = extractMediaFireUrl(rawInput);
 
       if (!fileUrl) {
         cooldowns.delete(userId);
-        return sock.sendMessage(from, {
-          text: "Uso: .mediafire <link publico de MediaFire> o responde a un mensaje con el link",
-          ...global.channelInfo,
-        });
+
+        return sock.sendMessage(
+          from,
+          {
+            text: [
+              "╭━━〔 *📦 MEDIAFIRE* 〕━━⬣",
+              "┃ ❌ *Falta el enlace.*",
+              "┃",
+              "┃ Usa:",
+              "┃ *.mediafire <link público>*",
+              "┃",
+              "┃ También puedes responder",
+              "┃ a un mensaje que tenga el link.",
+              "╰━━━━━━━━━━━━━━━━━━⬣",
+            ].join("\n"),
+            ...global.channelInfo,
+          },
+          quoted
+        );
       }
 
       downloadCharge = await chargeDownloadRequest(ctx, {
         feature: "mediafire",
         fileUrl,
       });
+
       if (!downloadCharge.ok) {
         cooldowns.delete(userId);
         return;
@@ -355,14 +416,43 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `Preparando MediaFire...\n\nProcesando tu enlace...`,
+          text: [
+            "╭━━〔 *📦 MEDIAFIRE* 〕━━⬣",
+            "┃ 🔎 *Buscando archivo...*",
+            "┃",
+            "┃ ⏳ Procesando tu enlace.",
+            "┃ 📡 Conectando con DVYER API.",
+            "╰━━━━━━━━━━━━━━━━━━⬣",
+          ].join("\n"),
           ...global.channelInfo,
         },
         quoted
       );
 
       const info = await requestMediafireMeta(fileUrl);
-      tempPath = path.join(TMP_DIR, `${Date.now()}-${info.fileName}`);
+
+      ensureTmpDir();
+
+      tempPath = path.join(
+        TMP_DIR,
+        `${Date.now()}-${normalizeFileName(info.fileName)}`
+      );
+
+      await sock.sendMessage(
+        from,
+        {
+          text: [
+            "╭━━〔 *📥 MEDIAFIRE* 〕━━⬣",
+            `┃ 📄 *Archivo:* ${info.title}`,
+            info.fileSize ? `┃ 💾 *Tamaño:* ${info.fileSize}` : "┃ 💾 *Tamaño:* Calculando...",
+            "┃",
+            "┃ 🚀 *Descargando archivo...*",
+            "╰━━━━━━━━━━━━━━━━━━⬣",
+          ].join("\n"),
+          ...global.channelInfo,
+        },
+        quoted
+      );
 
       const downloaded = await downloadMediafireFile(fileUrl, tempPath);
 
@@ -375,16 +465,26 @@ export default {
       });
     } catch (error) {
       console.error("MEDIAFIRE ERROR:", error?.message || error);
+
       refundDownloadCharge(ctx, downloadCharge, {
         feature: "mediafire",
         error: String(error?.message || error || "unknown_error"),
       });
+
       cooldowns.delete(userId);
 
-      await sock.sendMessage(from, {
-        text: String(error?.message || "No se pudo procesar el archivo de MediaFire."),
-        ...global.channelInfo,
-      });
+      await sock.sendMessage(
+        from,
+        {
+          text: [
+            "╭━━〔 *❌ MEDIAFIRE ERROR* 〕━━⬣",
+            `┃ ${String(error?.message || "No se pudo procesar el archivo de MediaFire.")}`,
+            "╰━━━━━━━━━━━━━━━━━━⬣",
+          ].join("\n"),
+          ...global.channelInfo,
+        },
+        quoted
+      );
     } finally {
       deleteFileSafe(tempPath);
     }
