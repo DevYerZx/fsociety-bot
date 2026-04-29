@@ -8735,6 +8735,12 @@ async function handleIncomingMessages(botState, sock, messages) {
       if (shouldIgnoreJid(from)) continue;
 
       const m = serializeMessage(raw);
+      const executionInfo = await getMessageExecutionInfo(botState, sock, m);
+      const baseContext = createBaseContext(botState, sock, m, executionInfo);
+
+      const blockedByHook = await runMessageHooks(botState, baseContext);
+      if (blockedByHook) continue;
+
       const texto = String(m?.text || "").trim();
       if (!texto) continue;
       const commandData = extractCommandData(texto, settings);
@@ -8751,12 +8757,6 @@ async function handleIncomingMessages(botState, sock, messages) {
 
       const tipo = tipoChat(from);
       mensajesPorTipo[tipo] = (mensajesPorTipo[tipo] || 0) + 1;
-
-      const executionInfo = await getMessageExecutionInfo(botState, sock, m);
-      const baseContext = createBaseContext(botState, sock, m, executionInfo);
-
-      const blockedByHook = await runMessageHooks(botState, baseContext);
-      if (blockedByHook) continue;
 
       if (!commandData) continue;
       const cmd = comandos.get(commandData.commandName);

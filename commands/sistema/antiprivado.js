@@ -68,6 +68,58 @@ function getPrimaryPrefix(settings) {
   return getPrefixes(settings)[0] || ".";
 }
 
+function normalizeId(value = "") {
+  return String(value || "")
+    .trim()
+    .split("@")[0]
+    .split(":")[0]
+    .replace(/\s+/g, "");
+}
+
+function normalizeDigits(value = "") {
+  return normalizeId(value).replace(/[^\d]/g, "");
+}
+
+function buildAllowedPrivateIds({ settings, sock }) {
+  const allowed = new Set();
+
+  const add = (value) => {
+    const normalized = normalizeId(value);
+    const digits = normalizeDigits(value);
+    if (normalized) allowed.add(normalized);
+    if (digits) allowed.add(digits);
+  };
+
+  add(settings?.ownerNumber);
+  add(settings?.ownerLid);
+  add(settings?.botNumber);
+  add(sock?.user?.id);
+
+  for (const value of settings?.ownerNumbers || []) {
+    add(value);
+  }
+
+  for (const value of settings?.ownerLids || []) {
+    add(value);
+  }
+
+  return allowed;
+}
+
+function isAllowedPrivateSender({ msg, sender, senderPhone, senderLid, settings, sock, esOwner }) {
+  if (esOwner) return true;
+  if (msg?.key?.fromMe) return true;
+
+  const allowedIds = buildAllowedPrivateIds({ settings, sock });
+  const candidates = [sender, senderPhone, senderLid, msg?.key?.participant, msg?.key?.remoteJid];
+
+  return candidates.some((value) => {
+    const normalized = normalizeId(value);
+    const digits = normalizeDigits(value);
+    return (normalized && allowedIds.has(normalized)) || (digits && allowedIds.has(digits));
+  });
+}
+
 const state = loadState();
 
 export default {
@@ -200,11 +252,22 @@ export default {
     );
   },
 
-  onMessage: async ({ msg, esOwner, isGroup }) => {
+  onMessage: async ({ msg, esOwner, isGroup, sender, senderPhone, senderLid, settings, sock }) => {
     if (!state.enabled) return;
     if (isGroup) return;
-    if (esOwner) return;
-    if (msg?.key?.fromMe) return;
+    if (
+      isAllowedPrivateSender({
+        msg,
+        sender,
+        senderPhone,
+        senderLid,
+        settings,
+        sock,
+        esOwner,
+      })
+    ) {
+      return;
+    }
 
     // Bloquea en silencio privados de usuarios normales.
     return true;
