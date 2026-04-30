@@ -641,31 +641,6 @@ function buildErrorMessage(errorText) {
   ].join("\n");
 }
 
-function buildQuickLinkMessage(data = {}) {
-  const duration = formatDuration(data.duration);
-  const link = cleanText(
-    data.download_url_full ||
-      data.stream_url_full ||
-      data.remoteUrl ||
-      data.url ||
-      ""
-  );
-  const expires = Number(data.expires_in_hint_seconds || 0);
-  const expireText = Number.isFinite(expires) && expires > 0 ? `${Math.floor(expires / 60)} min` : "N/D";
-
-  return [
-    "╭━━〔 *⚡ YTMP3DL RÁPIDO* 〕━━⬣",
-    `┃ 🎵 *Título:* ${clipText(data.title || data.fileName || "YouTube MP3", 55)}`,
-    duration ? `┃ ⏱️ *Duración:* ${duration}` : "",
-    "┃",
-    `┃ 🔗 *Descarga:* ${link || "No disponible"}`,
-    `┃ 🕒 *Expira:* ${expireText}`,
-    "╰━━━━━━━━━━━━━━━━━━⬣",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 async function sendDownloadingImage(sock, from, quoted, data = {}) {
   const caption = buildDownloadingCaption(data);
 
@@ -868,14 +843,6 @@ export default {
       };
 
       await sendDownloadingImage(sock, from, quoted, finalData);
-      await sock.sendMessage(
-        from,
-        {
-          text: buildQuickLinkMessage(finalData),
-          ...global.channelInfo,
-        },
-        quoted
-      );
 
       let sentMode = null;
       try {
