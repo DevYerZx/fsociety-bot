@@ -189,7 +189,7 @@ async function searchSpotifyTracks(query, limit = 10) {
       params: withDvyerApiKey({
         q: cleanQuery,
         mode: "link",
-        lang: "es3",
+        lang: "es18",
       }),
       timeout: REQUEST_TIMEOUT,
       headers: {
@@ -209,7 +209,7 @@ async function searchSpotifyTracks(query, limit = 10) {
         withDvyerApiKey({
           q: cleanQuery,
           mode: "link",
-          lang: "es3",
+          lang: "es18",
         })
       ).toString();
       const separator = API_SPOTIFY_URL.includes("?") ? "&" : "?";
@@ -288,7 +288,7 @@ async function getSpotifyDownloadInfo(input) {
 
     const params = {
       mode: "link",
-      lang: "es3",
+      lang: "es18",
     };
 
     if (isSpotifyUrl(cleanInput)) {
@@ -624,9 +624,9 @@ async function sendSpotifySearchPicker(ctx, query, results) {
 
 export default {
   name: "spotify",
-  command: ["spotify", "spoti"],
+  command: ["spotify", "spoti", "spotifydl", "spdl"],
   category: "descarga",
-  description: "🎵 Busca y descarga canciones de Spotify en MP3",
+  description: "🎵 Busca y descarga canciones de Spotify en MP3 (Downloaderize)",
 
   run: async (ctx) => {
     const { sock, from, settings } = ctx;
