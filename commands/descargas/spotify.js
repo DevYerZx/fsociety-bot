@@ -11,7 +11,8 @@ const API_SPOTIFY_URL = buildDvyerUrl("/spotify");
 const API_SPOTIFY_SEARCH_URL = buildDvyerUrl("/spotifysearch");
 const TMP_DIR = path.join(os.tmpdir(), "spotify-downloads");
 const AUDIO_QUALITY = "128k";
-const REQUEST_TIMEOUT = 120000;
+const REQUEST_TIMEOUT = 45000;
+const SEARCH_REQUEST_TIMEOUT = 15000;
 const MAX_AUDIO_BYTES = 120 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 60 * 1024 * 1024;
 
@@ -191,7 +192,7 @@ async function searchSpotifyTracks(query, limit = 10) {
         limit: Math.max(1, Math.min(Number(limit || 10), 20)),
         lang: "es18",
       }),
-      timeout: REQUEST_TIMEOUT,
+      timeout: SEARCH_REQUEST_TIMEOUT,
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         Accept: "application/json",
@@ -200,38 +201,6 @@ async function searchSpotifyTracks(query, limit = 10) {
     });
 
     console.log(`[SPOTIFY] Respuesta API - Status: ${response.status}`);
-
-    if (response.status === 422 || response.status === 400) {
-      // Si falla con q, intentar de otra forma
-      console.log(`[SPOTIFY] Intentando con parámetros alternativos...`);
-      
-      const fallbackQuery = new URLSearchParams(
-        withDvyerApiKey({
-          q: cleanQuery,
-          mode: "link",
-          limit: Math.max(1, Math.min(Number(limit || 10), 20)),
-          lang: "es18",
-        })
-      ).toString();
-      const separator = API_SPOTIFY_URL.includes("?") ? "&" : "?";
-      const response2 = await axios.get(`${API_SPOTIFY_URL}${separator}${fallbackQuery}`, {
-        timeout: REQUEST_TIMEOUT,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          Accept: "application/json",
-        },
-        validateStatus: () => true,
-      });
-
-      console.log(`[SPOTIFY] Respuesta 2 - Status: ${response2.status}`);
-
-      if (response2.status >= 400) {
-        console.error(`[SPOTIFY] Error detallado:`, JSON.stringify(response2.data));
-        throw new Error(`Error en búsqueda: HTTP ${response2.status}`);
-      }
-
-      return parseSpotifyResults(response2.data);
-    }
 
     if (response.status >= 400) {
       console.error(`[SPOTIFY] Error detallado:`, JSON.stringify(response.data));
