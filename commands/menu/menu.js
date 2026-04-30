@@ -348,6 +348,33 @@ function chunkRows(rows, size = 10) {
   return chunks;
 }
 
+function buildDensityBar(current = 0, total = 0, size = 6) {
+  const safeTotal = Math.max(1, Number(total || 0));
+  const ratio = Math.max(0, Math.min(1, Number(current || 0) / safeTotal));
+  const filled = Math.max(1, Math.round(ratio * size));
+  return `${"■".repeat(filled)}${"□".repeat(Math.max(0, size - filled))}`;
+}
+
+function getCategoryHighlight(commands = [], primaryPrefix = ".") {
+  const items = Array.isArray(commands) ? commands : [];
+  const accessCounts = {
+    PUBLICO: items.filter((item) => item.access === "PUBLICO").length,
+    ADMIN: items.filter((item) => item.access === "ADMIN").length,
+    OWNER: items.filter((item) => item.access === "OWNER").length,
+  };
+
+  const mainAccess =
+    Object.entries(accessCounts)
+      .sort((a, b) => b[1] - a[1])
+      .find(([, count]) => count > 0)?.[0] || "PUBLICO";
+
+  return {
+    accessCounts,
+    mainAccess,
+    quick: items.slice(0, 3).map((item) => `${primaryPrefix}${item.name}`),
+  };
+}
+
 function buildTopPanel({
   settings,
   uptime,
@@ -359,64 +386,83 @@ function buildTopPanel({
   botLine,
 }) {
   return [
-    "╭══════════════════⬣",
+    "╭━〔 ⚡ *FSOCIETY CONTROL CENTER* 〕━⬣",
     `┃ *${menuTitle}*`,
     `┃ _${menuSubtitle}_`,
-    "┣══════════════════",
+    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "┃",
-    `┃ ✦ *Bot:* _${botLine || settings?.botName || "Fsociety Bot"}_`,
-    `┃ ✦ *Owner:* _${settings?.ownerName || "Owner"}_`,
-    `┃ ✦ *Prefijo:* *${prefixLabel}*`,
-    `┃ ✦ *Activo:* _${uptime}_`,
-    `┃ ✦ *Categorías:* *${totalCategories}*`,
-    `┃ ✦ *Comandos reales:* *${totalCommands}*`,
+    `┃ 🧬 *Bot:* _${botLine || settings?.botName || "Fsociety Bot"}_`,
+    `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
+    `┃ 🛠️ *Prefijos:* *${prefixLabel}*`,
+    `┃ ⏱️ *Activo:* _${uptime}_`,
+    `┃ 📚 *Categorías:* *${totalCategories}*`,
+    `┃ 🚀 *Comandos reales:* *${totalCommands}*`,
     "┃",
-    "┃ _Cuenta exacta por plugin, sin inflar alias._",
-    "╰══════════════════⬣",
+    "┃ _Conteo limpio por plugin, sin inflar alias._",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
 function buildCategoryIndex(categoryNames, categories) {
+  const totalCommands = categoryNames.reduce(
+    (sum, category) => sum + (categories[category]?.length || 0),
+    0
+  );
+
   const list = categoryNames
     .map((category) => {
       const icon = getCategoryIcon(category);
       const label = normalizeCategoryLabel(category);
       const count = categories[category]?.length || 0;
-      return `${icon} ${label}(${count})`;
+      const density = buildDensityBar(count, totalCommands, 5);
+      return `${icon} ${label} ${density} ${count}`;
     })
-    .join(" • ");
+    .join("\n┃ ");
 
   return [
-    "╭─〔 🧭 *CATEGORÍAS DISPONIBLES* 〕",
-    `┃ _${list}_`,
-    "╰────────────────────⬣",
+    "╭─〔 🧭 *MAPA DE CATEGORÍAS* 〕",
+    `┃ ${list}`,
+    "╰────────────────────────⬣",
   ].join("\n");
 }
 
 function buildCategoryBlock(category, commands, primaryPrefix) {
   const icon = getCategoryIcon(category);
   const title = normalizeCategoryLabel(category);
+  const highlight = getCategoryHighlight(commands, primaryPrefix);
 
   const lines = [
     `╭─〔 ${icon} *${title}* 〕`,
+    `┃ ${getCategoryDescription(category, commands.length)}`,
+    `┃ Modo dominante: *${highlight.mainAccess}*`,
   ];
 
-  const commandLines = commands.map((item) => `┃ ✦ *${primaryPrefix}${item.name}*`);
+  const commandLines = commands
+    .slice(0, 5)
+    .map((item) => `┃ ✦ *${primaryPrefix}${item.name}*`);
   lines.push(...commandLines);
 
-  lines.push("╰────────────────────⬣");
+  if (commands.length > 5) {
+    lines.push(`┃ … y *${commands.length - 5}* mas`);
+  }
+
+  if (highlight.quick.length) {
+    lines.push(`┃ Preview: ${highlight.quick.join(" • ")}`);
+  }
+
+  lines.push("╰────────────────────────⬣");
 
   return lines.join("\n");
 }
 
 function buildFooter(primaryPrefix) {
   return [
-    "╭─〔 💡 *AYUDA RÁPIDA* 〕",
+    "╭─〔 💡 *ACCESOS RÁPIDOS* 〕",
     `┃ ✦ ${primaryPrefix}menu → abrir panel`,
-    `┃ ✦ ${primaryPrefix}menu descargas → ver categoría`,
+    `┃ ✦ ${primaryPrefix}menu descargas → ver categoria`,
     `┃ ✦ ${primaryPrefix}status → ver estado`,
     `┃ ✦ ${primaryPrefix}owner → soporte`,
-    "╰────────────────────⬣",
+    "╰────────────────────────⬣",
   ].join("\n");
 }
 
@@ -455,6 +501,7 @@ function buildCategoryRows(categoryNames, categories, primaryPrefix) {
     const label = normalizeCategoryLabel(category);
     const items = categories[category] || [];
     const count = items.length;
+    const highlight = getCategoryHighlight(items, primaryPrefix);
     const preview = items
       .slice(0, 3)
       .map((item) => `${primaryPrefix}${item.name}`)
@@ -463,7 +510,7 @@ function buildCategoryRows(categoryNames, categories, primaryPrefix) {
     return {
       header: icon,
       title: label,
-      description: `${getCategoryDescription(category, count)}${preview ? ` | ${preview}` : ""}`.slice(0, 72),
+      description: `${count} cmds · ${highlight.mainAccess}${preview ? ` · ${preview}` : ""}`.slice(0, 72),
       id: `${primaryPrefix}menu ${category}`,
     };
   });
@@ -476,21 +523,21 @@ function buildCategorySections(categoryNames, categories, primaryPrefix) {
 
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
-    "╭══════════════════⬣",
+    "╭━〔 ⚡ *FSOCIETY CONTROL CENTER* 〕━⬣",
     `┃ *${menuContext.title}*`,
     `┃ _${menuContext.subtitle}_`,
-    "┣══════════════════",
+    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "┃",
-    `┃ ✦ *Bot:* _${menuContext.botLine || settings?.botName || "Fsociety Bot"}_`,
-    `┃ ✦ *Owner:* _${settings?.ownerName || "Owner"}_`,
-    `┃ ✦ *Prefijo:* *${prefixLabel}*`,
-    `┃ ✦ *Activo:* _${uptime}_`,
-    `┃ ✦ *Categorías:* *${totalCategories}*`,
-    `┃ ✦ *Comandos reales:* *${totalCommands}*`,
+    `┃ 🧬 *Bot:* _${menuContext.botLine || settings?.botName || "Fsociety Bot"}_`,
+    `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
+    `┃ 🛠️ *Prefijos:* *${prefixLabel}*`,
+    `┃ ⏱️ *Activo:* _${uptime}_`,
+    `┃ 📚 *Categorías:* *${totalCategories}*`,
+    `┃ 🚀 *Comandos reales:* *${totalCommands}*`,
     "┃",
-    "┃ _Pulsa la lista para abrir categorías._",
-    `┃ _Tip: usa ${getPrimaryPrefix(settings)}menu descargas_`,
-    "╰══════════════════⬣",
+    "┃ _Pulsa la lista para navegar categoria por categoria._",
+    `┃ _Tip rapido: usa ${getPrimaryPrefix(settings)}menu descargas_`,
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
@@ -498,6 +545,7 @@ function buildCategoryMenuText(category, commands, primaryPrefix) {
   const icon = getCategoryIcon(category);
   const label = normalizeCategoryLabel(category);
   const count = commands.length;
+  const highlight = getCategoryHighlight(commands, primaryPrefix);
   const commandBlocks = chunkRows(commands, 8).map((chunk, index) => {
     const title =
       commands.length > 8
@@ -531,8 +579,13 @@ function buildCategoryMenuText(category, commands, primaryPrefix) {
     `┃ ${getCategoryDescription(category, count)}`,
     "┃",
     `┃ 📌 *Comandos:* ${count}`,
-    `┃ 🧾 *Detalle:* uso rapido y funcion`,
+    `┃ 🔓 *Publicos:* ${highlight.accessCounts.PUBLICO}`,
+    `┃ 🛡️ *Admin:* ${highlight.accessCounts.ADMIN}`,
+    `┃ 👑 *Owner:* ${highlight.accessCounts.OWNER}`,
     "┃",
+    highlight.quick.length
+      ? `┃ ⚡ *Inicio rapido:* ${highlight.quick.join(" • ")}`
+      : "┃ ⚡ *Inicio rapido:* categoria lista para usar",
     "┃ Usa el prefijo + comando para ejecutarlo.",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
     "",
