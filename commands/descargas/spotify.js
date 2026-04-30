@@ -8,6 +8,7 @@ import { buildDvyerUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 
 // Configuración
 const API_SPOTIFY_URL = buildDvyerUrl("/spotify");
+const API_SPOTIFY_SEARCH_URL = buildDvyerUrl("/spotifysearch");
 const TMP_DIR = path.join(os.tmpdir(), "spotify-downloads");
 const AUDIO_QUALITY = "128k";
 const REQUEST_TIMEOUT = 120000;
@@ -184,11 +185,10 @@ async function searchSpotifyTracks(query, limit = 10) {
 
     console.log(`[SPOTIFY] Buscando: ${cleanQuery}`);
 
-    // Usar modo link directamente con q como parámetro
-    const response = await axios.get(API_SPOTIFY_URL, {
+    const response = await axios.get(API_SPOTIFY_SEARCH_URL, {
       params: withDvyerApiKey({
         q: cleanQuery,
-        mode: "link",
+        limit: Math.max(1, Math.min(Number(limit || 10), 20)),
         lang: "es18",
       }),
       timeout: REQUEST_TIMEOUT,
@@ -209,6 +209,7 @@ async function searchSpotifyTracks(query, limit = 10) {
         withDvyerApiKey({
           q: cleanQuery,
           mode: "link",
+          limit: Math.max(1, Math.min(Number(limit || 10), 20)),
           lang: "es18",
         })
       ).toString();
@@ -274,9 +275,9 @@ function parseSpotifyResults(data) {
     duration: track.duration || "??:??",
     thumbnail: track.thumbnail || null,
     spotifyUrl: track.spotify_url || "",
-    downloadUrl: track.download_url_full || track.download_url || "",
+    downloadUrl: track.download_url_full || track.download_url || track.download_path || "",
     fileName: track.filename || `${track.title} - ${track.artist}.mp3`,
-  })).filter(r => r.title && r.downloadUrl);
+  })).filter(r => r.title && r.spotifyUrl);
 }
 
 // ============ OBTENER INFO DE DESCARGA ============
