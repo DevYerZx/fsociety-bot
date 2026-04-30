@@ -482,7 +482,6 @@ async function sendTikTokVideo(
         mimetype: "video/mp4",
         fileName,
         caption: `${caption}\n\n📦 Enviado como documento porque pesa mucho.`,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -498,7 +497,6 @@ async function sendTikTokVideo(
         mimetype: "video/mp4",
         fileName,
         caption,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -514,7 +512,6 @@ async function sendTikTokVideo(
         mimetype: "video/mp4",
         fileName,
         caption: `${caption}\n\n📦 Enviado como documento por compatibilidad.`,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -554,8 +551,6 @@ export default {
     try {
       const videoUrl = resolveTikTokUrl(ctx);
       const qualityHint = resolveTikTokQuality(ctx);
-      const qualityLabel = formatTikTokQualityLabel(qualityHint);
-
       if (!videoUrl) {
         cooldowns.delete(userId);
 
@@ -584,20 +579,6 @@ export default {
         cooldowns.delete(userId);
         return;
       }
-
-      await sock.sendMessage(
-        from,
-        {
-          text:
-            `╭━━〔 ⬇️ *PREPARANDO TIKTOK* 〕━━⬣\n` +
-            `┃ 🎬 *API:* DVYER\n` +
-            `┃ 🎞️ *Calidad:* ${qualityLabel}\n` +
-            `┃ 🔑 *Key:* Activa\n` +
-            `╰━━━━━━━━━━━━━━━━━━⬣`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
 
       const meta = await requestTikTokMeta(videoUrl, qualityHint);
 

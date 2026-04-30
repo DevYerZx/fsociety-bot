@@ -407,7 +407,6 @@ async function sendInstagramMedia(sock, from, quoted, { filePath, fileName, medi
       {
         image: { url: filePath },
         caption,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -422,7 +421,6 @@ async function sendInstagramMedia(sock, from, quoted, { filePath, fileName, medi
         mimetype: "video/mp4",
         fileName,
         caption: `${caption}\n📦 Enviado como documento`,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -437,7 +435,6 @@ async function sendInstagramMedia(sock, from, quoted, { filePath, fileName, medi
         mimetype: "video/mp4",
         fileName,
         caption,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -452,7 +449,6 @@ async function sendInstagramMedia(sock, from, quoted, { filePath, fileName, medi
         mimetype: "video/mp4",
         fileName,
         caption: `${caption}\n📦 Enviado como documento`,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -511,36 +507,10 @@ export default {
         return;
       }
 
-      await sock.sendMessage(
-        from,
-        {
-          text: `📸 Preparando Instagram...\n\n🌐 ${API_BASE}\n🎯 Pick: ${pick}`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
-
       const info = await requestInstagramInfo(postUrl, pick, {
         signal: abortSignal,
       });
       throwIfAborted(abortSignal);
-
-      if (info.thumbnail) {
-        const previewLines = ["api dvyer", "", `📸 ${info.title}`];
-        if (info.username) previewLines.push(`👤 ${info.username}`);
-        if (info.count > 1) previewLines.push(`🧩 Elementos: ${info.count}`);
-        previewLines.push(`🎯 Pick: ${info.pick}`);
-
-        await sock.sendMessage(
-          from,
-          {
-            image: { url: info.thumbnail },
-            caption: previewLines.join("\n"),
-            ...global.channelInfo,
-          },
-          quoted
-        );
-      }
 
       rawPath = path.join(TMP_DIR, `${Date.now()}-raw-${info.fileName}`);
       const downloaded = await downloadInstagramFile(postUrl, pick, rawPath, {

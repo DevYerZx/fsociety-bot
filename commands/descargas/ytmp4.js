@@ -543,17 +543,16 @@ async function sendRemoteMp4(sock, from, quoted, data) {
   try {
     await sock.sendMessage(
       from,
-      {
-        video: { url: data.remoteUrl },
-        mimetype: "video/mp4",
-        fileName: data.fileName,
-        caption,
-        gifPlayback: false,
-        jpegThumbnail: thumbBuffer || undefined,
-        ...global.channelInfo,
-      },
-      quoted
-    );
+        {
+          video: { url: data.remoteUrl },
+          mimetype: "video/mp4",
+          fileName: data.fileName,
+          caption,
+          gifPlayback: false,
+          jpegThumbnail: thumbBuffer || undefined,
+        },
+        quoted
+      );
 
     return "video";
   } catch {}
@@ -565,7 +564,6 @@ async function sendRemoteMp4(sock, from, quoted, data) {
       mimetype: "video/mp4",
       fileName: data.fileName,
       caption,
-      ...global.channelInfo,
     },
     quoted
   );
@@ -588,7 +586,6 @@ async function sendLocalMp4(sock, from, quoted, data) {
           caption,
           gifPlayback: false,
           jpegThumbnail: thumbBuffer || undefined,
-          ...global.channelInfo,
         },
         quoted
       );
@@ -604,7 +601,6 @@ async function sendLocalMp4(sock, from, quoted, data) {
       mimetype: "video/mp4",
       fileName: data.fileName,
       caption,
-      ...global.channelInfo,
     },
     quoted
   );
@@ -731,15 +727,6 @@ export default {
         await reactSafe(sock, msg, "✅");
         return;
       } catch {}
-
-      await sock.sendMessage(
-        from,
-        {
-          text: "⌛ El envío rápido falló. Usando respaldo local...",
-          ...global.channelInfo,
-        },
-        quoted
-      );
 
       throwIfAborted(abortSignal);
 

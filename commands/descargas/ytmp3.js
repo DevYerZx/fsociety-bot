@@ -662,36 +662,6 @@ function buildErrorMessage(errorText) {
   ].join("\n");
 }
 
-async function sendDownloadingImage(sock, from, quoted, data = {}) {
-  const caption = buildDownloadingCaption(data);
-
-  if (data.thumbnail) {
-    try {
-      await sock.sendMessage(
-        from,
-        {
-          image: { url: data.thumbnail },
-          caption,
-          ...global.channelInfo,
-        },
-        quoted
-      );
-      return;
-    } catch (error) {
-      console.error("SEND THUMBNAIL ERROR:", error?.message || error);
-    }
-  }
-
-  await sock.sendMessage(
-    from,
-    {
-      text: caption,
-      ...global.channelInfo,
-    },
-    quoted
-  );
-}
-
 async function sendRemoteMp3(sock, from, quoted, data) {
   await sock.sendMessage(
     from,
@@ -700,7 +670,6 @@ async function sendRemoteMp3(sock, from, quoted, data) {
       mimetype: "audio/mpeg",
       fileName: data.fileName,
       ptt: false,
-      ...global.channelInfo,
     },
     quoted
   );
@@ -718,7 +687,6 @@ async function sendLocalMp3(sock, from, quoted, data) {
           mimetype: "audio/mpeg",
           fileName: data.fileName,
           ptt: false,
-          ...global.channelInfo,
         },
         quoted
       );
@@ -731,14 +699,13 @@ async function sendLocalMp3(sock, from, quoted, data) {
 
   await sock.sendMessage(
     from,
-    {
-      document: { url: data.tempPath },
-      mimetype: "audio/mpeg",
-      fileName: data.fileName,
-      ...global.channelInfo,
-    },
-    quoted
-  );
+      {
+        document: { url: data.tempPath },
+        mimetype: "audio/mpeg",
+        fileName: data.fileName,
+      },
+      quoted
+    );
 
   return "document";
 }
@@ -864,8 +831,6 @@ export default {
         ...apiData,
         title: apiData.title || resolved.title,
       };
-
-      await sendDownloadingImage(sock, from, quoted, finalData);
 
       if (!downloadPolicy.isSubbot) {
         try {

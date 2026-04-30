@@ -473,7 +473,6 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, mimety
           mimetype: "audio/mpeg",
           fileName,
           caption: `🎵 *${title}*\n🎤 ${artistLabel}\n\n📦 Documento`,
-          ...global.channelInfo,
         },
         quoted
       );
@@ -487,7 +486,6 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, mimety
         mimetype: mimetype || "audio/mpeg",
         ptt: false,
         fileName,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -501,7 +499,6 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, mimety
         mimetype: "audio/mpeg",
         fileName,
         caption: `🎵 *${title}*\n🎤 ${artistLabel}\n\n📦 Documento`,
-        ...global.channelInfo,
       },
       quoted
     );
@@ -676,54 +673,13 @@ export default {
       }
 
       if (!isSpotifyUrl(userInput)) {
-        await sock.sendMessage(
-          from,
-          {
-            text: `🔎 Buscando: ${clipText(userInput, 80)}\n⏳ Espera...`,
-            ...global.channelInfo,
-          },
-          quoted
-        );
-
         const results = await searchSpotifyTracks(userInput, 10);
         await sendSpotifySearchPicker({ sock, from, quoted, settings }, userInput, results);
         cooldowns.delete(userId);
         return;
       }
 
-      await sock.sendMessage(
-        from,
-        {
-          text: `⬇️ Preparando...\n⏳ Espera`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
-
       const info = await getSpotifyDownloadInfo(userInput);
-
-      await sock.sendMessage(
-        from,
-        info.thumbnail
-          ? {
-              image: { url: info.thumbnail },
-              caption:
-                `🎵 *${clipText(info.title, 80)}*\n` +
-                `🎤 ${clipText(info.artist, 60)}\n` +
-                `${info.duration ? `⏱ ${info.duration}\n` : ""}` +
-                `⬇️ Descargando...`,
-              ...global.channelInfo,
-            }
-          : {
-              text:
-                `🎵 *${clipText(info.title, 80)}*\n` +
-                `🎤 ${clipText(info.artist, 60)}\n` +
-                `${info.duration ? `⏱ ${info.duration}\n` : ""}` +
-                `⬇️ Descargando...`,
-              ...global.channelInfo,
-            },
-        quoted
-      );
 
       const stamp = Date.now();
       rawAudioPath = path.join(TMP_DIR, `${stamp}-spotify.bin`);
@@ -753,7 +709,7 @@ export default {
         }
       }
 
-      const sentAs = await sendSpotifyAudio(sock, from, quoted, {
+      await sendSpotifyAudio(sock, from, quoted, {
         filePath: sendPath,
         fileName: sendName,
         mimetype: sendMime,
@@ -761,15 +717,6 @@ export default {
         artist: info.artist,
         size: downloaded.size,
       });
-
-      await sock.sendMessage(
-        from,
-        {
-          text: `✅ Descargado como ${sentAs}`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
 
     } catch (error) {
       console.error("SPOTIFY ERROR:", error.message || String(error));
