@@ -461,6 +461,43 @@ async function requestYtmp3DlStream(videoUrl) {
   return response;
 }
 
+async function requestYtmp3DlFileDownload(videoUrl) {
+  const response = await axios.get(API_YTMP3DL_URL, {
+    responseType: "stream",
+    timeout: REQUEST_TIMEOUT,
+    params: {
+      mode: "file",
+      quality: "128KBPS",
+      url: videoUrl,
+      ...withDvyerApiKey(),
+    },
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+      Accept: "*/*",
+    },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 10,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (response.status >= 400) {
+    const errorText = await readStreamToText(response.data).catch(() => "");
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(errorText);
+    } catch {}
+
+    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
+  }
+
+  return response;
+}
+
 async function requestRemoteYtmp3Stream(remoteUrl) {
   const response = await axios.get(remoteUrl, {
     responseType: "stream",
@@ -545,6 +582,11 @@ async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = 
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3dl.mp3`);
 
   const attempts = [
+    async () => {
+      const response = await requestYtmp3DlFileDownload(videoUrl);
+      return await saveResponseToFile(response, outputPath, preferredName);
+    },
+
     async () => {
       if (!knownLinkData?.remoteUrl) {
         throw new Error("No hay enlace remoto conocido.");
