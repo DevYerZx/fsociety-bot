@@ -2,6 +2,7 @@ import yts from "yt-search";
 
 const MAX_RESULTS = 5;
 const PICK_TOKEN_PATTERN = /^--pick=(\d{1,2})$/i;
+const PLAY_SOURCE_URL = "https://dv-yer-api.online";
 
 function getPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
@@ -121,6 +122,7 @@ function buildResultCaption(query, video, currentIndex, total) {
     `┃ ⏱️ *Duración:* ${duration}`,
     `┃ 👁️ *Views:* ${views || "No definido"}`,
     `┃ 🗓️ *Publicado:* ${published}`,
+    `┃ 🌐 *API:* ${PLAY_SOURCE_URL}`,
     "┃",
     "┃ ✦ Toca *MP3* o *MP4* para descargar",
     currentIndex < total - 1 ? "┃ ✦ Usa *Siguiente* para ver otro resultado" : "┃ ✦ Este es el último resultado disponible",
@@ -142,6 +144,7 @@ function buildButtonPanel(query, video, currentIndex, total) {
     currentIndex < total - 1 ? "┃ • Siguiente = próximo resultado" : "┃ • Último resultado disponible",
     "┃",
     `┃ 🔎 ${clipText(query, 44)}`,
+    `┃ 🌐 ${PLAY_SOURCE_URL}`,
     "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
@@ -158,7 +161,7 @@ async function sendPlayCard(sock, from, quoted, query, video, currentIndex, vide
           image: { url: video.thumbnail },
           caption,
           buttons,
-          footer: "FSOCIETY BOT • YouTube",
+          footer: "FSOCIETY BOT • YouTube • dv-yer-api.online",
           headerType: 4,
           ...global.channelInfo,
         },
@@ -174,7 +177,7 @@ async function sendPlayCard(sock, from, quoted, query, video, currentIndex, vide
       {
         text: buildButtonPanel(query, video, currentIndex, videos.length),
         buttons,
-        footer: "FSOCIETY BOT • YouTube",
+        footer: "FSOCIETY BOT • YouTube • dv-yer-api.online",
         headerType: 1,
         ...global.channelInfo,
       },
