@@ -51,6 +51,7 @@ const HTTPS_AGENT = new https.Agent({
 const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
 const DELETE_RETRIES = 4;
 const DELETE_RETRY_DELAY_MS = 120;
+const REMOTE_SEND_TIMEOUT_MS = 25_000;
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -60,6 +61,20 @@ function waitMs(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, Math.max(1, Number(ms || 0)));
   });
+}
+
+async function withTimeout(promise, timeoutMs, label = "timeout") {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), Math.max(1000, Number(timeoutMs || 0)));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function deleteFileSafe(filePath) {
@@ -888,7 +903,11 @@ export default {
       await sendDownloadingImage(sock, from, quoted, finalData);
       let sentMode = null;
       try {
-        sentMode = await sendRemoteMp3(sock, from, quoted, finalData);
+        sentMode = await withTimeout(
+          sendRemoteMp3(sock, from, quoted, finalData),
+          REMOTE_SEND_TIMEOUT_MS,
+          "remote_send_timeout"
+        );
       } catch (remoteSendError) {
         console.error("YTMP3DL REMOTE SEND ERROR:", remoteSendError?.message || remoteSendError);
         const downloaded = await downloadYtmp3DlFallback(
