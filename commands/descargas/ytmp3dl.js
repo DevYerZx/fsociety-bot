@@ -361,6 +361,27 @@ function pickDownloadUrl(data, baseUrl) {
   return candidates[0] || "";
 }
 
+function collectDownloadUrls(data, baseUrl) {
+  const seen = new Set();
+  return [
+    data?.download_url_full,
+    data?.stream_url_full,
+    data?.download_url,
+    data?.stream_url,
+    data?.url,
+    data?.direct_url,
+    data?.provider_direct_url,
+  ]
+    .map((item) => resolveAbsoluteUrl(item, baseUrl))
+    .filter(Boolean)
+    .sort((a, b) => scoreUrl(b) - scoreUrl(a))
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+}
+
 async function resolveInputToUrl(input) {
   const directUrl = extractYouTubeUrl(input);
 
@@ -422,7 +443,8 @@ async function getYtmp3DlData(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrl = pickDownloadUrl(data, API_YTMP3DL_URL);
+  const remoteUrls = collectDownloadUrls(data, API_YTMP3DL_URL);
+  const remoteUrl = remoteUrls[0] || "";
 
   if (!remoteUrl) {
     throw new Error("La API /ytmp3dl no devolvio link valido.");
@@ -430,6 +452,7 @@ async function getYtmp3DlData(videoUrl) {
 
   return {
     remoteUrl,
+    remoteUrls,
     title: cleanText(data.title || "YouTube MP3"),
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
     thumbnail: data.thumbnail || null,
@@ -603,17 +626,32 @@ async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = 
     },
 
     async () => {
-      if (!knownLinkData?.remoteUrl) {
+      const remoteCandidates = Array.isArray(knownLinkData?.remoteUrls)
+        ? knownLinkData.remoteUrls
+        : knownLinkData?.remoteUrl
+        ? [knownLinkData.remoteUrl]
+        : [];
+
+      if (!remoteCandidates.length) {
         throw new Error("No hay enlace remoto conocido.");
       }
 
-      const response = await requestRemoteYtmp3Stream(knownLinkData.remoteUrl);
+      let lastError = null;
+      for (const remoteCandidate of remoteCandidates) {
+        try {
+          const response = await requestRemoteYtmp3Stream(remoteCandidate);
+          return await saveResponseToFile(
+            response,
+            outputPath,
+            knownLinkData.fileName || preferredName
+          );
+        } catch (error) {
+          lastError = error;
+          await deleteFileSafe(outputPath);
+        }
+      }
 
-      return await saveResponseToFile(
-        response,
-        outputPath,
-        knownLinkData.fileName || preferredName
-      );
+      throw lastError || new Error("No se pudo abrir ningun enlace remoto conocido.");
     },
 
     async () => {
@@ -730,19 +768,36 @@ async function sendDownloadingImage(sock, from, quoted, data = {}) {
 }
 
 async function sendRemoteMp3(sock, from, quoted, data) {
-  await sock.sendMessage(
-    from,
-    {
-      audio: { url: data.remoteUrl },
-      mimetype: "audio/mpeg",
-      fileName: data.fileName,
-      ptt: false,
-      ...global.channelInfo,
-    },
-    quoted
-  );
+  const remoteCandidates = Array.isArray(data?.remoteUrls)
+    ? data.remoteUrls
+    : data?.remoteUrl
+    ? [data.remoteUrl]
+    : [];
 
-  return "audio";
+  let lastError = null;
+
+  for (const remoteCandidate of remoteCandidates) {
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          audio: { url: remoteCandidate },
+          mimetype: "audio/mpeg",
+          fileName: data.fileName,
+          ptt: false,
+          ...global.channelInfo,
+        },
+        quoted
+      );
+
+      return "audio";
+    } catch (error) {
+      lastError = error;
+      console.error("SEND REMOTE MP3 URL ERROR:", remoteCandidate, error?.message || error);
+    }
+  }
+
+  throw lastError || new Error("No se pudo enviar el MP3 remoto.");
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
