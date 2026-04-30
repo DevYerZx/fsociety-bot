@@ -20,9 +20,9 @@ import {
   runWithProviderCircuit,
 } from "../../lib/provider-guard.js";
 
-const API_YTMP3DL_URL = "https://dv-yer-api.online/ytmp3dl";
+const API_YTMP3_URL = "https://dv-yer-api.online/ytmp3";
 
-const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3dl");
+const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
 
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
 const API_LINK_TIMEOUT = 90_000;
@@ -34,7 +34,7 @@ const MIN_AUDIO_BYTES = 20 * 1024;
 const RATE_LIMIT_MAX = 6;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-const PROVIDER_NAME = "dvyer_ytmp3dl";
+const PROVIDER_NAME = "dvyer_ytmp3";
 
 const HTTP_AGENT = new http.Agent({
   keepAlive: true,
@@ -377,13 +377,12 @@ async function resolveInputToUrl(input) {
   };
 }
 
-async function getYtmp3DlData(videoUrl) {
-  const response = await axios.get(API_YTMP3DL_URL, {
+async function getYtmp3Data(videoUrl) {
+  const response = await axios.get(API_YTMP3_URL, {
     timeout: API_LINK_TIMEOUT,
     params: {
       mode: "link",
       url: videoUrl,
-      quality: "LOW",
       ...withDvyerApiKey(),
     },
     headers: {
@@ -407,10 +406,10 @@ async function getYtmp3DlData(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrl = pickDownloadUrl(data, API_YTMP3DL_URL);
+  const remoteUrl = pickDownloadUrl(data, API_YTMP3_URL);
 
   if (!remoteUrl) {
-    throw new Error("La API /ytmp3dl no devolvió link válido.");
+    throw new Error("La API /ytmp3 no devolvio link valido.");
   }
 
   return {
@@ -418,20 +417,19 @@ async function getYtmp3DlData(videoUrl) {
     title: cleanText(data.title || "YouTube MP3"),
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
     thumbnail: data.thumbnail || null,
-    provider: data.provider || "vidssave",
+    provider: data.provider || "ytmp3",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
   };
 }
 
-async function requestYtmp3DlStream(videoUrl) {
-  const response = await axios.get(API_YTMP3DL_URL, {
+async function requestYtmp3Stream(videoUrl) {
+  const response = await axios.get(API_YTMP3_URL, {
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
     params: {
       mode: "stream",
       url: videoUrl,
-      quality: "LOW",
       ...withDvyerApiKey(),
     },
     headers: {
@@ -539,10 +537,10 @@ async function saveResponseToFile(response, outputPath, fallbackName) {
   };
 }
 
-async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = null) {
+async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null) {
   await ensureTmpDir();
 
-  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3dl.mp3`);
+  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
 
   const attempts = [
     async () => {
@@ -560,13 +558,13 @@ async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = 
     },
 
     async () => {
-      const response = await requestYtmp3DlStream(videoUrl);
+      const response = await requestYtmp3Stream(videoUrl);
 
       return await saveResponseToFile(response, outputPath, preferredName);
     },
 
     async () => {
-      const linkData = await getYtmp3DlData(videoUrl);
+      const linkData = await getYtmp3Data(videoUrl);
       const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
 
       return await saveResponseToFile(
@@ -726,7 +724,7 @@ export default {
   command: ["ytmp3", "yta", "ytaudio"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube usando ytmp3dl rápido",
+  description: "Descarga audio MP3 de YouTube usando ytmp3 rapido",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -754,7 +752,7 @@ export default {
       );
 
       const limitState = checkRateLimit({
-        scope: `ytmp3dl:${identity}`,
+        scope: `ytmp3:${identity}`,
         limit: RATE_LIMIT_MAX,
         windowMs: RATE_LIMIT_WINDOW_MS,
       });
@@ -806,7 +804,7 @@ export default {
       }
 
       downloadCharge = await chargeDownloadRequest(ctx, {
-        feature: "ytmp3dl",
+        feature: "ytmp3",
         videoUrl: resolved.url,
       });
 
@@ -817,7 +815,7 @@ export default {
 
       const apiData = await runWithProviderCircuit(
         PROVIDER_NAME,
-        () => getYtmp3DlData(resolved.url),
+        () => getYtmp3Data(resolved.url),
         {
           failureThreshold: 4,
           cooldownMs: 90_000,
@@ -854,7 +852,7 @@ export default {
         console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
       }
 
-      const downloaded = await downloadYtmp3DlFallback(
+      const downloaded = await downloadYtmp3Fallback(
         resolved.url,
         finalData.fileName || resolved.title,
         finalData
@@ -872,11 +870,11 @@ export default {
       sentSuccessfully = true;
       await react(sock, msg, "✅");
     } catch (error) {
-      console.error("YTMP3DL ERROR:", error?.message || error);
+      console.error("YTMP3 ERROR:", error?.message || error);
 
       if (!sentSuccessfully) {
         refundDownloadCharge(ctx, downloadCharge, {
-          feature: "ytmp3dl",
+          feature: "ytmp3",
           error: String(error?.message || error || "unknown_error"),
         });
       }
