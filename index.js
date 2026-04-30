@@ -46,6 +46,7 @@ import {
 import { applyStoredRuntimeVars } from "./lib/runtime-vars.js";
 import { writeJsonAtomic as writeAtomicJsonFile } from "./lib/json-store.js";
 import { getProviderGuardSnapshot } from "./lib/provider-guard.js";
+import { assertSubbotCommandAllowed } from "./lib/subbot-download-policy.js";
 import { touchEconomyProfile } from "./commands/economia/_shared.js";
 
 dotenv.config();
@@ -511,6 +512,29 @@ function ensureSystemSettings(currentSettings) {
   currentSettings.system.errorVisibilityMode = normalizeErrorVisibilityMode(
     currentSettings.system.errorVisibilityMode
   );
+  if (!isPlainObject(currentSettings.system.subbotDownloads)) {
+    currentSettings.system.subbotDownloads = {};
+  }
+  currentSettings.system.subbotDownloads.enabled =
+    currentSettings.system.subbotDownloads.enabled !== false;
+  currentSettings.system.subbotDownloads.maxBytes = Math.max(
+    1 * 1024 * 1024,
+    Math.min(
+      200 * 1024 * 1024,
+      Math.floor(
+        Number(currentSettings.system.subbotDownloads.maxBytes || 35 * 1024 * 1024)
+      )
+    )
+  );
+  currentSettings.system.subbotDownloads.vipUnlimited =
+    currentSettings.system.subbotDownloads.vipUnlimited !== false;
+  currentSettings.system.subbotDownloads.blockedCommands = Array.isArray(
+    currentSettings.system.subbotDownloads.blockedCommands
+  )
+    ? currentSettings.system.subbotDownloads.blockedCommands
+        .map((item) => String(item || "").trim().toLowerCase())
+        .filter(Boolean)
+    : [];
 
   if (!isPlainObject(currentSettings.system.economy)) {
     currentSettings.system.economy = {};
@@ -6872,6 +6896,47 @@ async function banner() {
 
 // ================= CARGAR COMANDOS =================
 
+function normalizeLoadedCommandMetadata(cmd) {
+  if (!cmd || typeof cmd !== "object") {
+    return cmd;
+  }
+
+  const rawCommandList = [];
+
+  if (cmd.name) {
+    rawCommandList.push(cmd.name);
+  }
+
+  if (Array.isArray(cmd.command)) {
+    rawCommandList.push(...cmd.command);
+  } else if (cmd.command) {
+    rawCommandList.push(cmd.command);
+  }
+
+  if (Array.isArray(cmd.commands)) {
+    rawCommandList.push(...cmd.commands);
+  } else if (cmd.commands) {
+    rawCommandList.push(cmd.commands);
+  }
+
+  const normalizedCommands = [...new Set(
+    rawCommandList
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean)
+  )];
+
+  cmd.command = normalizedCommands;
+  cmd.name = String(cmd.name || normalizedCommands[0] || "").trim().toLowerCase();
+  cmd.category = String(cmd.category || cmd.categoria || "otros").trim().toLowerCase() || "otros";
+  cmd.categoria = cmd.category;
+  cmd.description = String(cmd.description || cmd.desc || cmd.help || "").replace(/\s+/g, " ").trim();
+  cmd.ownerOnly = cmd.ownerOnly === true;
+  cmd.adminOnly = cmd.adminOnly === true || cmd.groupAdminOnly === true;
+  cmd.hidden = cmd.hidden === true || cmd.hide === true || cmd.oculto === true;
+
+  return cmd;
+}
+
 async function cargarComandos() {
   const base = path.join(__dirname, "commands");
   comandos.clear();
@@ -6898,7 +6963,7 @@ async function cargarComandos() {
         const mtimeMs = Number(fs.statSync(ruta).mtimeMs || Date.now());
         fileUrl.searchParams.set("v", String(Math.floor(mtimeMs)));
         const mod = await import(fileUrl.href);
-        const cmd = mod.default;
+        const cmd = normalizeLoadedCommandMetadata(mod.default);
 
         if (!cmd || typeof cmd.run !== "function") continue;
 
@@ -6913,14 +6978,13 @@ async function cargarComandos() {
         if (typeof cmd.onGroupUpdate === "function") groupUpdateHookModules.push(cmd);
         if (typeof cmd.onMessageDelete === "function") messageDeleteHookModules.push(cmd);
 
-        const nombres = [];
-
-        if (cmd.name) nombres.push(cmd.name);
-
-        if (cmd.command) {
-          if (Array.isArray(cmd.command)) nombres.push(...cmd.command);
-          else nombres.push(cmd.command);
-        }
+        const nombres = Array.isArray(cmd.command)
+          ? cmd.command
+          : cmd.command
+            ? [cmd.command]
+            : cmd.name
+              ? [cmd.name]
+              : [];
 
         for (const nombre of nombres) {
           comandos.set(String(nombre).toLowerCase(), cmd);
@@ -8848,6 +8912,9 @@ async function handleIncomingMessages(botState, sock, messages) {
       if (!allowed) continue;
       const blockedByMaintenance = await isBlockedByMaintenance(cmd, commandContext);
       if (blockedByMaintenance) continue;
+      if (isDownloadCommand(cmd)) {
+        assertSubbotCommandAllowed(commandContext, commandData.commandName);
+      }
 
       activeRequestId = nextRuntimeRequestId("cmd");
       commandData.requestId = activeRequestId;

@@ -7,6 +7,10 @@ import { spawn } from "child_process";
 import { getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { bindAbort, buildAbortError, throwIfAborted } from "../../lib/command-abort.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import {
+  assertDownloadWithinPolicy,
+  getDownloadExecutionPolicy,
+} from "../../lib/subbot-download-policy.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_INSTAGRAM_URL = `${API_BASE}/instagram`;
@@ -197,6 +201,7 @@ async function requestInstagramInfo(postUrl, pick, options = {}) {
 
 async function downloadInstagramFile(postUrl, pick, outputPath, options = {}) {
   const signal = options?.signal || null;
+  const maxMediaBytes = Math.max(30_000, Number(options?.maxBytes || MAX_MEDIA_BYTES));
   throwIfAborted(signal);
 
   let response;
@@ -239,7 +244,7 @@ async function downloadInstagramFile(postUrl, pick, outputPath, options = {}) {
   }
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
-  if (contentLength && contentLength > MAX_MEDIA_BYTES) {
+  if (contentLength && contentLength > maxMediaBytes) {
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
 
@@ -247,7 +252,7 @@ async function downloadInstagramFile(postUrl, pick, outputPath, options = {}) {
 
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
-    if (downloaded > MAX_MEDIA_BYTES) {
+    if (downloaded > maxMediaBytes) {
       response.data.destroy(new Error("El archivo es demasiado grande para enviarlo por WhatsApp."));
     }
   });
@@ -285,10 +290,11 @@ async function downloadInstagramFile(postUrl, pick, outputPath, options = {}) {
     throw new Error("El archivo descargado es inválido.");
   }
 
-  if (size > MAX_MEDIA_BYTES) {
+  if (size > maxMediaBytes) {
     deleteFileSafe(outputPath);
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
+  assertDownloadWithinPolicy(options?.ctx || {}, size, "archivos");
 
   return {
     tempPath: outputPath,
@@ -468,6 +474,7 @@ export default {
     let rawPath = null;
     let finalPath = null;
     let downloadCharge = null;
+    const maxMediaBytes = resolveMaxMediaBytes(ctx);
 
     if (COOLDOWN_TIME > 0) {
       const until = cooldowns.get(userId);
@@ -538,6 +545,8 @@ export default {
       rawPath = path.join(TMP_DIR, `${Date.now()}-raw-${info.fileName}`);
       const downloaded = await downloadInstagramFile(postUrl, pick, rawPath, {
         signal: abortSignal,
+        ctx,
+        maxBytes: maxMediaBytes,
       });
 
       let sendPath = downloaded.tempPath;
@@ -559,6 +568,7 @@ export default {
         if (!sendSize || sendSize < 100000) {
           throw new Error("El video convertido es inválido.");
         }
+        assertDownloadWithinPolicy(ctx, sendSize, "videos");
       }
 
       throwIfAborted(abortSignal);
@@ -593,3 +603,7 @@ export default {
     }
   },
 };
+function resolveMaxMediaBytes(ctx) {
+  const policy = getDownloadExecutionPolicy(ctx, "instagram");
+  return Math.min(MAX_MEDIA_BYTES, Number(policy?.maxBytes || MAX_MEDIA_BYTES));
+}

@@ -16,6 +16,10 @@ import {
   chargeDownloadRequest,
   refundDownloadCharge,
 } from "../economia/download-access.js";
+import {
+  assertDownloadWithinPolicy,
+  getDownloadExecutionPolicy,
+} from "../../lib/subbot-download-policy.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_TIKTOK_URL = `${API_BASE}/ttdlmp4`;
@@ -26,6 +30,11 @@ const API_LANG = "es";
 const REQUEST_TIMEOUT = 60000;
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 40 * 1024 * 1024;
+
+function resolveMaxVideoBytes(ctx) {
+  const policy = getDownloadExecutionPolicy(ctx, "tiktok");
+  return Math.min(MAX_VIDEO_BYTES, Number(policy?.maxBytes || MAX_VIDEO_BYTES));
+}
 
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-tiktok");
 const TMP_FILE_PREFIX = "dvyer-tt-";
@@ -310,9 +319,11 @@ async function downloadTikTokViaApi(
   videoUrl,
   fileName,
   qualityHint,
-  directUrl = ""
+  directUrl = "",
+  options = {}
 ) {
   ensureTmpDir();
+  const maxVideoBytes = Math.max(100_000, Number(options?.maxBytes || MAX_VIDEO_BYTES));
 
   const finalName = normalizeMp4Name(fileName || "tiktok.mp4");
 
@@ -374,7 +385,7 @@ async function downloadTikTokViaApi(
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
 
-  if (contentLength && contentLength > MAX_VIDEO_BYTES) {
+  if (contentLength && contentLength > maxVideoBytes) {
     throw new Error("El video es demasiado grande para enviarlo por WhatsApp.");
   }
 
@@ -383,7 +394,7 @@ async function downloadTikTokViaApi(
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
 
-    if (downloaded > MAX_VIDEO_BYTES) {
+    if (downloaded > maxVideoBytes) {
       response.data.destroy(
         new Error("El video es demasiado grande para enviarlo por WhatsApp.")
       );
@@ -427,10 +438,11 @@ async function downloadTikTokViaApi(
     throw new Error("El archivo descargado es inválido.");
   }
 
-  if (size > MAX_VIDEO_BYTES) {
+  if (size > maxVideoBytes) {
     deleteFileSafe(tempPath);
     throw new Error("El video es demasiado grande para enviarlo por WhatsApp.");
   }
+  assertDownloadWithinPolicy(options?.ctx || {}, size, "videos");
 
   const downloadedName = parseContentDispositionFileName(
     response.headers?.["content-disposition"]
@@ -524,6 +536,7 @@ export default {
 
     let tempPath = null;
     let downloadCharge = null;
+    const maxVideoBytes = resolveMaxVideoBytes(ctx);
 
     if (COOLDOWN_TIME > 0) {
       const until = cooldowns.get(userId);
@@ -592,7 +605,11 @@ export default {
         videoUrl,
         meta.fileName,
         qualityHint,
-        meta.downloadUrl
+        meta.downloadUrl,
+        {
+          ctx,
+          maxBytes: maxVideoBytes,
+        }
       );
 
       tempPath = downloaded.tempPath;

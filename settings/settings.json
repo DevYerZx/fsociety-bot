@@ -138,6 +138,26 @@
     "mainBotPhoto": "assets/profile/fsociety-bot-profile",
     "subbotBioTemplate": "Subbot Fsociety activo",
     "subbotPhoto": "",
+    "subbotDownloads": {
+      "enabled": true,
+      "maxBytes": 36700160,
+      "vipUnlimited": true,
+      "blockedCommands": [
+        "apk",
+        "app",
+        "windows",
+        "win",
+        "window",
+        "mac",
+        "macos",
+        "mediafire",
+        "mega",
+        "ytmp4",
+        "facebook",
+        "fb",
+        "cuevana"
+      ]
+    },
     "economy": {
       "downloadBillingEnabled": false,
       "dailyDownloadRequests": 50,

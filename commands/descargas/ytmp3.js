@@ -14,6 +14,10 @@ import {
   refundDownloadCharge,
 } from "../economia/download-access.js";
 import {
+  assertDownloadWithinPolicy,
+  getDownloadExecutionPolicy,
+} from "../../lib/subbot-download-policy.js";
+import {
   buildRateIdentity,
   checkRateLimit,
   formatRetrySeconds,
@@ -51,6 +55,14 @@ const HTTPS_AGENT = new https.Agent({
 const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
 const DELETE_RETRIES = 4;
 const DELETE_RETRY_DELAY_MS = 120;
+
+function resolveMaxAudioBytes(ctx) {
+  const policy = getDownloadExecutionPolicy(ctx, "ytmp3");
+  return Math.max(
+    MIN_AUDIO_BYTES,
+    Math.min(MAX_AUDIO_BYTES, Number(policy?.maxBytes || MAX_AUDIO_BYTES))
+  );
+}
 
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
@@ -490,11 +502,19 @@ async function requestRemoteYtmp3Stream(remoteUrl) {
   return response;
 }
 
-async function saveResponseToFile(response, outputPath, fallbackName) {
+async function saveResponseToFile(response, outputPath, fallbackName, options = {}) {
+  const maxAudioBytes = Math.max(
+    MIN_AUDIO_BYTES,
+    Number(options?.maxBytes || MAX_AUDIO_BYTES)
+  );
   const contentLength = Number(response.headers?.["content-length"] || 0);
 
-  if (contentLength > MAX_AUDIO_BYTES) {
-    throw new Error(`El MP3 pesa ${humanBytes(contentLength)} y supera el límite del bot.`);
+  if (contentLength > maxAudioBytes) {
+    throw new Error(
+      `El MP3 pesa ${humanBytes(contentLength)} y supera el limite permitido (${humanBytes(
+        maxAudioBytes
+      )}).`
+    );
   }
 
   let downloaded = 0;
@@ -502,7 +522,7 @@ async function saveResponseToFile(response, outputPath, fallbackName) {
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
 
-    if (downloaded > MAX_AUDIO_BYTES) {
+    if (downloaded > maxAudioBytes) {
       response.data.destroy(
         new Error("El MP3 es demasiado grande para enviarlo por WhatsApp.")
       );
@@ -522,6 +542,7 @@ async function saveResponseToFile(response, outputPath, fallbackName) {
     await deleteFileSafe(outputPath);
     throw new Error("El archivo MP3 descargado es inválido.");
   }
+  assertDownloadWithinPolicy(options?.ctx || {}, stat.size, "audios");
 
   const headerName = parseContentDispositionFileName(
     response.headers?.["content-disposition"]
@@ -537,7 +558,7 @@ async function saveResponseToFile(response, outputPath, fallbackName) {
   };
 }
 
-async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null) {
+async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = null, options = {}) {
   await ensureTmpDir();
 
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
@@ -553,14 +574,15 @@ async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = nu
       return await saveResponseToFile(
         response,
         outputPath,
-        knownLinkData.fileName || preferredName
+        knownLinkData.fileName || preferredName,
+        options
       );
     },
 
     async () => {
       const response = await requestYtmp3Stream(videoUrl);
 
-      return await saveResponseToFile(response, outputPath, preferredName);
+      return await saveResponseToFile(response, outputPath, preferredName, options);
     },
 
     async () => {
@@ -570,7 +592,8 @@ async function downloadYtmp3Fallback(videoUrl, preferredName, knownLinkData = nu
       return await saveResponseToFile(
         response,
         outputPath,
-        linkData.fileName || preferredName
+        linkData.fileName || preferredName,
+        options
       );
     },
   ];
@@ -735,6 +758,8 @@ export default {
     let tempPath = null;
     let downloadCharge = null;
     let sentSuccessfully = false;
+    const downloadPolicy = getDownloadExecutionPolicy(ctx, "ytmp3");
+    const maxAudioBytes = resolveMaxAudioBytes(ctx);
 
     try {
       cleanupOldFiles().catch(() => {});
@@ -842,20 +867,26 @@ export default {
 
       await sendDownloadingImage(sock, from, quoted, finalData);
 
-      try {
-        await sendRemoteMp3(sock, from, quoted, finalData);
+      if (!downloadPolicy.isSubbot) {
+        try {
+          await sendRemoteMp3(sock, from, quoted, finalData);
 
-        sentSuccessfully = true;
-        await react(sock, msg, "✅");
-        return;
-      } catch (remoteError) {
-        console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
+          sentSuccessfully = true;
+          await react(sock, msg, "✅");
+          return;
+        } catch (remoteError) {
+          console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
+        }
       }
 
       const downloaded = await downloadYtmp3Fallback(
         resolved.url,
         finalData.fileName || resolved.title,
-        finalData
+        finalData,
+        {
+          ctx,
+          maxBytes: maxAudioBytes,
+        }
       );
 
       tempPath = downloaded.tempPath;

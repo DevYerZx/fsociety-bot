@@ -237,6 +237,11 @@ function getMainCommand(cmd) {
   return names[0] || "";
 }
 
+function getCommandAliases(cmd) {
+  const names = getCommandNames(cmd);
+  return names.length > 1 ? names.slice(1) : [];
+}
+
 function getCommandCategory(cmd) {
   return normalizeCategoryKey(cmd?.categoria || cmd?.category || "otros");
 }
@@ -247,6 +252,12 @@ function isHiddenCommand(cmd) {
 
 function getCommandDescription(cmd) {
   return cleanText(cmd?.description || cmd?.desc || cmd?.help || "");
+}
+
+function getCommandAccessLabel(cmd) {
+  if (cmd?.ownerOnly) return "OWNER";
+  if (cmd?.adminOnly) return "ADMIN";
+  return "PUBLICO";
 }
 
 function getPluginKey(cmd, fallback = "") {
@@ -282,6 +293,8 @@ function collectCommandData(comandos) {
       name: main,
       description: getCommandDescription(cmd),
       pluginKey,
+      aliases: getCommandAliases(cmd),
+      access: getCommandAccessLabel(cmd),
     });
   }
 
@@ -320,7 +333,7 @@ function getCategoryDescription(category = "", count = 0) {
   };
 
   const base = descriptions[key] || "Categoria del bot";
-  return `${base} · ${count} comandos`;
+  return `${base} · ${count} comandos reales`;
 }
 
 function chunkRows(rows, size = 10) {
@@ -440,12 +453,17 @@ function buildCategoryRows(categoryNames, categories, primaryPrefix) {
   return categoryNames.map((category) => {
     const icon = getCategoryIcon(category);
     const label = normalizeCategoryLabel(category);
-    const count = categories[category]?.length || 0;
+    const items = categories[category] || [];
+    const count = items.length;
+    const preview = items
+      .slice(0, 3)
+      .map((item) => `${primaryPrefix}${item.name}`)
+      .join(" • ");
 
     return {
       header: icon,
       title: label,
-      description: getCategoryDescription(category, count),
+      description: `${getCategoryDescription(category, count)}${preview ? ` | ${preview}` : ""}`.slice(0, 72),
       id: `${primaryPrefix}menu ${category}`,
     };
   });
@@ -464,12 +482,14 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
     "┣══════════════════",
     "┃",
     `┃ ✦ *Bot:* _${menuContext.botLine || settings?.botName || "Fsociety Bot"}_`,
+    `┃ ✦ *Owner:* _${settings?.ownerName || "Owner"}_`,
     `┃ ✦ *Prefijo:* *${prefixLabel}*`,
     `┃ ✦ *Activo:* _${uptime}_`,
     `┃ ✦ *Categorías:* *${totalCategories}*`,
     `┃ ✦ *Comandos reales:* *${totalCommands}*`,
     "┃",
     "┃ _Pulsa la lista para abrir categorías._",
+    `┃ _Tip: usa ${getPrimaryPrefix(settings)}menu descargas_`,
     "╰══════════════════⬣",
   ].join("\n");
 }
@@ -487,8 +507,14 @@ function buildCategoryMenuText(category, commands, primaryPrefix) {
     const lines = [title];
 
     for (const item of chunk) {
-      lines.push(`┃ ✦ *${primaryPrefix}${item.name}*`);
+      const aliasText = item.aliases?.length
+        ? `Alias: ${item.aliases.slice(0, 3).join(", ")}`
+        : "";
+      lines.push(`┃ ✦ *${primaryPrefix}${item.name}* [${item.access}]`);
       lines.push(`┃   ${item.description || "Comando disponible del bot."}`);
+      if (aliasText) {
+        lines.push(`┃   ${aliasText}`);
+      }
       lines.push("┃");
     }
 

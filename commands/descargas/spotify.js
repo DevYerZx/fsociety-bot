@@ -5,6 +5,10 @@ import axios from "axios";
 import { pipeline } from "stream/promises";
 import { spawn } from "child_process";
 import { buildDvyerUrl, withDvyerApiKey } from "../../lib/api-manager.js";
+import {
+  assertDownloadWithinPolicy,
+  getDownloadExecutionPolicy,
+} from "../../lib/subbot-download-policy.js";
 
 // Configuración
 const API_SPOTIFY_URL = buildDvyerUrl("/spotify");
@@ -319,8 +323,9 @@ async function getSpotifyDownloadInfo(input) {
 
 // ============ DESCARGA DE AUDIO ============
 
-async function downloadAudio(downloadUrl, outputPath, fileName = "spotify.mp3") {
+async function downloadAudio(downloadUrl, outputPath, fileName = "spotify.mp3", options = {}) {
   ensureTmpDir();
+  const maxAudioBytes = Math.max(50_000, Number(options?.maxBytes || MAX_AUDIO_BYTES));
 
   try {
     console.log(`[SPOTIFY] Descargando desde: ${downloadUrl}`);
@@ -343,14 +348,14 @@ async function downloadAudio(downloadUrl, outputPath, fileName = "spotify.mp3") 
     const contentLength = Number(response.headers?.["content-length"] || 0);
     console.log(`[SPOTIFY] Tamaño: ${contentLength} bytes`);
 
-    if (contentLength && contentLength > MAX_AUDIO_BYTES) {
+    if (contentLength && contentLength > maxAudioBytes) {
       throw new Error(`Audio muy grande: ${Math.round(contentLength / 1024 / 1024)}MB`);
     }
 
     let downloaded = 0;
     response.data.on("data", (chunk) => {
       downloaded += chunk.length;
-      if (downloaded > MAX_AUDIO_BYTES) {
+      if (downloaded > maxAudioBytes) {
         response.data.destroy(new Error("Archivo excede tamaño máximo"));
       }
     });
@@ -371,10 +376,11 @@ async function downloadAudio(downloadUrl, outputPath, fileName = "spotify.mp3") 
       throw new Error("Archivo inválido o muy pequeño");
     }
 
-    if (size > MAX_AUDIO_BYTES) {
+    if (size > maxAudioBytes) {
       deleteFileSafe(outputPath);
       throw new Error("Archivo excede tamaño máximo");
     }
+    assertDownloadWithinPolicy(options?.ctx || {}, size, "audios");
 
     const audioFormat = detectAudioFormat(outputPath);
 
@@ -606,6 +612,7 @@ export default {
 
     let rawAudioPath = null;
     let finalMp3Path = null;
+    const maxAudioBytes = resolveMaxAudioBytes(ctx);
 
     const COOLDOWN_TIME = 3000;
 
@@ -722,7 +729,10 @@ export default {
       rawAudioPath = path.join(TMP_DIR, `${stamp}-spotify.bin`);
       finalMp3Path = path.join(TMP_DIR, `${stamp}-spotify.mp3`);
 
-      const downloaded = await downloadAudio(info.downloadUrl, rawAudioPath, info.fileName);
+      const downloaded = await downloadAudio(info.downloadUrl, rawAudioPath, info.fileName, {
+        ctx,
+        maxBytes: maxAudioBytes,
+      });
 
       let sendPath = downloaded.tempPath;
       let sendMime = downloaded.mimetype;
@@ -734,6 +744,10 @@ export default {
           sendPath = finalMp3Path;
           sendMime = "audio/mpeg";
           sendName = normalizeAudioFileName(info.fileName, info.title, "mp3");
+          const convertedSize = fs.existsSync(finalMp3Path) ? fs.statSync(finalMp3Path).size : 0;
+          if (convertedSize > 0) {
+            assertDownloadWithinPolicy(ctx, convertedSize, "audios");
+          }
         } catch (convertError) {
           console.warn("Conversión fallida, enviando original:", convertError.message);
         }
@@ -776,3 +790,7 @@ export default {
     }
   },
 };
+function resolveMaxAudioBytes(ctx) {
+  const policy = getDownloadExecutionPolicy(ctx, "spotify");
+  return Math.min(MAX_AUDIO_BYTES, Number(policy?.maxBytes || MAX_AUDIO_BYTES));
+}
