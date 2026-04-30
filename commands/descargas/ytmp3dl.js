@@ -30,6 +30,7 @@ const API_LINK_TIMEOUT = 90_000;
 const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 80 * 1024 * 1024;
 const MIN_AUDIO_BYTES = 20 * 1024;
+const MAX_DURATION_SECONDS = 45 * 60;
 
 const RATE_LIMIT_MAX = 6;
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -641,6 +642,15 @@ function buildErrorMessage(errorText) {
   ].join("\n");
 }
 
+function validateDurationForWhatsApp(durationSeconds = 0) {
+  const total = Math.max(0, Math.floor(Number(durationSeconds || 0)));
+  if (!total) return;
+  if (total <= MAX_DURATION_SECONDS) return;
+  throw new Error(
+    `El audio dura ${formatDuration(total)}. Para envio rapido al WhatsApp usa maximo 45 minutos.`
+  );
+}
+
 async function sendDownloadingImage(sock, from, quoted, data = {}) {
   const caption = buildDownloadingCaption(data);
 
@@ -841,6 +851,7 @@ export default {
         ...apiData,
         title: apiData.title || resolved.title,
       };
+      validateDurationForWhatsApp(finalData.duration);
 
       await sendDownloadingImage(sock, from, quoted, finalData);
 
