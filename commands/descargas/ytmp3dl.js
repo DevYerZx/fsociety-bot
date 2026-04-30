@@ -382,7 +382,7 @@ async function getYtmp3DlData(videoUrl) {
     timeout: API_LINK_TIMEOUT,
     params: {
       mode: "link",
-      quality: "LOW",
+      quality: "128KBPS",
       url: videoUrl,
       ...withDvyerApiKey(),
     },
@@ -430,7 +430,7 @@ async function requestYtmp3DlStream(videoUrl) {
     timeout: REQUEST_TIMEOUT,
     params: {
       mode: "stream",
-      quality: "LOW",
+      quality: "128KBPS",
       url: videoUrl,
       ...withDvyerApiKey(),
     },
@@ -606,14 +606,14 @@ async function react(sock, msg, emoji) {
 
 function buildUsageMessage() {
   return [
-    "╭━━〔 *🎧 YTMP3* 〕━━⬣",
+    "╭━━〔 *🎧 YTMP3DL* 〕━━⬣",
     "┃ ❌ *Falta el link o nombre.*",
     "┃",
     "┃ Usa:",
-    "┃ *.ytmp3 <link o nombre>*",
+    "┃ *.ytmp3dl <link o nombre>*",
     "┃",
     "┃ Ejemplo:",
-    "┃ *.ytmp3 ozuna odisea*",
+    "┃ *.ytmp3dl ozuna odisea*",
     "╰━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
@@ -748,10 +748,10 @@ async function sendLocalMp3(sock, from, quoted, data) {
 }
 
 export default {
-  command: ["ytmp3dl", "ytadl", "ytmp3low"],
+  command: ["ytmp3dl", "ytadl", "ytmp3128"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 LOW de YouTube usando ytmp3dl",
+  description: "Descarga audio MP3 128KBPS de YouTube usando ytmp3dl",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -876,6 +876,24 @@ export default {
         },
         quoted
       );
+
+      let sentMode = null;
+      try {
+        sentMode = await sendRemoteMp3(sock, from, quoted, finalData);
+      } catch (remoteSendError) {
+        console.error("YTMP3DL REMOTE SEND ERROR:", remoteSendError?.message || remoteSendError);
+        const downloaded = await downloadYtmp3DlFallback(
+          resolved.url,
+          finalData.fileName,
+          finalData
+        );
+        tempPath = downloaded.tempPath;
+        sentMode = await sendLocalMp3(sock, from, quoted, downloaded);
+      }
+
+      if (!sentMode) {
+        throw new Error("No se pudo enviar el audio al chat.");
+      }
 
       sentSuccessfully = true;
       await react(sock, msg, "✅");
