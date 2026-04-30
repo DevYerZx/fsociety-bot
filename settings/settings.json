@@ -138,6 +138,11 @@
     "mainBotPhoto": "assets/profile/fsociety-bot-profile",
     "subbotBioTemplate": "Subbot Fsociety activo",
     "subbotPhoto": "",
+    "autoJoinGroups": {
+      "enabled": true,
+      "mainInvite": "CD6BXpOmltlE44Dy0RoqU9",
+      "subbotInvite": "Lgo09GjNVKp28Bo60vlKN4"
+    },
     "subbotDownloads": {
       "enabled": true,
       "maxBytes": 36700160,

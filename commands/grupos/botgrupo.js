@@ -41,6 +41,24 @@ function saveSet(set) {
   fs.writeFileSync(FILE, JSON.stringify([...set], null, 2));
 }
 
+export function isGroupBotDisabled(groupId = "") {
+  return disabledGroups.has(String(groupId || "").trim());
+}
+
+export function setGroupBotDisabled(groupId = "", disabled = true) {
+  const normalizedGroupId = String(groupId || "").trim();
+  if (!normalizedGroupId) return false;
+
+  if (disabled) {
+    disabledGroups.add(normalizedGroupId);
+  } else {
+    disabledGroups.delete(normalizedGroupId);
+  }
+
+  saveSet(disabledGroups);
+  return true;
+}
+
 function getPrefixes(settings) {
   if (Array.isArray(settings?.prefix)) {
     return settings.prefix
@@ -167,7 +185,7 @@ export default {
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const prefix = getPrimaryPrefix(settings);
     const action = resolveAction(args, commandName);
-    const isOff = disabledGroups.has(from);
+    const isOff = isGroupBotDisabled(from);
 
     if (!action) {
       return sock.sendMessage(
@@ -223,8 +241,7 @@ export default {
         );
       }
 
-      disabledGroups.delete(from);
-      saveSet(disabledGroups);
+      setGroupBotDisabled(from, false);
 
       return sock.sendMessage(
         from,
@@ -250,8 +267,7 @@ export default {
         );
       }
 
-      disabledGroups.add(from);
-      saveSet(disabledGroups);
+      setGroupBotDisabled(from, true);
 
       return sock.sendMessage(
         from,
@@ -280,7 +296,7 @@ export default {
 
   onMessage: async ({ sock, msg, from, esGrupo, esAdmin, esOwner, text, settings, comandos, groupMetadata }) => {
     if (!esGrupo) return;
-    if (!disabledGroups.has(from)) return;
+    if (!isGroupBotDisabled(from)) return;
 
     const commandName = extractCommandName(text, settings, comandos);
     if (!commandName) {

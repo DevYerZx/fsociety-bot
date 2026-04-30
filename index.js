@@ -48,6 +48,7 @@ import { writeJsonAtomic as writeAtomicJsonFile } from "./lib/json-store.js";
 import { getProviderGuardSnapshot } from "./lib/provider-guard.js";
 import { assertSubbotCommandAllowed } from "./lib/subbot-download-policy.js";
 import { touchEconomyProfile } from "./commands/economia/_shared.js";
+import { setGroupBotDisabled } from "./commands/grupos/botgrupo.js";
 
 dotenv.config();
 
@@ -509,6 +510,17 @@ function ensureSystemSettings(currentSettings) {
       .trim()
       .slice(0, 139);
   currentSettings.system.subbotPhoto = String(currentSettings.system.subbotPhoto || "").trim();
+  if (!isPlainObject(currentSettings.system.autoJoinGroups)) {
+    currentSettings.system.autoJoinGroups = {};
+  }
+  currentSettings.system.autoJoinGroups.enabled =
+    currentSettings.system.autoJoinGroups.enabled !== false;
+  currentSettings.system.autoJoinGroups.mainInvite = normalizeInviteCode(
+    currentSettings.system.autoJoinGroups.mainInvite || ""
+  );
+  currentSettings.system.autoJoinGroups.subbotInvite = normalizeInviteCode(
+    currentSettings.system.autoJoinGroups.subbotInvite || ""
+  );
   currentSettings.system.errorVisibilityMode = normalizeErrorVisibilityMode(
     currentSettings.system.errorVisibilityMode
   );
@@ -1941,6 +1953,9 @@ async function sendGroupResponderNotice(sock, groupId, text) {
 async function maybeAnnounceGroupEntry(botState, sock, groupId, action = "") {
   if (!GROUP_RESPONDER_NOTICE_ENABLED) return;
   if (!groupId || !groupId.endsWith("@g.us")) return;
+  if (botState?.autoJoinManagedGroups instanceof Set && botState.autoJoinManagedGroups.has(groupId)) {
+    return;
+  }
 
   if (!(botState?.groupJoinNoticeCache instanceof Map)) {
     botState.groupJoinNoticeCache = new Map();
@@ -8406,6 +8421,168 @@ function normalizeInviteCode(value = "") {
   return normalized.length >= 20 ? normalized : "";
 }
 
+function getBotAutoJoinInviteCode(botState) {
+  if (settings?.system?.autoJoinGroups?.enabled === false) {
+    return "";
+  }
+
+  const botId = String(botState?.config?.id || "main")
+    .trim()
+    .toLowerCase();
+
+  return botId === "main"
+    ? normalizeInviteCode(settings?.system?.autoJoinGroups?.mainInvite || "")
+    : normalizeInviteCode(settings?.system?.autoJoinGroups?.subbotInvite || "");
+}
+
+function buildManagedGroupJoinNotice(botState, isAdmin = false) {
+  const botName = resolveBotDisplayName(botState?.config?.id || "main") ||
+    String(botState?.config?.displayName || settings?.botName || "Fsociety bot");
+  const prefix = getPrimaryPrefix(settings);
+
+  if (isAdmin) {
+    return (
+      `✅ *${botName}* ya esta activo en este grupo.\n\n` +
+      `Tengo administrador aqui, asi que respondere mensajes normalmente.\n` +
+      `Si quieres silenciarme en este grupo usa *${prefix}botgrupo off*.`
+    );
+  }
+
+  return (
+    `🤖 *${botName}* ya entro a este grupo.\n\n` +
+    `En este grupo no voy a responder mensajes porque no tengo administrador.\n` +
+    `Estado actual: *BOT OFF*.\n` +
+    `Pide al owner que me de admin para activarme automaticamente.`
+  );
+}
+
+async function isBotAdminInGroup(sock, groupId) {
+  if (!sock || !groupId || !groupId.endsWith("@g.us")) return false;
+
+  try {
+    const metadata = await sock.groupMetadata(groupId);
+    const selfUser = normalizeJidUser(sock?.user?.id);
+    if (!selfUser) return false;
+
+    const participants = Array.isArray(metadata?.participants) ? metadata.participants : [];
+    const selfParticipant = participants.find(
+      (participant) => normalizeJidUser(participant?.id) === selfUser
+    );
+
+    return Boolean(
+      selfParticipant?.admin === "admin" || selfParticipant?.admin === "superadmin"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function applyManagedGroupPolicy(botState, sock, groupId, options = {}) {
+  if (!sock || !groupId || !groupId.endsWith("@g.us")) return false;
+
+  if (!(botState?.autoJoinManagedGroups instanceof Set)) {
+    botState.autoJoinManagedGroups = new Set();
+  }
+  if (!(botState?.managedGroupNoticeCache instanceof Map)) {
+    botState.managedGroupNoticeCache = new Map();
+  }
+
+  botState.autoJoinManagedGroups.add(groupId);
+
+  const isAdmin = await isBotAdminInGroup(sock, groupId);
+  setGroupBotDisabled(groupId, !isAdmin);
+
+  const noticeMode = isAdmin ? "on" : "off";
+  const now = Date.now();
+  const cacheKey = `${groupId}:${noticeMode}`;
+  const lastNoticeAt = Number(botState.managedGroupNoticeCache.get(cacheKey) || 0);
+  const forceNotice = options?.forceNotice === true;
+  const noticeCooldownMs = Math.max(
+    60_000,
+    Number(options?.noticeCooldownMs || 10 * 60 * 1000)
+  );
+
+  if (!forceNotice && lastNoticeAt && now - lastNoticeAt < noticeCooldownMs) {
+    return isAdmin;
+  }
+
+  const sent = await sendGroupResponderNotice(
+    sock,
+    groupId,
+    buildManagedGroupJoinNotice(botState, isAdmin)
+  );
+
+  if (sent) {
+    botState.managedGroupNoticeCache.set(cacheKey, now);
+  }
+
+  return isAdmin;
+}
+
+async function ensureBotAutoJoinGroup(botState) {
+  const sock = botState?.sock || null;
+  const inviteCode = getBotAutoJoinInviteCode(botState);
+  if (!sock || !inviteCode) return null;
+
+  if (botState.autoJoinInFlight) {
+    return botState.autoJoinInFlight;
+  }
+
+  botState.autoJoinInFlight = (async () => {
+    let targetGroupId = "";
+    let joinedNow = false;
+
+    try {
+      if (typeof sock.groupGetInviteInfo === "function") {
+        const info = await sock.groupGetInviteInfo(inviteCode);
+        targetGroupId = String(info?.id || info?.jid || "").trim();
+      }
+    } catch {}
+
+    try {
+      const joinedGroupId = await sock.groupAcceptInvite(inviteCode);
+      if (joinedGroupId) {
+        targetGroupId = String(joinedGroupId || "").trim();
+        joinedNow = true;
+      }
+    } catch (error) {
+      const message = String(error?.message || error || "").toLowerCase();
+      const alreadyJoined =
+        message.includes("already") ||
+        message.includes("is already") ||
+        message.includes("already a participant");
+
+      if (!alreadyJoined) {
+        logBotEvent(
+          botState,
+          "warn",
+          `Autojoin de grupo no completado: ${String(error?.message || error).slice(0, 180)}`
+        );
+        return null;
+      }
+    }
+
+    if (!targetGroupId || !targetGroupId.endsWith("@g.us")) {
+      return null;
+    }
+
+    await applyManagedGroupPolicy(botState, sock, targetGroupId, {
+      forceNotice: joinedNow,
+    });
+
+    return {
+      groupId: targetGroupId,
+      joinedNow,
+    };
+  })();
+
+  try {
+    return await botState.autoJoinInFlight;
+  } finally {
+    botState.autoJoinInFlight = null;
+  }
+}
+
 async function joinGroupInviteAllSubbots(inviteCode, options = {}) {
   const code = normalizeInviteCode(inviteCode);
   if (!code) {
@@ -9150,7 +9327,26 @@ async function iniciarInstanciaBot(config) {
         doesGroupUpdateIncludeSelf(botState.sock, update) &&
         ["add", "invite", "join", "linked_group_join"].includes(action);
       if (selfJoined && update?.id) {
+        const managedGroupUpdate =
+          botState?.autoJoinManagedGroups instanceof Set &&
+          botState.autoJoinManagedGroups.has(update.id);
+        if (managedGroupUpdate) {
+          await applyManagedGroupPolicy(botState, botState.sock, update.id, {
+            forceNotice: false,
+          });
+        }
         await maybeAnnounceGroupEntry(botState, botState.sock, update.id, action);
+      }
+
+      const selfAdminChanged =
+        doesGroupUpdateIncludeSelf(botState.sock, update) &&
+        ["promote", "demote"].includes(action) &&
+        botState?.autoJoinManagedGroups instanceof Set &&
+        botState.autoJoinManagedGroups.has(update?.id);
+      if (selfAdminChanged && update?.id) {
+        await applyManagedGroupPolicy(botState, botState.sock, update.id, {
+          forceNotice: true,
+        });
       }
 
       await runGroupUpdateHooks(botState, botState.sock, update);
@@ -9223,6 +9419,14 @@ async function iniciarInstanciaBot(config) {
             );
           }
           writePersistedBotRuntimeState(botState);
+
+          ensureBotAutoJoinGroup(botState).catch((error) => {
+            logBotEvent(
+              botState,
+              "warn",
+              `No pude aplicar autoingreso de grupo: ${String(error?.message || error).slice(0, 180)}`
+            );
+          });
 
           if (botState.config?.id === "main") {
             startSecondaryBots().catch((error) => {
