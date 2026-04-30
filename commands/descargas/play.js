@@ -134,6 +134,100 @@ function buildResultCaption(query, video, currentIndex, total) {
   ].join("\n");
 }
 
+function buildButtonPanel(query, video, currentIndex, total) {
+  const title = clipText(video?.title || "Sin título", 54);
+  const duration = cleanText(video?.timestamp || "??:??");
+
+  return [
+    "╭━━━〔 ⚡ *ELIGE FORMATO* ⚡ 〕━━━⬣",
+    `┃ 🎵 *${title}*`,
+    `┃ ⏱️ ${duration} | Resultado ${currentIndex + 1}/${total}`,
+    "┃",
+    "┃ • MP3 = audio",
+    "┃ • MP4 = video",
+    currentIndex < total - 1 ? "┃ • Siguiente = próximo resultado" : "┃ • Último resultado disponible",
+    "┃",
+    `┃ 🔎 ${clipText(query, 44)}`,
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+async function sendPlayCard(sock, from, quoted, query, video, currentIndex, videos, prefix) {
+  const caption = buildResultCaption(query, video, currentIndex, videos.length);
+
+  if (video?.thumbnail) {
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          image: { url: video.thumbnail },
+          caption,
+          ...global.channelInfo,
+        },
+        quoted
+      );
+    } catch {
+      await sock.sendMessage(
+        from,
+        {
+          text: caption,
+          ...global.channelInfo,
+        },
+        quoted
+      );
+    }
+  } else {
+    await sock.sendMessage(
+      from,
+      {
+        text: caption,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  }
+
+  try {
+    await sock.sendMessage(
+      from,
+      {
+        text: buildButtonPanel(query, video, currentIndex, videos.length),
+        title: "FSOCIETY PLAY",
+        subtitle: `Resultado ${currentIndex + 1} de ${videos.length}`,
+        footer: "Descarga rápida YouTube",
+        interactiveButtons: buildPlayButtons(prefix, query, videos, currentIndex),
+        ...global.channelInfo,
+      },
+      quoted
+    );
+    return true;
+  } catch {
+    const currentUrl = cleanText(video?.url || "");
+    const fallbackLines = [
+      buildButtonPanel(query, video, currentIndex, videos.length),
+      "",
+      `MP3: ${buildCommand(prefix, "ytmp3", currentUrl)}`,
+      `MP4: ${buildCommand(prefix, "ytmp4", currentUrl)}`,
+    ];
+
+    if (currentIndex < videos.length - 1 && currentIndex < MAX_RESULTS - 1) {
+      fallbackLines.push(
+        `Siguiente: ${buildCommand(prefix, "play", `--pick=${currentIndex + 1} ${query}`)}`
+      );
+    }
+
+    await sock.sendMessage(
+      from,
+      {
+        text: fallbackLines.join("\n"),
+        ...global.channelInfo,
+      },
+      quoted
+    );
+    return false;
+  }
+}
+
 export default {
   name: "play",
   command: ["play"],
@@ -182,25 +276,16 @@ export default {
 
       const currentIndex = Math.max(0, Math.min(parsed.pickIndex, videos.length - 1));
       const currentVideo = videos[currentIndex];
-      const payload = {
-        image: currentVideo?.thumbnail ? { url: currentVideo.thumbnail } : undefined,
-        text: buildResultCaption(query, currentVideo, currentIndex, videos.length),
-        caption: buildResultCaption(query, currentVideo, currentIndex, videos.length),
-        title: "FSOCIETY PLAY",
-        subtitle: `Resultado ${currentIndex + 1} de ${videos.length}`,
-        footer: "Descarga rápida YouTube",
-        interactiveButtons: buildPlayButtons(prefix, query, videos, currentIndex),
-        ...global.channelInfo,
-      };
-
-      if (currentVideo?.thumbnail) {
-        delete payload.text;
-      } else {
-        delete payload.image;
-        delete payload.caption;
-      }
-
-      await sock.sendMessage(from, payload, { quoted: m });
+      await sendPlayCard(
+        sock,
+        from,
+        { quoted: m },
+        query,
+        currentVideo,
+        currentIndex,
+        videos,
+        prefix
+      );
       await react(sock, m, "✅");
     } catch (error) {
       console.error("Error en play:", error);
