@@ -886,13 +886,19 @@ export default {
       };
 
       await sendDownloadingImage(sock, from, quoted, finalData);
-      const downloaded = await downloadYtmp3DlFallback(
-        resolved.url,
-        finalData.fileName,
-        finalData
-      );
-      tempPath = downloaded.tempPath;
-      const sentMode = await sendLocalMp3(sock, from, quoted, downloaded);
+      let sentMode = null;
+      try {
+        sentMode = await sendRemoteMp3(sock, from, quoted, finalData);
+      } catch (remoteSendError) {
+        console.error("YTMP3DL REMOTE SEND ERROR:", remoteSendError?.message || remoteSendError);
+        const downloaded = await downloadYtmp3DlFallback(
+          resolved.url,
+          finalData.fileName,
+          finalData
+        );
+        tempPath = downloaded.tempPath;
+        sentMode = await sendLocalMp3(sock, from, quoted, downloaded);
+      }
 
       if (!sentMode) {
         throw new Error("No se pudo enviar el audio al chat.");
