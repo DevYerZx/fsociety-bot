@@ -54,28 +54,22 @@ function buildPlayButtons(prefix, query, videos, currentIndex) {
   const currentUrl = cleanText(current?.url || "");
   const buttons = [
     {
-      name: "quick_reply",
-      buttonParamsJson: JSON.stringify({
-        display_text: "MP3",
-        id: buildCommand(prefix, "ytmp3", currentUrl),
-      }),
+      buttonId: buildCommand(prefix, "ytmp3", currentUrl),
+      buttonText: { displayText: "🎵 YTMP3" },
+      type: 1,
     },
     {
-      name: "quick_reply",
-      buttonParamsJson: JSON.stringify({
-        display_text: "MP4",
-        id: buildCommand(prefix, "ytmp4", currentUrl),
-      }),
+      buttonId: buildCommand(prefix, "ytmp4", currentUrl),
+      buttonText: { displayText: "🎬 YTMP4" },
+      type: 1,
     },
   ];
 
   if (currentIndex < videos.length - 1 && currentIndex < MAX_RESULTS - 1) {
     buttons.push({
-      name: "quick_reply",
-      buttonParamsJson: JSON.stringify({
-        display_text: "Siguiente",
-        id: buildCommand(prefix, "play", `--pick=${currentIndex + 1} ${query}`),
-      }),
+      buttonId: buildCommand(prefix, "play", `--pick=${currentIndex + 1} ${query}`),
+      buttonText: { displayText: "➡️ Siguiente" },
+      type: 1,
     });
   }
 
@@ -139,7 +133,7 @@ function buildButtonPanel(query, video, currentIndex, total) {
   const duration = cleanText(video?.timestamp || "??:??");
 
   return [
-    "╭━━━〔 ⚡ *ELIGE FORMATO* ⚡ 〕━━━⬣",
+    "╭━━━〔 ⚡ *FSOCIETY PLAY* ⚡ 〕━━━⬣",
     `┃ 🎵 *${title}*`,
     `┃ ⏱️ ${duration} | Resultado ${currentIndex + 1}/${total}`,
     "┃",
@@ -154,6 +148,7 @@ function buildButtonPanel(query, video, currentIndex, total) {
 
 async function sendPlayCard(sock, from, quoted, query, video, currentIndex, videos, prefix) {
   const caption = buildResultCaption(query, video, currentIndex, videos.length);
+  const buttons = buildPlayButtons(prefix, query, videos, currentIndex);
 
   if (video?.thumbnail) {
     try {
@@ -162,11 +157,32 @@ async function sendPlayCard(sock, from, quoted, query, video, currentIndex, vide
         {
           image: { url: video.thumbnail },
           caption,
+          buttons,
+          footer: "FSOCIETY BOT • YouTube",
+          headerType: 4,
           ...global.channelInfo,
         },
         quoted
       );
-    } catch {
+      return true;
+    } catch {}
+  }
+
+  try {
+    await sock.sendMessage(
+      from,
+      {
+        text: buildButtonPanel(query, video, currentIndex, videos.length),
+        buttons,
+        footer: "FSOCIETY BOT • YouTube",
+        headerType: 1,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+    return true;
+  } catch {
+    try {
       await sock.sendMessage(
         from,
         {
@@ -175,33 +191,8 @@ async function sendPlayCard(sock, from, quoted, query, video, currentIndex, vide
         },
         quoted
       );
-    }
-  } else {
-    await sock.sendMessage(
-      from,
-      {
-        text: caption,
-        ...global.channelInfo,
-      },
-      quoted
-    );
-  }
+    } catch {}
 
-  try {
-    await sock.sendMessage(
-      from,
-      {
-        text: buildButtonPanel(query, video, currentIndex, videos.length),
-        title: "FSOCIETY PLAY",
-        subtitle: `Resultado ${currentIndex + 1} de ${videos.length}`,
-        footer: "Descarga rápida YouTube",
-        interactiveButtons: buildPlayButtons(prefix, query, videos, currentIndex),
-        ...global.channelInfo,
-      },
-      quoted
-    );
-    return true;
-  } catch {
     const currentUrl = cleanText(video?.url || "");
     const fallbackLines = [
       buildButtonPanel(query, video, currentIndex, videos.length),
