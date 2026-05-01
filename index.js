@@ -8544,6 +8544,13 @@ function getBotAutoJoinInviteCode(botState) {
     : normalizeInviteCode(settings?.system?.autoJoinGroups?.subbotInvite || "");
 }
 
+function getBotAutoJoinTargetLabel(botState) {
+  const botId = String(botState?.config?.id || "main")
+    .trim()
+    .toLowerCase();
+  return botId === "main" ? "grupo principal" : "grupo de subbots";
+}
+
 function buildManagedGroupJoinNotice(botState, isAdmin = false) {
   const botName = resolveBotDisplayName(botState?.config?.id || "main") ||
     String(botState?.config?.displayName || settings?.botName || "Fsociety bot");
@@ -8640,6 +8647,13 @@ async function ensureBotAutoJoinGroup(botState) {
   botState.autoJoinInFlight = (async () => {
     let targetGroupId = "";
     let joinedNow = false;
+    const targetLabel = getBotAutoJoinTargetLabel(botState);
+
+    logBotEvent(
+      botState,
+      "info",
+      `Autojoin iniciado: intentando entrar al ${targetLabel}.`
+    );
 
     try {
       if (typeof sock.groupGetInviteInfo === "function") {
@@ -8672,17 +8686,30 @@ async function ensureBotAutoJoinGroup(botState) {
       logBotEvent(
         botState,
         "info",
-        "Autojoin: el bot ya esta en el grupo objetivo."
+        `Autojoin: el bot ya estaba dentro del ${targetLabel}.`
       );
     }
 
     if (!targetGroupId || !targetGroupId.endsWith("@g.us")) {
+      logBotEvent(
+        botState,
+        "warn",
+        `Autojoin sin JID valido para el ${targetLabel}.`
+      );
       return null;
     }
 
     await applyManagedGroupPolicy(botState, sock, targetGroupId, {
       forceNotice: joinedNow,
     });
+
+    logBotEvent(
+      botState,
+      "success",
+      joinedNow
+        ? `Autojoin completado en ${targetLabel}: ${targetGroupId}`
+        : `Autojoin verificado en ${targetLabel}: ${targetGroupId}`
+    );
 
     return {
       groupId: targetGroupId,
