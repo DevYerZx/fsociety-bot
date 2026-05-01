@@ -589,6 +589,40 @@ function buildCategorySections(categoryNames, categories, primaryPrefix) {
   return sections;
 }
 
+function buildMenuButtons(primaryPrefix, categoryNames, categories) {
+  const sections = buildCategorySections(categoryNames, categories, primaryPrefix);
+
+  const flowButton = {
+    buttonId: "menu_action_select",
+    buttonText: {
+      displayText: "☷ SELECT MENU",
+    },
+    type: 4,
+    nativeFlowInfo: {
+      name: "single_select",
+      paramsJson: JSON.stringify({
+        title: "☠️ FSOCIETY SELECT MENU",
+        sections,
+      }),
+    },
+  };
+
+  const quickButtons = [
+    {
+      buttonId: `${primaryPrefix}reglas`,
+      buttonText: { displayText: "↩ RULES | MENU" },
+      type: 1,
+    },
+    {
+      buttonId: `${primaryPrefix}sewa`,
+      buttonText: { displayText: "↩ SEWA | FSOCIETY" },
+      type: 1,
+    },
+  ];
+
+  return [flowButton, ...quickButtons];
+}
+
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
     "╭━━〔 ☠️ *FSOCIETY BOT* 〕━━⬣",
@@ -796,31 +830,47 @@ export default {
         );
       }
 
-      await sendInteractiveMenu(
-        sock,
-        from,
-        { quoted: msg },
-        {
-          text: landingText,
-          title: menuContext.title,
-          subtitle: menuContext.subtitle,
-          footer: `© ${settings?.ownerName || "Fsociety"}`,
-          interactiveButtons: [
-            {
-              name: "single_select",
-              buttonParamsJson: JSON.stringify({
-                title: "☷ SELECT MENU",
-                sections: buildCategorySections(
-                  categoryNames,
-                  categories,
-                  primaryPrefix
-                ),
-              }),
-            },
-          ],
-        },
-        finalCaption
-      );
+      const buttons = buildMenuButtons(primaryPrefix, categoryNames, categories);
+
+      try {
+        await sock.sendMessage(
+          from,
+          {
+            text: landingText,
+            footer: `© ${settings?.ownerName || "Fsociety"}`,
+            buttons,
+            headerType: 1,
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      } catch {
+        await sendInteractiveMenu(
+          sock,
+          from,
+          { quoted: msg },
+          {
+            text: landingText,
+            title: menuContext.title,
+            subtitle: menuContext.subtitle,
+            footer: `© ${settings?.ownerName || "Fsociety"}`,
+            interactiveButtons: [
+              {
+                name: "single_select",
+                buttonParamsJson: JSON.stringify({
+                  title: "☷ SELECT MENU",
+                  sections: buildCategorySections(
+                    categoryNames,
+                    categories,
+                    primaryPrefix
+                  ),
+                }),
+              },
+            ],
+          },
+          finalCaption
+        );
+      }
 
       await react(sock, msg, "✅");
     } catch (error) {
