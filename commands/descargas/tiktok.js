@@ -20,6 +20,7 @@ import {
   assertDownloadWithinPolicy,
   getDownloadExecutionPolicy,
 } from "../../lib/subbot-download-policy.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_TIKTOK_URL = `${API_BASE}/ttdlmp4`;
@@ -616,7 +617,7 @@ export default {
         {
           text:
             `╭━━〔 ❌ *ERROR TIKTOK* 〕━━⬣\n` +
-            `┃ ${String(err?.message || "No se pudo procesar el video.")}\n` +
+            `┃ ${sanitizeProviderMessage(err, { kind: "video", fallback: "No se pudo procesar el video." })}\n` +
             `╰━━━━━━━━━━━━━━━━━━⬣`,
           ...global.channelInfo,
         },

@@ -11,6 +11,7 @@ import {
   assertDownloadWithinPolicy,
   getDownloadExecutionPolicy,
 } from "../../lib/subbot-download-policy.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_INSTAGRAM_URL = `${API_BASE}/instagram`;
@@ -316,7 +317,7 @@ async function convertVideoForWhatsApp(inputPath, outputPath, options = {}) {
         "-map",
         "0:v:0",
         "-map",
-        "0:a?",
+        "0:a:0?",
         "-c:v",
         "libx264",
         "-preset",
@@ -392,6 +393,43 @@ async function convertVideoForWhatsApp(inputPath, outputPath, options = {}) {
         return;
       }
       finishReject(new Error(errorText.trim() || "No se pudo convertir el video para WhatsApp."));
+    });
+  });
+}
+
+async function hasAudioStream(filePath) {
+  const target = String(filePath || "").trim();
+  if (!target || !fs.existsSync(target)) return false;
+
+  return await new Promise((resolve) => {
+    const probe = spawn(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        target,
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] }
+    );
+
+    let stdout = "";
+    probe.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    probe.on("error", () => resolve(false));
+    probe.on("close", (code) => {
+      if (code !== 0) {
+        resolve(false);
+        return;
+      }
+      resolve(stdout.toLowerCase().includes("audio"));
     });
   });
 }
@@ -524,6 +562,7 @@ export default {
 
       if (info.mediaType === "video") {
         finalPath = path.join(TMP_DIR, `${Date.now()}-final-${normalizeMediaFileName(info.fileName, "video")}`);
+        const sourceHasAudio = await hasAudioStream(downloaded.tempPath);
         await convertVideoForWhatsApp(downloaded.tempPath, finalPath, {
           signal: abortSignal,
         });
@@ -534,6 +573,13 @@ export default {
 
         sendPath = finalPath;
         sendSize = fs.statSync(finalPath).size;
+        const convertedHasAudio = await hasAudioStream(finalPath);
+
+        // Si el origen tenia audio y la conversion lo perdio, usamos el original.
+        if (sourceHasAudio && !convertedHasAudio) {
+          sendPath = downloaded.tempPath;
+          sendSize = downloaded.size;
+        }
 
         if (!sendSize || sendSize < 100000) {
           throw new Error("El video convertido es inválido.");
@@ -564,7 +610,7 @@ export default {
       }
 
       await sock.sendMessage(from, {
-        text: `❌ ${String(err?.message || "No se pudo procesar la publicación de Instagram.")}`,
+        text: `❌ ${sanitizeProviderMessage(err, { kind: "video", fallback: "No se pudo procesar la publicacion de Instagram." })}`,
         ...global.channelInfo,
       });
     } finally {

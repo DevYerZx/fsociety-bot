@@ -1,5 +1,6 @@
 import { searchPinterestImages } from "./_searchFallbacks.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const COOLDOWN_TIME = 0;
 const cooldowns = new Map();
@@ -121,7 +122,7 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `No pude buscar imagenes: ${clean(error?.message || "error desconocido")}`,
+          text: `No pude buscar imagenes: ${clean(sanitizeProviderMessage(error, { kind: "search", fallback: "error desconocido" }))}`,
           ...global.channelInfo,
         },
         quoted

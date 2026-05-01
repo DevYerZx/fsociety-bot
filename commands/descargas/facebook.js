@@ -16,6 +16,7 @@ import {
   chargeDownloadRequest,
   refundDownloadCharge,
 } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_FACEBOOK_URL = `${API_BASE}/facebook`;
@@ -541,7 +542,7 @@ export default {
         {
           text:
             "╭━━〔 ❌ *ERROR FACEBOOK* 〕━━⬣\n" +
-            `┃ ${String(error?.message || "No se pudo procesar el video de Facebook.")}\n` +
+            `┃ ${sanitizeProviderMessage(error, { kind: "video", fallback: "No se pudo procesar el video de Facebook." })}\n` +
             "╰━━━━━━━━━━━━━━━━━━⬣",
           ...global.channelInfo,
         },

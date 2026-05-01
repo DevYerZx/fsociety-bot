@@ -5,6 +5,7 @@ import axios from "axios";
 import { pipeline } from "stream/promises";
 import { buildDvyerUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const API_MEGA_URL = buildDvyerUrl("/mega");
 const COOLDOWN_TIME = 0;
@@ -393,7 +394,7 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: String(error?.message || "No se pudo procesar el archivo de MEGA."),
+          text: sanitizeProviderMessage(error, { kind: "file", fallback: "No se pudo procesar el archivo de MEGA." }),
           ...global.channelInfo,
         },
         quoted

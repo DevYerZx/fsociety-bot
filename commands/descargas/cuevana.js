@@ -5,6 +5,7 @@ import axios from "axios";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
 import { getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const RESULT_LIMIT = 10;
 const DEFAULT_TIMEOUT_MS = 20000;
@@ -294,7 +295,7 @@ export default {
         return conn.sendMessage(
           from,
           {
-            text: `No pude descargar el video.\n${error?.message || error}`,
+            text: `No pude descargar el video.\n${sanitizeProviderMessage(error, { kind: "video", fallback: "No se pudo descargar el video." })}`,
             ...global.channelInfo,
           },
           quoted

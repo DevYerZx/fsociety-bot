@@ -1,5 +1,6 @@
 import yts from "yt-search";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const RESULT_LIMIT = 5;
 const DEFAULT_CAROUSEL_COVER = "https://i.ibb.co/5xrnyZhN/fsociety-bot-profile.png";
@@ -353,7 +354,7 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `Error al buscar en YouTube: ${clean(error?.message || "desconocido")}`,
+          text: `Error al buscar en YouTube: ${clean(sanitizeProviderMessage(error, { kind: "search", fallback: "desconocido" }))}`,
           ...global.channelInfo,
         },
         quoted

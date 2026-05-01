@@ -5,6 +5,7 @@ import axios from "axios";
 import { pipeline } from "stream/promises";
 import { getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_MEDIAFIRE_URL = `${API_BASE}/mediafire`;
@@ -465,10 +466,7 @@ export default {
         {
           text: [
             "╭━━〔 *❌ MEDIAFIRE ERROR* 〕━━⬣",
-            `┃ ${String(
-              error?.message ||
-                "No se pudo procesar el archivo de MediaFire."
-            )}`,
+            `┃ ${sanitizeProviderMessage(error, { kind: "file", fallback: "No se pudo procesar el archivo de MediaFire." })}`,
             "╰━━━━━━━━━━━━━━━━━━⬣",
           ].join("\n"),
           ...global.channelInfo,

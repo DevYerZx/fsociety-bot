@@ -300,6 +300,18 @@ function cleanErrorText(error) {
     text = parsed?.detail || parsed?.message || text;
   } catch {}
 
+  const normalized = text.toLowerCase();
+
+  if (
+    normalized.includes("rate-overlimit") ||
+    normalized.includes("rate overlimit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("http 429") ||
+    normalized.includes("429")
+  ) {
+    return "El servidor de audio esta ocupado en este momento. Intenta otra vez en unos minutos.";
+  }
+
   if (text.includes("403")) {
     return "El enlace de audio expiró o fue bloqueado. Intenta otra vez.";
   }
@@ -310,6 +322,15 @@ function cleanErrorText(error) {
 
   if (text.toLowerCase().includes("timeout")) {
     return "La descarga tardó demasiado. Intenta otra vez.";
+  }
+
+  if (
+    normalized.includes("socket hang up") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("service unavailable") ||
+    normalized.includes("temporarily unavailable")
+  ) {
+    return "El servidor de audio esta temporalmente inestable. Intenta otra vez.";
   }
 
   return text;

@@ -9,6 +9,7 @@ import {
   assertDownloadWithinPolicy,
   getDownloadExecutionPolicy,
 } from "../../lib/subbot-download-policy.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 // Configuración
 const API_SPOTIFY_URL = buildDvyerUrl("/spotify");
@@ -722,11 +723,10 @@ export default {
       console.error("SPOTIFY ERROR:", error.message || String(error));
       cooldowns.delete(userId);
 
-      const errorMsg = error?.message || error?.response?.data?.message || String(error) || "Error desconocido";
       await sock.sendMessage(
         from,
         {
-          text: `❌ Error: ${errorMsg}`,
+          text: `❌ ${sanitizeProviderMessage(error, { kind: "audio", fallback: "No se pudo procesar Spotify." })}`,
           ...global.channelInfo,
         },
         quoted

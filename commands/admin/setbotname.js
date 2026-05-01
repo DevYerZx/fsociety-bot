@@ -1,7 +1,15 @@
 import path from "path";
 import { writeJsonAtomic } from "../../lib/json-store.js";
+import {
+  formatCooldownMs,
+  guardProfileMutation,
+  isProfileRateOverlimitError,
+  noteProfileMutationFailure,
+  noteProfileMutationSuccess,
+} from "./_shared.js";
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings", "settings.json");
+const PROFILE_NAME_COMMAND_COOLDOWN_MS = 15 * 60 * 1000;
 
 function getQuoted(msg) {
   return msg?.key ? { quoted: msg } : undefined;
@@ -53,7 +61,42 @@ export default {
     }
 
     try {
+      const currentName =
+        String(
+          String(botId || "").toLowerCase() === "main"
+            ? settings?.botName || ""
+            : settings?.subbots?.[Math.max(0, getSubbotSlot(botId) - 1)]?.name || ""
+        )
+          .trim()
+          .slice(0, 60);
+
+      if (currentName && currentName === nextName) {
+        return sock.sendMessage(
+          from,
+          {
+            text: "El nombre ya esta configurado asi. No hice cambios para evitar limite de WhatsApp.",
+            ...global.channelInfo,
+          },
+          getQuoted(msg)
+        );
+      }
+
+      const cooldown = guardProfileMutation(botId, "name", PROFILE_NAME_COMMAND_COOLDOWN_MS);
+      if (cooldown.skip) {
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              "WhatsApp esta protegiendo los cambios de nombre de este bot.\n\n" +
+              `Espera ${formatCooldownMs(cooldown.remainingMs)} antes de volver a cambiarlo.`,
+            ...global.channelInfo,
+          },
+          getQuoted(msg)
+        );
+      }
+
       await sock.updateProfileName(nextName);
+      noteProfileMutationSuccess(botId, "name");
 
       if (String(botId || "").toLowerCase() === "main") {
         settings.botName = nextName;
@@ -77,12 +120,14 @@ export default {
         getQuoted(msg)
       );
     } catch (error) {
+      noteProfileMutationFailure(botId, "name", error);
       await sock.sendMessage(
         from,
         {
-          text:
-            "*ERROR CAMBIANDO NOMBRE*\n\n" +
-            `${error?.message || "No pude cambiar el nombre del bot."}`,
+          text: isProfileRateOverlimitError(error)
+            ? "WhatsApp puso una pausa temporal para cambiar el nombre.\n\nEspera unos minutos y vuelve a intentarlo."
+            : "*ERROR CAMBIANDO NOMBRE*\n\n" +
+              `${error?.message || "No pude cambiar el nombre del bot."}`,
           ...global.channelInfo,
         },
         getQuoted(msg)

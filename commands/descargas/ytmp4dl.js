@@ -105,6 +105,50 @@ function buildFallbackQualities(preferred) {
   return QUALITY_OPTIONS.slice(startIndex);
 }
 
+function cleanVideoErrorText(error, fallback = "No se pudo preparar el MP4.") {
+  let text = String(error?.message || error || fallback);
+
+  try {
+    const parsed = JSON.parse(text);
+    text = parsed?.detail || parsed?.message || text;
+  } catch {}
+
+  const normalized = text.toLowerCase();
+
+  if (
+    normalized.includes("rate-overlimit") ||
+    normalized.includes("rate overlimit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("http 429") ||
+    normalized.includes("429")
+  ) {
+    return "El servidor de video esta ocupado en este momento. Intenta otra vez en unos minutos.";
+  }
+
+  if (normalized.includes("timeout")) {
+    return "La API de video tardó demasiado en responder. Intenta otra vez o usa una calidad menor.";
+  }
+
+  if (
+    normalized.includes("socket hang up") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("service unavailable") ||
+    normalized.includes("temporarily unavailable")
+  ) {
+    return "El servidor de video esta temporalmente inestable. Intenta otra vez.";
+  }
+
+  if (normalized.includes("403")) {
+    return "El enlace de video expiró o fue bloqueado. Intenta otra vez.";
+  }
+
+  if (normalized.includes("404")) {
+    return "No se encontró el video o el enlace ya no está disponible.";
+  }
+
+  return text;
+}
+
 async function getBuffer(url) {
   const target = cleanText(url);
   if (!target) return null;
@@ -712,7 +756,7 @@ export default {
         const shownError =
           error?.code === "PROVIDER_CIRCUIT_OPEN"
             ? String(error?.message || "Servicio temporalmente no autorizado para video.")
-            : String(error?.message || "No se pudo preparar el MP4.");
+            : cleanVideoErrorText(error, "No se pudo preparar el MP4.");
 
         await sock.sendMessage(
           from,

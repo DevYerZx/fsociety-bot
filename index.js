@@ -47,6 +47,11 @@ import { applyStoredRuntimeVars } from "./lib/runtime-vars.js";
 import { writeJsonAtomic as writeAtomicJsonFile } from "./lib/json-store.js";
 import { getProviderGuardSnapshot } from "./lib/provider-guard.js";
 import { assertSubbotCommandAllowed } from "./lib/subbot-download-policy.js";
+import {
+  markProfileMutationFailure,
+  markProfileMutationSuccess,
+  shouldSkipProfileMutation,
+} from "./lib/profile-rate-limit.js";
 import { touchEconomyProfile } from "./commands/economia/_shared.js";
 import { setGroupBotDisabled } from "./commands/grupos/botgrupo.js";
 
@@ -89,6 +94,10 @@ const PANEL_SUBBOT_CALLBACK_WAIT_MS = 90_000;
 const PANEL_SUBBOT_CALLBACK_POLL_MS = 4_000;
 const SESSION_REPLACED_BLOCK_MS = 15 * 60 * 1000;
 const PROFILE_APPLY_DELAY_MS = 15 * 1000;
+const PROFILE_AUTO_APPLY_COOLDOWN_MS = Math.max(
+  30 * 60 * 1000,
+  parseNumberEnv("PROFILE_AUTO_APPLY_COOLDOWN_MS", 6 * 60 * 60 * 1000) || 6 * 60 * 60 * 1000
+);
 const COMMAND_TIMEOUT_MS = 3 * 60 * 1000;
 const DOWNLOAD_COMMAND_TIMEOUT_MS = 12 * 60 * 1000;
 const HOOK_TIMEOUT_MS = 20 * 1000;
@@ -1016,9 +1025,11 @@ async function applyConfiguredBotProfile(botState, sock) {
   }
 
   let hadAppStateError = false;
+  const mutationBotId = String(botState?.config?.id || "main").trim().toLowerCase() || "main";
   const captureProfileError = (kind, error) => {
     const detail = String(error?.message || error || "").trim();
     if (!detail) return;
+    const normalizedDetail = detail.toLowerCase();
 
     if (/app state key not present/i.test(detail)) {
       hadAppStateError = true;
@@ -1030,32 +1041,73 @@ async function applyConfiguredBotProfile(botState, sock) {
       return;
     }
 
+    if (
+      normalizedDetail.includes("rate-overlimit") ||
+      normalizedDetail.includes("rate overlimit") ||
+      normalizedDetail.includes("too many requests") ||
+      normalizedDetail.includes("http 429")
+    ) {
+      return;
+    }
+
+    if (kind === "nombre") {
+      markProfileMutationFailure(mutationBotId, "name", error);
+    } else if (kind === "bio") {
+      markProfileMutationFailure(mutationBotId, "status", error);
+    } else if (kind === "foto") {
+      markProfileMutationFailure(mutationBotId, "photo", error);
+    }
+
     logBotEvent(botState, "warn", `No pude actualizar ${kind} del perfil: ${detail}`);
   };
 
   if (typeof sock.updateProfileName === "function" && desiredName) {
-    try {
-      await sock.updateProfileName(desiredName);
-    } catch (error) {
-      captureProfileError("nombre", error);
+    const cooldown = shouldSkipProfileMutation(
+      mutationBotId,
+      "name",
+      PROFILE_AUTO_APPLY_COOLDOWN_MS
+    );
+    if (!cooldown.skip) {
+      try {
+        await sock.updateProfileName(desiredName);
+        markProfileMutationSuccess(mutationBotId, "name");
+      } catch (error) {
+        captureProfileError("nombre", error);
+      }
     }
   }
 
   if (typeof sock.updateProfileStatus === "function" && desiredBio) {
-    try {
-      await sock.updateProfileStatus(desiredBio);
-    } catch (error) {
-      captureProfileError("bio", error);
+    const cooldown = shouldSkipProfileMutation(
+      mutationBotId,
+      "status",
+      PROFILE_AUTO_APPLY_COOLDOWN_MS
+    );
+    if (!cooldown.skip) {
+      try {
+        await sock.updateProfileStatus(desiredBio);
+        markProfileMutationSuccess(mutationBotId, "status");
+      } catch (error) {
+        captureProfileError("bio", error);
+      }
     }
   }
 
   if (typeof sock.updateProfilePicture === "function" && desiredPhoto) {
     let photoSource = null;
+    const cooldown = shouldSkipProfileMutation(
+      mutationBotId,
+      "photo",
+      PROFILE_AUTO_APPLY_COOLDOWN_MS
+    );
 
     try {
-      photoSource = await resolveBotProfilePhotoSource(botState?.config);
-      if (photoSource?.path) {
-        await sock.updateProfilePicture(sock.user.id, { url: photoSource.path });
+      if (!cooldown.skip) {
+        photoSource = await resolveBotProfilePhotoSource(botState?.config);
+        if (photoSource?.path) {
+          await sock.updateProfilePicture(sock.user.id, { url: photoSource.path });
+          markProfileMutationSuccess(mutationBotId, "photo");
+        }
       }
     } catch (error) {
       captureProfileError("foto", error);

@@ -8,6 +8,11 @@ import {
   normalizeJidDigits as normalizeCompatJidDigits,
   normalizeJidUser as normalizeCompatJidUser,
 } from "../../lib/group-compat.js";
+import {
+  markProfileMutationFailure,
+  markProfileMutationSuccess,
+  shouldSkipProfileMutation,
+} from "../../lib/profile-rate-limit.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -111,4 +116,37 @@ export function getPrefix(settings) {
   }
 
   return String(settings?.prefix || ".").trim() || ".";
+}
+
+export function formatCooldownMs(ms = 0) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+export function isProfileRateOverlimitError(error) {
+  const detail = String(error?.message || error || "").trim().toLowerCase();
+  return (
+    detail.includes("rate-overlimit") ||
+    detail.includes("rate overlimit") ||
+    detail.includes("too many requests") ||
+    detail.includes("429")
+  );
+}
+
+export function guardProfileMutation(botId = "", operation = "", minIntervalMs = 0) {
+  return shouldSkipProfileMutation(botId, operation, minIntervalMs);
+}
+
+export function noteProfileMutationSuccess(botId = "", operation = "") {
+  return markProfileMutationSuccess(botId, operation);
+}
+
+export function noteProfileMutationFailure(botId = "", operation = "", error) {
+  return markProfileMutationFailure(botId, operation, error);
 }

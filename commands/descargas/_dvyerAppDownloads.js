@@ -15,6 +15,7 @@ import {
   chargeDownloadRequest,
   refundDownloadCharge,
 } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
 const SEARCH_TIMEOUT = 45_000;
@@ -946,7 +947,10 @@ export function buildDvyerAppCommand(kind) {
 
         cooldowns.delete(userId);
 
-        const detail = String(error?.message || "No se pudo procesar la descarga.");
+        const detail = sanitizeProviderMessage(error, {
+          kind: "file",
+          fallback: "No se pudo procesar la descarga.",
+        });
 
         await safeSendMessage(
           sock,

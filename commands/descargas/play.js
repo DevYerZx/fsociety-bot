@@ -1,4 +1,5 @@
 import yts from "yt-search";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const MAX_RESULTS = 5;
 const PICK_TOKEN_PATTERN = /^--pick=(\d{1,2})$/i;
@@ -288,7 +289,7 @@ export default {
       return await sock.sendMessage(
         from,
         {
-          text: `Error en play:\n${error?.message || error}`,
+          text: `Error en play:\n${sanitizeProviderMessage(error, { kind: "search", fallback: "No se pudo completar la busqueda." })}`,
           ...global.channelInfo,
         },
         { quoted: m }

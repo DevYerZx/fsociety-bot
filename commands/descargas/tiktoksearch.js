@@ -1,5 +1,6 @@
 import { searchTikTokVideos } from "./_searchFallbacks.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
+import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const RESULT_LIMIT = 5;
 const DEFAULT_CAROUSEL_COVER = "https://i.ibb.co/5xrnyZhN/fsociety-bot-profile.png";
@@ -365,7 +366,7 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `Error obteniendo videos de TikTok tras ${SEARCH_RETRY_ATTEMPTS} intentos. Intenta otra busqueda en unos segundos.`,
+          text: `Error obteniendo videos de TikTok: ${sanitizeProviderMessage(error, { kind: "search", fallback: "intenta otra busqueda en unos segundos" })}`,
           ...global.channelInfo,
         },
         { quoted: msg }
