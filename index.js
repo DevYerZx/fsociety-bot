@@ -3594,21 +3594,21 @@ function logBotEvent(value, level = "info", message = "", metadata = {}) {
   });
 
   if (normalizedLevel === "error") {
-    console.log(`${timeText} ${tagText} ${chalk.redBright("[ERROR]")} ${chalk.redBright(`${messageText}${extraText}`)}`);
+    console.log(`${timeText} ${tagText} ${chalk.redBright("[ERROR]")} ${chalk.redBright(`✖ ${messageText}${extraText}`)}`);
     return;
   }
 
   if (normalizedLevel === "warn") {
-    console.log(`${timeText} ${tagText} ${chalk.yellowBright("[WARN ]")} ${chalk.yellowBright(`${messageText}${extraText}`)}`);
+    console.log(`${timeText} ${tagText} ${chalk.yellowBright("[WARN ]")} ${chalk.yellowBright(`⚠ ${messageText}${extraText}`)}`);
     return;
   }
 
   if (normalizedLevel === "success") {
-    console.log(`${timeText} ${tagText} ${chalk.greenBright("[ OK  ]")} ${chalk.greenBright(`${messageText}${extraText}`)}`);
+    console.log(`${timeText} ${tagText} ${chalk.greenBright("[ OK  ]")} ${chalk.greenBright(`✔ ${messageText}${extraText}`)}`);
     return;
   }
 
-  console.log(`${timeText} ${tagText} ${chalk.blueBright("[INFO ]")} ${chalk.cyanBright(`${messageText}${extraText}`)}`);
+  console.log(`${timeText} ${tagText} ${chalk.blueBright("[INFO ]")} ${chalk.cyanBright(`◆ ${messageText}${extraText}`)}`);
 }
 
 function createStoreForBot(botId) {
@@ -6890,6 +6890,15 @@ function printMaskPairingScreen() {
   }
 }
 
+function printPairingPromptPanel(botLabel = "MAIN") {
+  const label = String(botLabel || "MAIN").trim().toUpperCase();
+  console.log(chalk.yellowBright("╭────────────────────────────────────────────────────────────────────╮"));
+  console.log(chalk.yellowBright(`│  ${label} LINK MODE                                                │`));
+  console.log(chalk.greenBright("│  INGRESE SU NUMERO CON CODIGO DE PAIS (SIN +, SIN ESPACIOS)       │"));
+  console.log(chalk.cyanBright("│  EJEMPLO: 51912345678                                              │"));
+  console.log(chalk.yellowBright("╰────────────────────────────────────────────────────────────────────╯"));
+}
+
 async function banner() {
   return;
 }
@@ -8161,11 +8170,12 @@ async function requestPairingCode(botState, options = {}) {
   if (!resolvedNumber && allowPrompt) {
     if (!botState.pairingPromptShown) {
       printMaskPairingScreen();
+      printPairingPromptPanel(botState?.config?.label || "MAIN");
       botState.pairingPromptShown = true;
     }
     resolvedNumber = normalizePairingPhoneNumber(
       await preguntarSeguro(
-        `Numero del ${botState.config.label} con codigo de pais, sin + ni espacios: `
+        chalk.greenBright(`Numero del ${botState.config.label} > `)
       )
     );
   }
