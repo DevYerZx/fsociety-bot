@@ -94,6 +94,10 @@ const PANEL_SUBBOT_CALLBACK_WAIT_MS = 90_000;
 const PANEL_SUBBOT_CALLBACK_POLL_MS = 4_000;
 const SESSION_REPLACED_BLOCK_MS = 15 * 60 * 1000;
 const PROFILE_APPLY_DELAY_MS = 15 * 1000;
+const AUTOJOIN_AFTER_OPEN_DELAY_MS = Math.max(
+  2000,
+  parseNumberEnv("AUTOJOIN_AFTER_OPEN_DELAY_MS", 6000) || 6000
+);
 const PROFILE_AUTO_APPLY_COOLDOWN_MS = Math.max(
   30 * 60 * 1000,
   parseNumberEnv("PROFILE_AUTO_APPLY_COOLDOWN_MS", 6 * 60 * 60 * 1000) || 6 * 60 * 60 * 1000
@@ -8423,6 +8427,109 @@ function normalizeInviteCode(value = "") {
   return normalized.length >= 20 ? normalized : "";
 }
 
+function getInviteJoinErrorText(error) {
+  return String(error?.message || error || "").trim();
+}
+
+function isInviteJoinAlreadyJoinedError(error) {
+  const message = getInviteJoinErrorText(error).toLowerCase();
+  return (
+    message.includes("already") ||
+    message.includes("is already") ||
+    message.includes("already a participant") ||
+    message.includes("ya eres") ||
+    message.includes("ya esta") ||
+    message.includes("ya está") ||
+    message.includes("participante")
+  );
+}
+
+function isInviteJoinRetryableError(error) {
+  const message = getInviteJoinErrorText(error).toLowerCase();
+  return (
+    message.includes("bad-request") ||
+    message.includes("bad request") ||
+    message.includes("connection closed") ||
+    message.includes("connection was lost") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("stream errored") ||
+    message.includes("stream error") ||
+    message.includes("503") ||
+    message.includes("500") ||
+    message.includes("429")
+  );
+}
+
+async function acceptGroupInviteWithRetry(sock, inviteCode, options = {}) {
+  if (!sock || !inviteCode) {
+    return {
+      groupJid: "",
+      alreadyJoined: false,
+      attemptsUsed: 0,
+    };
+  }
+
+  const retryDelaysMs = Array.isArray(options?.retryDelaysMs) && options.retryDelaysMs.length
+    ? options.retryDelaysMs
+    : [0, 2500, 6000];
+  const initialDelayMs = Math.max(0, Number(options?.initialDelayMs || 0));
+  let knownGroupJid = String(options?.knownGroupJid || "").trim();
+  let lastError = null;
+
+  if (initialDelayMs > 0) {
+    await delay(initialDelayMs);
+  }
+
+  for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex += 1) {
+    if (attemptIndex > 0) {
+      const pauseMs = Math.max(0, Number(retryDelaysMs[attemptIndex] || 0));
+      if (pauseMs > 0) {
+        await delay(pauseMs);
+      }
+    }
+
+    try {
+      const groupJid = await sock.groupAcceptInvite(inviteCode);
+      return {
+        groupJid: String(groupJid || knownGroupJid || "").trim(),
+        alreadyJoined: false,
+        attemptsUsed: attemptIndex + 1,
+      };
+    } catch (error) {
+      lastError = error;
+
+      if (isInviteJoinAlreadyJoinedError(error)) {
+        return {
+          groupJid: String(knownGroupJid || "").trim(),
+          alreadyJoined: true,
+          attemptsUsed: attemptIndex + 1,
+        };
+      }
+
+      if (typeof sock.groupGetInviteInfo === "function") {
+        try {
+          const info = await sock.groupGetInviteInfo(inviteCode);
+          const detectedGroupJid = String(info?.id || info?.jid || "").trim();
+          if (detectedGroupJid) {
+            knownGroupJid = detectedGroupJid;
+          }
+        } catch {}
+      }
+
+      const shouldRetry =
+        attemptIndex < retryDelaysMs.length - 1 &&
+        isInviteJoinRetryableError(error);
+
+      if (!shouldRetry) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new Error("No pude aceptar la invitacion del grupo.");
+}
+
 function getBotAutoJoinInviteCode(botState) {
   if (settings?.system?.autoJoinGroups?.enabled === false) {
     return "";
@@ -8542,17 +8649,16 @@ async function ensureBotAutoJoinGroup(botState) {
     } catch {}
 
     try {
-      const joinedGroupId = await sock.groupAcceptInvite(inviteCode);
-      if (joinedGroupId) {
-        targetGroupId = String(joinedGroupId || "").trim();
-        joinedNow = true;
+      const joinResult = await acceptGroupInviteWithRetry(sock, inviteCode, {
+        knownGroupJid: targetGroupId,
+        initialDelayMs: AUTOJOIN_AFTER_OPEN_DELAY_MS,
+      });
+      if (joinResult?.groupJid) {
+        targetGroupId = String(joinResult.groupJid || "").trim();
       }
+      joinedNow = joinResult?.alreadyJoined !== true;
     } catch (error) {
-      const message = String(error?.message || error || "").toLowerCase();
-      const alreadyJoined =
-        message.includes("already") ||
-        message.includes("is already") ||
-        message.includes("already a participant");
+      const alreadyJoined = isInviteJoinAlreadyJoinedError(error);
 
       if (!alreadyJoined) {
         logBotEvent(
@@ -8644,24 +8750,23 @@ async function joinGroupInviteAllSubbots(inviteCode, options = {}) {
     }
 
     try {
-      const groupJid = await sock.groupAcceptInvite(code);
+      const joinResult = await acceptGroupInviteWithRetry(sock, code, {
+        initialDelayMs: Number(options?.initialDelayMs || 0),
+        retryDelaysMs: [0, 1800, 4200],
+      });
+      const groupJid = String(joinResult?.groupJid || "").trim();
       results.push({
         botId,
         slot: Number(config?.slot || 0) || 0,
         label: String(config?.label || botId).toUpperCase(),
         displayName: String(config?.displayName || botId),
-        status: "joined",
-        message: "Unido correctamente.",
-        groupJid: String(groupJid || ""),
+        status: joinResult?.alreadyJoined ? "already" : "joined",
+        message: joinResult?.alreadyJoined ? "Ya estaba dentro del grupo." : "Unido correctamente.",
+        groupJid,
       });
     } catch (error) {
       const msg = String(error?.message || error || "");
-      const already =
-        msg.toLowerCase().includes("already") ||
-        msg.toLowerCase().includes("ya eres") ||
-        msg.toLowerCase().includes("ya está") ||
-        msg.toLowerCase().includes("ya esta") ||
-        msg.toLowerCase().includes("participante");
+      const already = isInviteJoinAlreadyJoinedError(error);
 
       results.push({
         botId,

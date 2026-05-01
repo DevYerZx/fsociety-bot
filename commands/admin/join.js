@@ -14,6 +14,19 @@ function extractInviteCode(value = "") {
   return text.replace(/[^0-9A-Za-z]/g, "");
 }
 
+function isAlreadyJoinedError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("already") ||
+    message.includes("is already") ||
+    message.includes("already a participant") ||
+    message.includes("ya eres") ||
+    message.includes("ya esta") ||
+    message.includes("ya está") ||
+    message.includes("participante")
+  );
+}
+
 export default {
   name: "join",
   command: ["join", "entrargrupo", "unirme"],
@@ -64,6 +77,19 @@ export default {
         getQuoted(msg)
       );
     } catch (error) {
+      if (isAlreadyJoinedError(error)) {
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              `*${String(botLabel || "BOT").toUpperCase()} YA ESTA EN EL GRUPO*\n\n` +
+              "Ese bot ya pertenece a ese grupo o la invitacion ya fue usada por esta cuenta.",
+            ...global.channelInfo,
+          },
+          getQuoted(msg)
+        );
+      }
+
       await sock.sendMessage(
         from,
         {
