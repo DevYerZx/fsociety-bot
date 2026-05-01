@@ -6794,10 +6794,16 @@ function buildDashboardFrame(params = {}) {
     const clipped = String(text || "").slice(0, contentWidth);
     lines.push(`║${clipped.padEnd(contentWidth, " ")}║`);
   };
-  const compactProcess = String(processLabel || "STABLE")
+  const rawProcess = String(processLabel || "STABLE")
     .replaceAll("_", " ")
     .trim()
     .toUpperCase();
+  const compactProcess =
+    rawProcess.includes("UNICO") || rawProcess.includes("HOSTING")
+      ? "UNICO"
+      : rawProcess.includes("SPLIT") || rawProcess.includes("SEPARADO")
+        ? "SPLIT"
+        : rawProcess || "STABLE";
   const compactEnabled = String(activeConfigLabels || "MAIN").replace(/\s+/g, " ");
   const eventLines = activityLogs.length
     ? activityLogs.slice(-2).map((line) => `➤ ${String(line || "").replace(/^[✓↻]\s*/u, "")}`)
