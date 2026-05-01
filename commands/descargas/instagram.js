@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import os from "os";
 import axios from "axios";
 import { pipeline } from "stream/promises";
 import { spawn } from "child_process";
@@ -20,13 +19,17 @@ const COOLDOWN_TIME = 0;
 const REQUEST_TIMEOUT = 120000;
 const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
 const VIDEO_AS_DOCUMENT_THRESHOLD = 50 * 1024 * 1024;
-const TMP_DIR = path.join(os.tmpdir(), "dvyer-instagram");
+const TMP_DIR = path.join(process.cwd(), "tmp", "dvyer-instagram");
 
 const cooldowns = new Map();
 
-if (!fs.existsSync(TMP_DIR)) {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
+function ensureTmpDir() {
+  if (!fs.existsSync(TMP_DIR)) {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+  }
 }
+
+ensureTmpDir();
 
 function safeFileName(name) {
   return (
@@ -204,6 +207,7 @@ async function downloadInstagramFile(postUrl, pick, outputPath, options = {}) {
   const signal = options?.signal || null;
   const maxMediaBytes = Math.max(30_000, Number(options?.maxBytes || MAX_MEDIA_BYTES));
   throwIfAborted(signal);
+  ensureTmpDir();
 
   let response;
   try {
@@ -306,6 +310,7 @@ async function downloadInstagramFile(postUrl, pick, outputPath, options = {}) {
 async function convertVideoForWhatsApp(inputPath, outputPath, options = {}) {
   const signal = options?.signal || null;
   throwIfAborted(signal);
+  ensureTmpDir();
 
   return await new Promise((resolve, reject) => {
     const ffmpeg = spawn(
@@ -549,6 +554,7 @@ export default {
         signal: abortSignal,
       });
       throwIfAborted(abortSignal);
+      ensureTmpDir();
 
       rawPath = path.join(TMP_DIR, `${Date.now()}-raw-${info.fileName}`);
       const downloaded = await downloadInstagramFile(postUrl, pick, rawPath, {
