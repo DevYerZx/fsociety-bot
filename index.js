@@ -6867,6 +6867,17 @@ function buildMaskLoadingScreen() {
 }
 
 function buildMaskPairingScreen() {
+  try {
+    const maskFile = path.join(process.cwd(), "assets", "mask-link.txt");
+    if (fs.existsSync(maskFile)) {
+      const raw = String(fs.readFileSync(maskFile, "utf-8") || "").replace(/\r/g, "");
+      const lines = raw.split("\n").map((line) => line.replace(/\s+$/g, ""));
+      if (lines.some((line) => line.trim().length > 0)) {
+        return lines;
+      }
+    }
+  } catch {}
+
   return [
     "╔════════════════════════════════════════════════════════════════════╗",
     "║                         FSOCIETY LINK MASK                         ║",
