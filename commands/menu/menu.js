@@ -609,13 +609,13 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
 
   const quickButtons = [
     {
-      buttonId: `${primaryPrefix}reglas`,
-      buttonText: { displayText: "↩ RULES | MENU" },
+      buttonId: `${primaryPrefix}administradores`,
+      buttonText: { displayText: "↩ ADMINISTRADORES" },
       type: 1,
     },
     {
-      buttonId: `${primaryPrefix}sewa`,
-      buttonText: { displayText: "↩ SEWA | FSOCIETY" },
+      buttonId: `${primaryPrefix}gruposoficiales`,
+      buttonText: { displayText: "↩ GRUPOS OFICIALES" },
       type: 1,
     },
   ];
