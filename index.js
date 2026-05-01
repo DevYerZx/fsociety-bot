@@ -6872,13 +6872,16 @@ function buildMaskPairingScreen() {
     "║                         FSOCIETY LINK MASK                         ║",
     "╠════════════════════════════════════════════════════════════════════╣",
     "║                                                                    ║",
-    "║             .-'''-.                                                ║",
-    "║            /  .-.  \\                                               ║",
-    "║           |  /   \\  |                                              ║",
-    "║           | |     | |                                              ║",
-    "║           |  \\___/  |                                              ║",
-    "║            \\       /                                               ║",
-    "║             `-...-'                                                ║",
+    "║                 .-''''''-.                                         ║",
+    "║               .'  _    _  '.                                       ║",
+    "║              /   (o)  (o)   \\                                      ║",
+    "║             |   .-''''''-.   |                                     ║",
+    "║             |  /  .--.   \\   |                                     ║",
+    "║             |  | (____)  |   |                                     ║",
+    "║             |  \\  '--'  /   /                                      ║",
+    "║              \\  '------'  .'/                                      ║",
+    "║               '.        .-'                                        ║",
+    "║                 '-.__.-'                                           ║",
     "║                                                                    ║",
     "║      INGRESE SU NUMERO PARA VINCULARSE AL BOT PRINCIPAL            ║",
     "║      FORMATO SUGERIDO: 51XXXXXXXXX                                 ║",
@@ -6935,14 +6938,6 @@ async function banner() {
     console.log(chalk.magentaBright(line));
   }
   await delay(450);
-
-  if (isInteractiveTerminal) {
-    console.clear();
-  }
-  for (const line of buildMaskPairingScreen()) {
-    console.log(chalk.cyanBright(line));
-  }
-  await delay(550);
 
   for (let step = 1; step <= bootSteps; step += 1) {
     const ratio = step / bootSteps;
@@ -8289,6 +8284,9 @@ async function requestPairingCode(botState, options = {}) {
     explicitNumber || normalizePairingPhoneNumber(botState.config?.pairingNumber);
 
   if (!resolvedNumber && allowPrompt) {
+    for (const line of buildMaskPairingScreen()) {
+      console.log(chalk.cyanBright(line));
+    }
     console.log(`${getBotTag(botState)} Bot no vinculado`);
     resolvedNumber = normalizePairingPhoneNumber(
       await preguntarSeguro(
