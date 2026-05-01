@@ -820,28 +820,27 @@ export default {
         prefixLabel
       );
 
-      if (imageBuffer) {
-        await sock.sendMessage(
-          from,
-          {
-            image: imageBuffer,
-          },
-          { quoted: msg }
-        );
-      }
-
       const buttons = buildMenuButtons(primaryPrefix, categoryNames, categories);
 
       try {
+        const payload = {
+          footer: `© ${settings?.ownerName || "Fsociety"}`,
+          buttons,
+          headerType: 1,
+          ...global.channelInfo,
+        };
+
+        if (imageBuffer) {
+          payload.image = imageBuffer;
+          payload.caption = landingText;
+          payload.headerType = 4;
+        } else {
+          payload.text = landingText;
+        }
+
         await sock.sendMessage(
           from,
-          {
-            text: landingText,
-            footer: `© ${settings?.ownerName || "Fsociety"}`,
-            buttons,
-            headerType: 1,
-            ...global.channelInfo,
-          },
+          payload,
           { quoted: msg }
         );
       } catch {
