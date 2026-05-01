@@ -517,27 +517,100 @@ function buildCategoryRows(categoryNames, categories, primaryPrefix) {
 }
 
 function buildCategorySections(categoryNames, categories, primaryPrefix) {
-  const rows = buildCategoryRows(categoryNames, categories, primaryPrefix);
-  return [{ title: "Categorias del bot", rows }];
+  const rowByCategory = new Map(
+    buildCategoryRows(categoryNames, categories, primaryPrefix).map((row) => [
+      normalizeCategoryKey(row?.id?.replace(`${primaryPrefix}menu`, "").trim()),
+      row,
+    ])
+  );
+
+  const pick = (key) => rowByCategory.get(normalizeCategoryKey(key));
+  const sections = [];
+
+  const mainRows = [
+    pick("menu"),
+    pick("descargas"),
+    pick("grupos"),
+  ].filter(Boolean);
+  if (mainRows.length) {
+    sections.push({
+      title: "⚡ MENU PRINCIPAL",
+      highlight_label: "POPULAR",
+      rows: mainRows,
+    });
+  }
+
+  const gameRows = [
+    pick("juegos"),
+    pick("freefire"),
+    pick("economia"),
+  ].filter(Boolean);
+  if (gameRows.length) {
+    sections.push({
+      title: "🎮 ENTRETENIMIENTO",
+      highlight_label: "FUN",
+      rows: gameRows,
+    });
+  }
+
+  const toolRows = [
+    pick("ia"),
+    pick("herramientas"),
+    pick("media"),
+    pick("anime"),
+  ].filter(Boolean);
+  if (toolRows.length) {
+    sections.push({
+      title: "🤖 IA Y TOOLS",
+      highlight_label: "SMART",
+      rows: toolRows,
+    });
+  }
+
+  const adminRows = [
+    pick("sistema"),
+    pick("subbots"),
+    pick("admin"),
+    pick("owner"),
+    pick("vip"),
+  ].filter(Boolean);
+  if (adminRows.length) {
+    sections.push({
+      title: "🛡️ ADMINISTRACION",
+      highlight_label: "CONTROL",
+      rows: adminRows,
+    });
+  }
+
+  if (!sections.length) {
+    return [{ title: "Categorias del bot", rows: buildCategoryRows(categoryNames, categories, primaryPrefix) }];
+  }
+
+  return sections;
 }
 
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
-    "╭━〔 ⚡ *FSOCIETY CONTROL CENTER* 〕━⬣",
-    `┃ *${menuContext.title}*`,
-    `┃ _${menuContext.subtitle}_`,
-    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "┃",
-    `┃ 🧬 *Bot:* _${menuContext.botLine || settings?.botName || "Fsociety Bot"}_`,
-    `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
-    `┃ 🛠️ *Prefijos:* *${prefixLabel}*`,
-    `┃ ⏱️ *Activo:* _${uptime}_`,
-    `┃ 📚 *Categorías:* *${totalCategories}*`,
-    `┃ 🚀 *Comandos reales:* *${totalCommands}*`,
-    "┃",
-    "┃ _Pulsa la lista para navegar categoria por categoria._",
-    `┃ _Tip rapido: usa ${getPrimaryPrefix(settings)}menu descargas_`,
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "╭━━〔 ☠️ *FSOCIETY BOT* 〕━━⬣",
+    `┃ 👋 Hola, *${menuContext.botLine || settings?.botName || "usuario"}*`,
+    "┃ Bienvenido al panel principal",
+    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "",
+    "╭━━〔 👤 *INFO USER* 〕━━⬣",
+    `┃ ⦿ Perfil: *${menuContext.subtitle}*`,
+    `┃ ⦿ Prefijos: *${prefixLabel}*`,
+    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "",
+    "╭━━〔 🤖 *INFO BOT* 〕━━⬣",
+    `┃ ⦿ Bot: *${menuContext.title}*`,
+    `┃ ⦿ Owner: *${settings?.ownerName || "Owner"}*`,
+    `┃ ⦿ Runtime: *${uptime}*`,
+    `┃ ⦿ Categorias: *${totalCategories}*`,
+    `┃ ⦿ Comandos: *${totalCommands}*`,
+    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "",
+    "Pulsa *SELECT MENU* para abrir la lista completa.",
+    `Tip: ${getPrimaryPrefix(settings)}menu descargas`,
   ].join("\n");
 }
 
@@ -731,12 +804,12 @@ export default {
           text: landingText,
           title: menuContext.title,
           subtitle: menuContext.subtitle,
-          footer: "Selecciona una categoria",
+          footer: `© ${settings?.ownerName || "Fsociety"}`,
           interactiveButtons: [
             {
               name: "single_select",
               buttonParamsJson: JSON.stringify({
-                title: "Abrir menu",
+                title: "☷ SELECT MENU",
                 sections: buildCategorySections(
                   categoryNames,
                   categories,
