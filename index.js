@@ -6846,26 +6846,6 @@ function buildDashboardFrame(params = {}) {
   return lines;
 }
 
-function buildMaskLoadingScreen() {
-  return [
-    "╔════════════════════════════════════════════════════════════════════╗",
-    "║                      FSOCIETY PRE-BOOT MASK                       ║",
-    "╠════════════════════════════════════════════════════════════════════╣",
-    "║                                                                    ║",
-    "║             .                                                      ║",
-    "║           .d8b.      .d8888.   .d8888.   .d8888.                  ║",
-    "║          d8' `8b     88'  YP   88'  YP   88'  YP                  ║",
-    "║          88ooo88     `8bo.     `8bo.     `8bo.                    ║",
-    "║          88~~~88       `Y8b.     `Y8b.     `Y8b.                  ║",
-    "║          88   88     db   8D   db   8D   db   8D                  ║",
-    "║          YP   YP     `8888Y'   `8888Y'   `8888Y'                  ║",
-    "║                                                                    ║",
-    "║               CARGANDO SISTEMA... ESPERA UN MOMENTO               ║",
-    "║                                                                    ║",
-    "╚════════════════════════════════════════════════════════════════════╝",
-  ];
-}
-
 function buildMaskPairingScreen() {
   try {
     const maskFile = path.join(process.cwd(), "assets", "mask-link.txt");
@@ -6939,11 +6919,8 @@ async function banner() {
   const terminalWidth = Number(process.stdout?.columns || 0);
   const bodyWidth = Math.max(76, Math.min(96, terminalWidth > 0 ? terminalWidth - 2 : 92));
   const isInteractiveTerminal = Boolean(process.stdout?.isTTY);
-  const animateBoot =
-    CONSOLE_BOOT_ANIMATION &&
-    isInteractiveTerminal &&
-    !isPm2Environment(process.env);
-  const bootSteps = animateBoot ? 2 : 1;
+  const animateBoot = false;
+  const bootSteps = 1;
   const bootDelayMs = CONSOLE_BOOT_FRAME_DELAY_MS;
   const onlinePulseFrames = ["●", "○", "◇", "◆"];
   const managedConfigs = getManagedProcessBotConfigs();
@@ -6963,14 +6940,6 @@ async function banner() {
   const fallbackLatency = await estimateBootLatencyMs();
   networkTrafficSampleCache = readNetworkTrafficSample();
   const initialLatency = await measureHttpLatencyMs(CONSOLE_METRIC_PING_URL);
-
-  if (isInteractiveTerminal) {
-    console.clear();
-  }
-  for (const line of buildMaskLoadingScreen()) {
-    console.log(chalk.magentaBright(line));
-  }
-  await delay(450);
 
   for (let step = 1; step <= bootSteps; step += 1) {
     const ratio = step / bootSteps;
@@ -8317,7 +8286,10 @@ async function requestPairingCode(botState, options = {}) {
     explicitNumber || normalizePairingPhoneNumber(botState.config?.pairingNumber);
 
   if (!resolvedNumber && allowPrompt) {
-    printMaskPairingScreen();
+    if (!botState.pairingPromptShown) {
+      printMaskPairingScreen();
+      botState.pairingPromptShown = true;
+    }
     resolvedNumber = normalizePairingPhoneNumber(
       await preguntarSeguro(
         `Numero del ${botState.config.label} con codigo de pais, sin + ni espacios: `
