@@ -6901,6 +6901,28 @@ function buildMaskPairingScreen() {
   ];
 }
 
+function printMaskPairingScreen() {
+  const prefix = "[LOG] ";
+  const termWidth = Math.max(40, Number(process.stdout?.columns || 120));
+  const maxCharsPerLine = Math.max(8, termWidth - prefix.length);
+  const lines = buildMaskPairingScreen();
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || "");
+    const chars = Array.from(line);
+
+    if (!chars.length) {
+      log(chalk.cyan(prefix));
+      continue;
+    }
+
+    for (let i = 0; i < chars.length; i += maxCharsPerLine) {
+      const part = chars.slice(i, i + maxCharsPerLine).join("");
+      log(chalk.cyan(`${prefix}${part}`));
+    }
+  }
+}
+
 async function banner() {
   const managedLabels = getManagedProcessBotConfigs()
     .map((cfg) => cfg.label)
@@ -8295,9 +8317,7 @@ async function requestPairingCode(botState, options = {}) {
     explicitNumber || normalizePairingPhoneNumber(botState.config?.pairingNumber);
 
   if (!resolvedNumber && allowPrompt) {
-    for (const line of buildMaskPairingScreen()) {
-      console.log(chalk.cyanBright(line));
-    }
+    printMaskPairingScreen();
     resolvedNumber = normalizePairingPhoneNumber(
       await preguntarSeguro(
         `Numero del ${botState.config.label} con codigo de pais, sin + ni espacios: `
