@@ -92,17 +92,16 @@ async function react(sock, msg, emoji) {
 
 function buildUsageMessage(prefix) {
   return [
-    "╔════════════════════════════════════╗",
-    "║   ◆  FSOCIETY PLAY // SEARCH HUB  ║",
-    "╠════════════════════════════════════╣",
-    "║  ➤ Busca musica/video en YouTube   ║",
-    "║                                    ║",
-    `║  • ${prefix}play ozuna odisea         ║`,
-    `║  • ${prefix}play enlace_o_nombre      ║`,
-    "║                                    ║",
-    "║  ✔ Recibes portada + botones       ║",
-    "║    YTMP3 / YTMP4 / SIGUIENTE       ║",
-    "╚════════════════════════════════════╝",
+    "╭━━━〔 ✨ *FSOCIETY PLAY* ✨ 〕━━━⬣",
+    "┃",
+    "┃ 🎵 *Búsqueda instantánea de YouTube*",
+    "┃",
+    "┃ Usa:",
+    `┃ • ${prefix}play ozuna odisea`,
+    `┃ • ${prefix}play enlace o nombre`,
+    "┃",
+    "┃ Recibirás portada + botones MP3/MP4",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
@@ -114,23 +113,21 @@ function buildResultCaption(query, video, currentIndex, total) {
   const published = clipText(video?.ago || video?.publishedAt || "No definido", 24);
 
   return [
-    "╔════════════════════════════════════════════════════╗",
-    "║  🎧 FSOCIETY PLAY // RESULT CARD                  ║",
-    "╠════════════════════════════════════════════════════╣",
-    `║  🔎 QUERY   : ${clipText(query, 38)}`,
-    `║  🎯 SLOT    : ${currentIndex + 1}/${total}`,
-    "╟────────────────────────────────────────────────────╢",
-    `║  🎵 TITULO  : ${title}`,
-    `║  👤 CANAL   : ${author}`,
-    `║  ⏱ DURACION : ${duration}`,
-    `║  👁 VIEWS   : ${views || "No definido"}`,
-    `║  🗓 FECHA   : ${published}`,
-    `║  🌐 API     : ${PLAY_SOURCE_URL}`,
-    "╟────────────────────────────────────────────────────╢",
-    currentIndex < total - 1
-      ? "║  ◆ MP3 / MP4 listos • usa SIGUIENTE para avanzar  ║"
-      : "║  ◆ MP3 / MP4 listos • ultimo resultado disponible ║",
-    "╚════════════════════════════════════════════════════╝",
+    "╭━━━〔 🎧 *FSOCIETY PLAY* 🎧 〕━━━⬣",
+    "┃",
+    `┃ 🔎 *Búsqueda:* ${clipText(query, 48)}`,
+    `┃ 🎯 *Resultado:* ${currentIndex + 1}/${total}`,
+    "┃",
+    `┃ 🎵 *Título:* ${title}`,
+    `┃ 👤 *Canal:* ${author}`,
+    `┃ ⏱️ *Duración:* ${duration}`,
+    `┃ 👁️ *Views:* ${views || "No definido"}`,
+    `┃ 🗓️ *Publicado:* ${published}`,
+    `┃ 🌐 *API:* ${PLAY_SOURCE_URL}`,
+    "┃",
+    "┃ ✦ Toca *MP3* o *MP4* para descargar",
+    currentIndex < total - 1 ? "┃ ✦ Usa *Siguiente* para ver otro resultado" : "┃ ✦ Este es el último resultado disponible",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
@@ -139,20 +136,17 @@ function buildButtonPanel(query, video, currentIndex, total) {
   const duration = cleanText(video?.timestamp || "??:??");
 
   return [
-    "╭────────────────────────────────────────────╮",
-    "│ ⚡ FSOCIETY PLAY PANEL                     │",
-    `│ 🎵 ${title}`,
-    `│ ⏱ ${duration}  •  SLOT ${currentIndex + 1}/${total}`,
-    "├────────────────────────────────────────────┤",
-    "│ ◆ YTMP3 = audio",
-    "│ ◆ YTMP4 = video",
-    currentIndex < total - 1
-      ? "│ ◆ SIGUIENTE = ver otro resultado"
-      : "│ ◆ Este es el ultimo resultado",
-    "├────────────────────────────────────────────┤",
-    `│ 🔎 ${clipText(query, 34)}`,
-    `│ 🌐 ${PLAY_SOURCE_URL}`,
-    "╰────────────────────────────────────────────╯",
+    "╭━━━〔 ⚡ *FSOCIETY PLAY* ⚡ 〕━━━⬣",
+    `┃ 🎵 *${title}*`,
+    `┃ ⏱️ ${duration} | Resultado ${currentIndex + 1}/${total}`,
+    "┃",
+    "┃ • MP3 = audio",
+    "┃ • MP4 = video",
+    currentIndex < total - 1 ? "┃ • Siguiente = próximo resultado" : "┃ • Último resultado disponible",
+    "┃",
+    `┃ 🔎 ${clipText(query, 44)}`,
+    `┃ 🌐 ${PLAY_SOURCE_URL}`,
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
@@ -168,7 +162,7 @@ async function sendPlayCard(sock, from, quoted, query, video, currentIndex, vide
           image: { url: video.thumbnail },
           caption,
           buttons,
-          footer: "◆ FSOCIETY BOT • PLAY ENGINE • dv-yer-api.online",
+          footer: "FSOCIETY BOT • YouTube • dv-yer-api.online",
           headerType: 4,
           ...global.channelInfo,
         },
@@ -184,7 +178,7 @@ async function sendPlayCard(sock, from, quoted, query, video, currentIndex, vide
       {
         text: buildButtonPanel(query, video, currentIndex, videos.length),
         buttons,
-        footer: "◆ FSOCIETY BOT • PLAY ENGINE • dv-yer-api.online",
+        footer: "FSOCIETY BOT • YouTube • dv-yer-api.online",
         headerType: 1,
         ...global.channelInfo,
       },
