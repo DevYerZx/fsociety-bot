@@ -2444,7 +2444,11 @@ function formatCommandConsoleLog(commandData = {}, message = {}, from = "") {
     ? `grupo:${chatId || "desconocido"}`
     : `privado:${user}`;
   const requestId = String(commandData?.requestId || "").trim();
-  return `CMD ${commandText} | user ${user} | ${scope}${requestId ? ` | id ${requestId}` : ""}`;
+  const commandTag = chalk.greenBright(`CMD ${commandText}`);
+  const userTag = chalk.yellowBright(`USER ${user}`);
+  const scopeTag = chalk.cyanBright(`CHAT ${scope}`);
+  const reqTag = requestId ? chalk.magentaBright(`RID ${requestId}`) : "";
+  return [commandTag, userTag, scopeTag, reqTag].filter(Boolean).join("  •  ");
 }
 
 const GLOBAL_COMMAND_ALIAS_MAP = new Map([
@@ -8558,6 +8562,12 @@ async function ensureBotAutoJoinGroup(botState) {
         );
         return null;
       }
+
+      logBotEvent(
+        botState,
+        "info",
+        "Autojoin: el bot ya esta en el grupo objetivo."
+      );
     }
 
     if (!targetGroupId || !targetGroupId.endsWith("@g.us")) {
