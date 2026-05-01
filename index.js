@@ -6846,6 +6846,47 @@ function buildDashboardFrame(params = {}) {
   return lines;
 }
 
+function buildMaskLoadingScreen() {
+  return [
+    "╔════════════════════════════════════════════════════════════════════╗",
+    "║                      FSOCIETY PRE-BOOT MASK                       ║",
+    "╠════════════════════════════════════════════════════════════════════╣",
+    "║                                                                    ║",
+    "║             .                                                      ║",
+    "║           .d8b.      .d8888.   .d8888.   .d8888.                  ║",
+    "║          d8' `8b     88'  YP   88'  YP   88'  YP                  ║",
+    "║          88ooo88     `8bo.     `8bo.     `8bo.                    ║",
+    "║          88~~~88       `Y8b.     `Y8b.     `Y8b.                  ║",
+    "║          88   88     db   8D   db   8D   db   8D                  ║",
+    "║          YP   YP     `8888Y'   `8888Y'   `8888Y'                  ║",
+    "║                                                                    ║",
+    "║               CARGANDO SISTEMA... ESPERA UN MOMENTO               ║",
+    "║                                                                    ║",
+    "╚════════════════════════════════════════════════════════════════════╝",
+  ];
+}
+
+function buildMaskPairingScreen() {
+  return [
+    "╔════════════════════════════════════════════════════════════════════╗",
+    "║                         FSOCIETY LINK MASK                         ║",
+    "╠════════════════════════════════════════════════════════════════════╣",
+    "║                                                                    ║",
+    "║             .-'''-.                                                ║",
+    "║            /  .-.  \\                                               ║",
+    "║           |  /   \\  |                                              ║",
+    "║           | |     | |                                              ║",
+    "║           |  \\___/  |                                              ║",
+    "║            \\       /                                               ║",
+    "║             `-...-'                                                ║",
+    "║                                                                    ║",
+    "║      INGRESE SU NUMERO PARA VINCULARSE AL BOT PRINCIPAL            ║",
+    "║      FORMATO SUGERIDO: 51XXXXXXXXX                                 ║",
+    "║                                                                    ║",
+    "╚════════════════════════════════════════════════════════════════════╝",
+  ];
+}
+
 async function banner() {
   const managedLabels = getManagedProcessBotConfigs()
     .map((cfg) => cfg.label)
@@ -6886,6 +6927,22 @@ async function banner() {
   const fallbackLatency = await estimateBootLatencyMs();
   networkTrafficSampleCache = readNetworkTrafficSample();
   const initialLatency = await measureHttpLatencyMs(CONSOLE_METRIC_PING_URL);
+
+  if (isInteractiveTerminal) {
+    console.clear();
+  }
+  for (const line of buildMaskLoadingScreen()) {
+    console.log(chalk.magentaBright(line));
+  }
+  await delay(450);
+
+  if (isInteractiveTerminal) {
+    console.clear();
+  }
+  for (const line of buildMaskPairingScreen()) {
+    console.log(chalk.cyanBright(line));
+  }
+  await delay(550);
 
   for (let step = 1; step <= bootSteps; step += 1) {
     const ratio = step / bootSteps;
