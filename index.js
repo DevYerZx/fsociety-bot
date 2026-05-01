@@ -6871,7 +6871,7 @@ function buildMaskPairingScreen() {
     const maskFile = path.join(process.cwd(), "assets", "mask-link.txt");
     if (fs.existsSync(maskFile)) {
       const raw = String(fs.readFileSync(maskFile, "utf-8") || "").replace(/\r/g, "");
-      const lines = raw.split("\n").map((line) => line.replace(/\s+$/g, ""));
+      const lines = raw.split("\n");
       if (lines.some((line) => line.trim().length > 0)) {
         return lines;
       }
@@ -8298,7 +8298,6 @@ async function requestPairingCode(botState, options = {}) {
     for (const line of buildMaskPairingScreen()) {
       console.log(chalk.cyanBright(line));
     }
-    console.log(`${getBotTag(botState)} Bot no vinculado`);
     resolvedNumber = normalizePairingPhoneNumber(
       await preguntarSeguro(
         `Numero del ${botState.config.label} con codigo de pais, sin + ni espacios: `
