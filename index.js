@@ -8552,9 +8552,28 @@ function getBotAutoJoinTargetLabel(botState) {
 }
 
 function buildManagedGroupJoinNotice(botState, isAdmin = false) {
-  const botName = resolveBotDisplayName(botState?.config?.id || "main") ||
+  const botId = String(botState?.config?.id || "main").trim().toLowerCase();
+  const botName = resolveBotDisplayName(botId || "main") ||
     String(botState?.config?.displayName || settings?.botName || "Fsociety bot");
   const prefix = getPrimaryPrefix(settings);
+
+  if (botId === "main") {
+    if (isAdmin) {
+      return (
+        `✅ *${botName}* ya se unio al grupo principal de soporte.\n\n` +
+        `Ya tengo administrador aqui, asi que respondere normalmente.\n` +
+        `Si el bot presenta alguna falla, pueden avisar por este grupo de soporte.\n` +
+        `Si quieres silenciarme aqui usa *${prefix}botgrupo off*.`
+      );
+    }
+
+    return (
+      `🤖 *${botName}* ya se unio al grupo principal de soporte.\n\n` +
+      `Si el bot presenta alguna falla, pueden avisar por este grupo de soporte.\n` +
+      `En este momento no respondere mensajes porque no tengo administrador.\n` +
+      `Estado actual: *BOT OFF*.`
+    );
+  }
 
   if (isAdmin) {
     return (
