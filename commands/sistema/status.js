@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 function safeJsonParse(raw) {
@@ -16,6 +17,26 @@ function formatUptime(seconds) {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return `${h}h ${m}m ${s}s`;
+}
+
+function formatBytes(bytes = 0) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function estimateCpuLoadPercent() {
+  try {
+    const load = os.loadavg()?.[0] || 0;
+    const cores = (os.cpus() || []).length || 1;
+    const normalized = Math.max(0, (load / cores) * 100);
+    return `${normalized.toFixed(2)}%`;
+  } catch {
+    return "N/A";
+  }
 }
 
 function getPrefixLabel(settings) {
@@ -73,28 +94,47 @@ function getSubbotLabel() {
 }
 
 function buildMainPanel({ settings, comandos, vipCount }) {
+  const mem = process.memoryUsage();
+  const totalRam = os.totalmem();
+  const freeRam = os.freemem();
+  const usedRam = Math.max(0, totalRam - freeRam);
+  const host = os.hostname();
+  const uptime = formatUptime(process.uptime());
+  const hostUptime = formatUptime(os.uptime());
+  const cpuLoad = estimateCpuLoadPercent();
+
   return [
-    "╭━━━〔 𝙀𝙎𝙏𝘼𝘿𝙊 𝘿𝙀𝙇 𝘽𝙊𝙏 〕━━━⬣",
-    `┃ ⚙️ Bot: *${settings.botName || "BOT"}*`,
-    `┃ 👑 Owner: *${settings.ownerName || "Owner"}*`,
-    `┃ ⏱️ Uptime: *${formatUptime(process.uptime())}*`,
-    `┃ ✦ Prefijos: *${getPrefixLabel(settings)}*`,
-    `┃ 🧩 Comandos: *${comandos?.size ?? "?"}*`,
-    `┃ 🤖 Bots conectados: *${getSubbotLabel()}*`,
-    `┃ 💎 VIP activos: *${vipCount}*`,
-    `┃ 📰 Newsletter: *${settings?.newsletter?.enabled ? "ON" : "OFF"}*`,
-    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "╭━━〔 TERMINAL FSOCIETY 〕━━⬣",
+    "┃  .-=-=-=-=-=-=-=-=-=-=-=-.",
+    "┃  |      FSOCIETY NODE    |",
+    "┃  '=-=-=-=-=-=-=-=-=-=-=-='",
+    "┃",
+    `┃ 👑 Owner      : ${settings.ownerName || "Owner"}`,
+    `┃ 🤖 Bot        : ${settings.botName || "BOT"}`,
+    `┃ 🌐 Host       : ${host}`,
+    `┃ 🧩 Comandos   : ${comandos?.size ?? "?"}`,
+    `┃ 🤖 Sesiones   : ${getSubbotLabel()}`,
+    `┃ 💎 VIP        : ${vipCount}`,
+    "┃",
+    `┃ ⏱ Uptime Bot : ${uptime}`,
+    `┃ ⌛ Uptime VPS : ${hostUptime}`,
+    `┃ ⚙ CPU Load   : ${cpuLoad}`,
+    `┃ 🧠 RAM Host   : ${formatBytes(usedRam)} / ${formatBytes(totalRam)}`,
+    `┃ 📦 RAM Node   : ${formatBytes(mem.rss)}`,
+    `┃ 🔧 Prefix     : ${getPrefixLabel(settings)}`,
+    `┃ 📰 News       : ${settings?.newsletter?.enabled ? "ON" : "OFF"}`,
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
 function buildGroupPanel({ welcomeOn, modoAdmiOn, antilinkOn, antifakeOn }) {
   return [
-    "╭─〔 🛡️ 𝙂𝙍𝙐𝙋𝙊 〕",
-    `│ 🌸 Welcome: *${welcomeOn ? "ON" : "OFF"}*`,
-    `│ 👮 ModoAdmin: *${modoAdmiOn ? "ON" : "OFF"}*`,
-    `│ 🔗 Antilink: *${antilinkOn ? "ON" : "OFF"}*`,
-    `│ 🚫 Antifake: *${antifakeOn ? "ON" : "OFF"}*`,
-    "╰────────────⬣",
+    "╭─〔 CONTROL GRUPO 〕",
+    `│ Welcome    : ${welcomeOn ? "ON" : "OFF"}`,
+    `│ ModoAdmin  : ${modoAdmiOn ? "ON" : "OFF"}`,
+    `│ Antilink   : ${antilinkOn ? "ON" : "OFF"}`,
+    `│ Antifake   : ${antifakeOn ? "ON" : "OFF"}`,
+    "╰──────────────⬣",
   ].join("\n");
 }
 
@@ -117,9 +157,9 @@ export default {
       esGrupo
         ? buildGroupPanel({ welcomeOn, modoAdmiOn, antilinkOn, antifakeOn })
         : [
-            "╭─〔 💬 𝙋𝙍𝙄𝙑𝘼𝘿𝙊 〕",
-            "│ Este panel fue abierto desde un chat privado.",
-            "╰────────────⬣",
+            "╭─〔 CHAT PRIVADO 〕",
+            "│ Panel abierto en mensaje privado.",
+            "╰──────────────⬣",
           ].join("\n"),
     ];
 
