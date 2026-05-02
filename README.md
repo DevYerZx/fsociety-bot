@@ -112,7 +112,7 @@ pkg upgrade -y
 ### 2. Instala dependencias
 
 ```bash
-pkg install -y git nodejs-lts npm ffmpeg libvips clang make pkg-config python
+pkg install -y git nodejs-lts npm ffmpeg
 termux-setup-storage
 ```
 
@@ -120,8 +120,7 @@ Notas:
 
 - `nodejs-lts` y `npm` dejan el entorno mas estable para este bot.
 - No uses `pkg install nodejs` en este repo, porque Termux te quita `nodejs-lts` y puede romper la instalacion.
-- `clang`, `make`, `pkg-config`, `python` y `libvips` ayudan si `sharp` necesita compilarse.
-- Si `sharp` no logra compilar en tu Android, el bot igual podra instalarse y arrancar, pero las tarjetas de bienvenida avanzadas usaran el fallback de imagen normal o texto.
+- Este repo ya no depende de `sharp`, para evitar fallas de instalacion en Termux.
 
 ### 3. Clona el repositorio
 
@@ -169,7 +168,7 @@ pkg uninstall -y nodejs
 pkg install -y nodejs-lts npm
 ```
 
-Si `npm install` falla con `git dep preparation failed` o error de `sharp`:
+Si `npm install` falla con `git dep preparation failed`:
 
 ```bash
 rm -rf node_modules package-lock.json

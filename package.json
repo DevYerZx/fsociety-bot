@@ -28,9 +28,6 @@
     "punycode": "^2.3.1",
     "yt-search": "^2.10.4"
   },
-  "optionalDependencies": {
-    "sharp": "^0.34.5"
-  },
   "overrides": {
     "minimatch": "^10.2.1",
     "lodash": "^4.18.1",
