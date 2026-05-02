@@ -122,7 +122,7 @@ function cleanVideoErrorText(error, fallback = "No se pudo preparar el MP4.") {
     normalized.includes("http 429") ||
     normalized.includes("429")
   ) {
-    return "El servidor de video esta ocupado en este momento. Intenta otra vez en unos minutos.";
+    return "No pude procesar el video en este intento. Reintenta en un momento.";
   }
 
   if (normalized.includes("timeout")) {
@@ -135,7 +135,7 @@ function cleanVideoErrorText(error, fallback = "No se pudo preparar el MP4.") {
     normalized.includes("service unavailable") ||
     normalized.includes("temporarily unavailable")
   ) {
-    return "El servidor de video esta temporalmente inestable. Intenta otra vez.";
+    return "El proveedor de video esta temporalmente inestable. Reintenta en un momento.";
   }
 
   if (normalized.includes("403")) {

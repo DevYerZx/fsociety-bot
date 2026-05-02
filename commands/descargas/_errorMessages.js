@@ -17,12 +17,12 @@ export function sanitizeProviderMessage(error, options = {}) {
 
   const busyLabel =
     kind === "video"
-      ? "El servidor de video esta ocupado en este momento. Intenta otra vez en unos minutos."
+      ? "No pude procesar el video en este intento. Reintenta en un momento."
       : kind === "audio"
-      ? "El servidor de audio esta ocupado en este momento. Intenta otra vez en unos minutos."
+      ? "No pude procesar el audio en este intento. Reintenta en un momento."
       : kind === "search"
-      ? "El buscador esta ocupado en este momento. Intenta otra vez en unos minutos."
-      : "El servidor esta ocupado en este momento. Intenta otra vez en unos minutos.";
+      ? "No pude completar la busqueda en este intento. Reintenta en un momento."
+      : "No pude completar la solicitud en este intento. Reintenta en un momento.";
 
   if (
     normalized.includes("rate-overlimit") ||

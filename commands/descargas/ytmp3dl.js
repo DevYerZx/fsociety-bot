@@ -309,7 +309,7 @@ function cleanErrorText(error) {
     normalized.includes("http 429") ||
     normalized.includes("429")
   ) {
-    return "El servidor de audio esta ocupado en este momento. Intenta otra vez en unos minutos.";
+    return "No pude procesar el audio en este intento. Reintenta en un momento.";
   }
 
   if (text.includes("403")) {
@@ -330,7 +330,7 @@ function cleanErrorText(error) {
     normalized.includes("service unavailable") ||
     normalized.includes("temporarily unavailable")
   ) {
-    return "El servidor de audio esta temporalmente inestable. Intenta otra vez.";
+    return "El proveedor de audio esta temporalmente inestable. Reintenta en un momento.";
   }
 
   return text;
