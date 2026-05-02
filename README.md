@@ -100,6 +100,8 @@ npm start
 
 ## <img src="https://cdn.simpleicons.org/android/3DDC84" alt="Termux" width="18" /> Instalacion En Termux
 
+Usa Termux actualizado desde **F-Droid** o **GitHub Releases**. Las builds viejas de Play Store ya no son recomendadas por el proyecto Termux.
+
 ### 1. Actualiza paquetes
 
 ```bash
@@ -110,9 +112,15 @@ pkg upgrade -y
 ### 2. Instala dependencias
 
 ```bash
-pkg install -y git nodejs ffmpeg
+pkg install -y git nodejs-lts npm ffmpeg
 termux-setup-storage
 ```
+
+Notas:
+
+- `nodejs-lts` y `npm` dejan el entorno mas estable para este bot.
+- No uses `pkg install nodejs` en este repo, porque Termux te quita `nodejs-lts` y puede romper la instalacion.
+- Este repo ya no depende de `sharp`, para evitar fallas de instalacion en Termux.
 
 ### 3. Clona el repositorio
 
@@ -127,6 +135,12 @@ cd fsociety-bot
 npm install
 ```
 
+Si ves un error aislado de red con dependencias de GitHub, reintenta:
+
+```bash
+npm install --fetch-retries=5
+```
+
 ### 5. Inicia el bot
 
 ```bash
@@ -137,6 +151,29 @@ Si Termux te da problemas de memoria durante `npm install`, prueba:
 
 ```bash
 npm cache clean --force
+```
+
+Si `pkg` falla al instalar paquetes, cambia el mirror y vuelve a actualizar:
+
+```bash
+termux-change-repo
+pkg update -y
+pkg upgrade -y
+```
+
+Si ya instalaste `nodejs` y te removio `nodejs-lts`, recupera asi:
+
+```bash
+pkg uninstall -y nodejs
+pkg install -y nodejs-lts npm
+```
+
+Si `npm install` falla con `git dep preparation failed`:
+
+```bash
+rm -rf node_modules package-lock.json
+npm cache clean --force
+npm install --legacy-peer-deps
 ```
 
 ## <img src="https://cdn.simpleicons.org/linux/FCC624" alt="Linux" width="18" /> Instalacion En PC O VPS Linux
@@ -196,13 +233,13 @@ npm install -g pm2
 ### Iniciar con el ecosystem del proyecto
 
 ```bash
-npm run pm2:auto:start
+npm run pm2:start
 ```
 
 ### Reiniciar
 
 ```bash
-npm run pm2:auto:restart
+npm run pm2:restart
 ```
 
 ### Ver logs
@@ -385,8 +422,9 @@ Comandos relacionados:
 | --- | --- |
 | `npm start` | inicia el bot |
 | `npm run check` | revisa sintaxis del archivo principal |
-| `npm run pm2:auto:start` | inicia con PM2 |
-| `npm run pm2:auto:restart` | reinicia con PM2 |
+| `npm run smoke` | importa comandos y detecta aliases duplicados |
+| `npm run pm2:start` | inicia con PM2 |
+| `npm run pm2:restart` | reinicia con PM2 |
 | `bash start.sh` | inicio directo por script |
 
 ## Estructura Del Proyecto
@@ -415,4 +453,3 @@ Comandos relacionados:
 ```
 
 ## Recomendaciones
-
