@@ -119,6 +119,7 @@ termux-setup-storage
 Notas:
 
 - `nodejs-lts` y `npm` dejan el entorno mas estable para este bot.
+- No uses `pkg install nodejs` en este repo, porque Termux te quita `nodejs-lts` y puede romper la instalacion.
 - `clang`, `make`, `pkg-config`, `python` y `libvips` ayudan si `sharp` necesita compilarse.
 - Si `sharp` no logra compilar en tu Android, el bot igual podra instalarse y arrancar, pero las tarjetas de bienvenida avanzadas usaran el fallback de imagen normal o texto.
 
@@ -159,6 +160,21 @@ Si `pkg` falla al instalar paquetes, cambia el mirror y vuelve a actualizar:
 termux-change-repo
 pkg update -y
 pkg upgrade -y
+```
+
+Si ya instalaste `nodejs` y te removio `nodejs-lts`, recupera asi:
+
+```bash
+pkg uninstall -y nodejs
+pkg install -y nodejs-lts npm
+```
+
+Si `npm install` falla con `git dep preparation failed` o error de `sharp`:
+
+```bash
+rm -rf node_modules package-lock.json
+npm cache clean --force
+npm install --legacy-peer-deps
 ```
 
 ## <img src="https://cdn.simpleicons.org/linux/FCC624" alt="Linux" width="18" /> Instalacion En PC O VPS Linux
