@@ -56,7 +56,7 @@ export default {
             "*USO JOIN*\n\n" +
             "Usa un enlace o codigo de invitacion.\n" +
             "Ejemplo:\n" +
-            ".join https://chat.whatsapp.com/XXXXXXXXXXXXXXX",
+            ".join https://chat.whatsapp.com/XXXXXXXXXXXXXXYZ",
           ...global.channelInfo,
         },
         getQuoted(msg)
