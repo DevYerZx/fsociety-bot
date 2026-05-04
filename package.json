@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@dvyer/baileys": "https://codeload.github.com/DevYerZx/Baileys-dvvyerMD/tar.gz/main",
-    "axios": "^1.15.0",
+    "axios": "^1.16.0",
+    "bytenode": "^1.5.7",
     "chalk": "^4.1.2",
     "dotenv": "^16.4.7",
     "figlet": "^1.9.3",
