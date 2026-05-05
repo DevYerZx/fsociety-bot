@@ -24,7 +24,10 @@ import {
   runWithProviderCircuit,
 } from "../../lib/provider-guard.js";
 
-const API_YTMP3_URL = "https://dv-yer-api.online/ytmp3";
+const API_YTMP3_URLS = [
+  "https://dv-yer-api.online/ytmp3",
+  "https://dvyer-api.onrender.com/ytmp3",
+];
 
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
 
@@ -55,6 +58,7 @@ const HTTPS_AGENT = new https.Agent({
 const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
 const DELETE_RETRIES = 4;
 const DELETE_RETRY_DELAY_MS = 120;
+const REMOTE_SEND_TIMEOUT_MS = 25_000;
 
 function resolveMaxAudioBytes(ctx) {
   const policy = getDownloadExecutionPolicy(ctx, "ytmp3");
@@ -289,6 +293,105 @@ function extractApiError(data, status) {
   );
 }
 
+function getApiCandidates() {
+  const envBase = String(process.env.DVYER_API_BASE_URL || "").trim();
+  const envEndpoint = envBase
+    ? `${envBase.replace(/\/+$/, "")}/ytmp3`
+    : "";
+  const seen = new Set();
+  return [envEndpoint, ...API_YTMP3_URLS]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function shouldRetryWithNextApi(errorOrText) {
+  const text = String(errorOrText?.message || errorOrText || "").toLowerCase();
+  if (!text) return true;
+  return (
+    text.includes("econnrefused") ||
+    text.includes("enotfound") ||
+    text.includes("timeout") ||
+    text.includes("socket hang up") ||
+    text.includes("temporarily unavailable") ||
+    text.includes("service unavailable") ||
+    text.includes("http 500") ||
+    text.includes("http 502") ||
+    text.includes("http 503") ||
+    text.includes("http 504")
+  );
+}
+
+async function callYtmp3Api({
+  videoUrl,
+  mode = "link",
+  responseType = "json",
+  timeout = API_LINK_TIMEOUT,
+  accept = "application/json",
+  maxRedirects = 5,
+}) {
+  const endpoints = getApiCandidates();
+  const errors = [];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, {
+        responseType,
+        timeout,
+        params: {
+          mode,
+          url: videoUrl,
+          ...withDvyerApiKey(),
+        },
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+          Accept: accept,
+        },
+        httpAgent: HTTP_AGENT,
+        httpsAgent: HTTPS_AGENT,
+        maxRedirects,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        validateStatus: () => true,
+      });
+
+      if (response.status >= 400) {
+        let bodyText = "";
+        if (responseType === "stream") {
+          bodyText = await readStreamToText(response.data).catch(() => "");
+        }
+        const parsed = responseType === "stream" ? (() => {
+          try {
+            return JSON.parse(bodyText);
+          } catch {
+            return null;
+          }
+        })() : response.data;
+        const apiError = extractApiError(
+          parsed || { message: bodyText || `HTTP ${response.status}` },
+          response.status
+        );
+        const err = new Error(apiError);
+        if (!shouldRetryWithNextApi(err)) throw err;
+        errors.push(cleanErrorText(err));
+        continue;
+      }
+
+      return { response, endpoint };
+    } catch (error) {
+      if (!shouldRetryWithNextApi(error)) throw error;
+      errors.push(cleanErrorText(error));
+    }
+  }
+
+  throw new Error(errors.filter(Boolean).join(" | ") || "No se pudo conectar con la API ytmp3.");
+}
+
 function cleanErrorText(error) {
   let text = String(error?.message || error || "No se pudo preparar el MP3.");
 
@@ -411,22 +514,13 @@ async function resolveInputToUrl(input) {
 }
 
 async function getYtmp3Data(videoUrl) {
-  const response = await axios.get(API_YTMP3_URL, {
+  const { response, endpoint } = await callYtmp3Api({
+    videoUrl,
+    mode: "link",
+    responseType: "json",
     timeout: API_LINK_TIMEOUT,
-    params: {
-      mode: "link",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "application/json",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
+    accept: "application/json",
     maxRedirects: 5,
-    validateStatus: () => true,
   });
 
   if (response.status >= 400 || !response.data?.ok) {
@@ -439,7 +533,7 @@ async function getYtmp3Data(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrl = pickDownloadUrl(data, API_YTMP3_URL);
+  const remoteUrl = pickDownloadUrl(data, endpoint);
 
   if (!remoteUrl) {
     throw new Error("La API /ytmp3 no devolvio link valido.");
@@ -457,38 +551,14 @@ async function getYtmp3Data(videoUrl) {
 }
 
 async function requestYtmp3Stream(videoUrl) {
-  const response = await axios.get(API_YTMP3_URL, {
+  const { response } = await callYtmp3Api({
+    videoUrl,
+    mode: "stream",
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
-    params: {
-      mode: "stream",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "*/*",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
+    accept: "*/*",
     maxRedirects: 5,
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    validateStatus: () => true,
   });
-
-  if (response.status >= 400) {
-    const errorText = await readStreamToText(response.data).catch(() => "");
-    let parsed = null;
-
-    try {
-      parsed = JSON.parse(errorText);
-    } catch {}
-
-    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
-  }
-
   return response;
 }
 
@@ -853,16 +923,18 @@ export default {
         title: apiData.title || resolved.title,
       };
 
-      if (!downloadPolicy.isSubbot) {
-        try {
-          await sendRemoteMp3(sock, from, quoted, finalData);
-
-          sentSuccessfully = true;
-          await react(sock, msg, "✅");
-          return;
-        } catch (remoteError) {
-          console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
-        }
+      try {
+        await Promise.race([
+          sendRemoteMp3(sock, from, quoted, finalData),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("remote_send_timeout")), REMOTE_SEND_TIMEOUT_MS)
+          ),
+        ]);
+        sentSuccessfully = true;
+        await react(sock, msg, "✅");
+        return;
+      } catch (remoteError) {
+        console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
       }
 
       const downloaded = await downloadYtmp3Fallback(
