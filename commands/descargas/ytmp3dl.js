@@ -20,7 +20,10 @@ import {
   runWithProviderCircuit,
 } from "../../lib/provider-guard.js";
 
-const API_YTMP3DL_URL = "https://dv-yer-api.online/ytmp3dl";
+const API_YTMP3DL_URLS = [
+  "https://dv-yer-api.online/ytmp3dl",
+  "https://dvyer-api.onrender.com/ytmp3dl",
+];
 
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3dl");
 
@@ -292,6 +295,107 @@ function extractApiError(data, status) {
   );
 }
 
+function getApiCandidates() {
+  const envBase = String(process.env.DVYER_API_BASE_URL || "").trim();
+  const envEndpoint = envBase
+    ? `${envBase.replace(/\/+$/, "")}/ytmp3dl`
+    : "";
+  const seen = new Set();
+  return [envEndpoint, ...API_YTMP3DL_URLS]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
+function shouldRetryWithNextApi(errorOrText) {
+  const text = String(errorOrText?.message || errorOrText || "").toLowerCase();
+  if (!text) return true;
+  return (
+    text.includes("econnrefused") ||
+    text.includes("enotfound") ||
+    text.includes("timeout") ||
+    text.includes("socket hang up") ||
+    text.includes("temporarily unavailable") ||
+    text.includes("service unavailable") ||
+    text.includes("http 500") ||
+    text.includes("http 502") ||
+    text.includes("http 503") ||
+    text.includes("http 504")
+  );
+}
+
+async function callYtmp3DlApi({
+  videoUrl,
+  mode = "link",
+  responseType = "json",
+  timeout = API_LINK_TIMEOUT,
+  accept = "application/json",
+  maxRedirects = 5,
+}) {
+  const endpoints = getApiCandidates();
+  const errors = [];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, {
+        responseType,
+        timeout,
+        params: {
+          mode,
+          url: videoUrl,
+          ...withDvyerApiKey(),
+        },
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+          Accept: accept,
+        },
+        httpAgent: HTTP_AGENT,
+        httpsAgent: HTTPS_AGENT,
+        maxRedirects,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        validateStatus: () => true,
+      });
+
+      if (response.status >= 400) {
+        let bodyText = "";
+        if (responseType === "stream") {
+          bodyText = await readStreamToText(response.data).catch(() => "");
+        }
+        const parsed = responseType === "stream" ? (() => {
+          try {
+            return JSON.parse(bodyText);
+          } catch {
+            return null;
+          }
+        })() : response.data;
+        const apiError = extractApiError(
+          parsed || { message: bodyText || `HTTP ${response.status}` },
+          response.status
+        );
+        const err = new Error(apiError);
+        if (!shouldRetryWithNextApi(err)) throw err;
+        errors.push(cleanErrorText(err));
+        continue;
+      }
+
+      return { response, endpoint };
+    } catch (error) {
+      if (!shouldRetryWithNextApi(error)) {
+        throw error;
+      }
+      errors.push(cleanErrorText(error));
+    }
+  }
+
+  throw new Error(errors.filter(Boolean).join(" | ") || "No se pudo conectar con la API ytmp3dl.");
+}
+
 function cleanErrorText(error) {
   let text = String(error?.message || error || "No se pudo preparar el MP3.");
 
@@ -435,22 +539,13 @@ async function resolveInputToUrl(input) {
 }
 
 async function getYtmp3DlData(videoUrl) {
-  const response = await axios.get(API_YTMP3DL_URL, {
+  const { response, endpoint } = await callYtmp3DlApi({
+    videoUrl,
+    mode: "link",
+    responseType: "json",
     timeout: API_LINK_TIMEOUT,
-    params: {
-      mode: "link",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "application/json",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
+    accept: "application/json",
     maxRedirects: 5,
-    validateStatus: () => true,
   });
 
   if (response.status >= 400 || !response.data?.ok) {
@@ -463,7 +558,7 @@ async function getYtmp3DlData(videoUrl) {
   }
 
   const data = response.data;
-  const remoteUrls = collectDownloadUrls(data, API_YTMP3DL_URL);
+  const remoteUrls = collectDownloadUrls(data, endpoint);
   const remoteUrl = remoteUrls[0] || "";
 
   if (!remoteUrl) {
@@ -483,74 +578,26 @@ async function getYtmp3DlData(videoUrl) {
 }
 
 async function requestYtmp3DlStream(videoUrl) {
-  const response = await axios.get(API_YTMP3DL_URL, {
+  const { response } = await callYtmp3DlApi({
+    videoUrl,
+    mode: "stream",
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
-    params: {
-      mode: "stream",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "*/*",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
+    accept: "*/*",
     maxRedirects: 5,
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    validateStatus: () => true,
   });
-
-  if (response.status >= 400) {
-    const errorText = await readStreamToText(response.data).catch(() => "");
-    let parsed = null;
-
-    try {
-      parsed = JSON.parse(errorText);
-    } catch {}
-
-    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
-  }
-
   return response;
 }
 
 async function requestYtmp3DlFileDownload(videoUrl) {
-  const response = await axios.get(API_YTMP3DL_URL, {
+  const { response } = await callYtmp3DlApi({
+    videoUrl,
+    mode: "file",
     responseType: "stream",
     timeout: REQUEST_TIMEOUT,
-    params: {
-      mode: "file",
-      url: videoUrl,
-      ...withDvyerApiKey(),
-    },
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "*/*",
-    },
-    httpAgent: HTTP_AGENT,
-    httpsAgent: HTTPS_AGENT,
+    accept: "*/*",
     maxRedirects: 10,
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    validateStatus: () => true,
   });
-
-  if (response.status >= 400) {
-    const errorText = await readStreamToText(response.data).catch(() => "");
-    let parsed = null;
-
-    try {
-      parsed = JSON.parse(errorText);
-    } catch {}
-
-    throw new Error(extractApiError(parsed || { message: errorText }, response.status));
-  }
-
   return response;
 }
 
@@ -862,7 +909,7 @@ export default {
   command: ["ytmp3dl", "ytadl", "ytmp3128"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube usando yt1d",
+  description: "Descarga audio MP3 de YouTube con fallback de API",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
