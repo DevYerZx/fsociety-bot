@@ -31,7 +31,10 @@ export default {
     return sock.sendMessage(
       from,
       buildJuegosMessage(
-        `*JUEGOS BOT*\n\n` +
+        `╔════════════════════════════╗\n` +
+        `║   FSOCIETY-V1 GAME ARENA   ║\n` +
+        `╚════════════════════════════╝\n\n` +
+        `*JUEGOS DISPONIBLES*\n\n` +
           `Disponibles:\n` +
           `- ${prefix}ppt piedra\n` +
           `- ${prefix}adivina\n` +

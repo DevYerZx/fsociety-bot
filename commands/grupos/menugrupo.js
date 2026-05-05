@@ -7,7 +7,9 @@ function getPrefix(settings) {
 
 function buildFallbackText(prefix) {
   return (
-    `*MENU GRUPO FSOCIETY*\n\n` +
+    `╔════════════════════════════╗\n` +
+    `║   FSOCIETY-V1 GROUP MENU   ║\n` +
+    `╚════════════════════════════╝\n\n` +
     `Admin:\n` +
     `- ${prefix}panelgrupo\n` +
     `- ${prefix}invocar Mensaje\n` +
@@ -136,17 +138,20 @@ export default {
         from,
         {
           text:
-            `╭━━━〔 🧩 MENU GRUPO FSOCIETY 〕━━━⬣\n` +
-            `┃ Panel admin con dinamicas y herramientas IA\n` +
-            `╰━━━━━━━━━━━━━━━━━━━━━━⬣`,
-          title: "FSOCIETY BOT",
-          subtitle: "Menu visual de grupo",
-          footer: "Selecciona una accion",
+            `╔════════════════════════════╗\n` +
+            `║   FSOCIETY-V1 GROUP MENU   ║\n` +
+            `╚════════════════════════════╝\n` +
+            `┃ 🛡️ Panel de moderacion y dinamicas.\n` +
+            `┃ 📌 Usa la lista para ejecutar rapido.\n` +
+            `╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣`,
+          title: "FSOCIETY-V1",
+          subtitle: "Panel de grupo",
+          footer: "Elige una accion del grupo",
           interactiveButtons: [
             {
               name: "single_select",
               buttonParamsJson: JSON.stringify({
-                title: "Abrir menu grupo",
+                title: "Abrir panel de grupo",
                 sections,
               }),
             },

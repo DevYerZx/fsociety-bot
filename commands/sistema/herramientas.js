@@ -7,7 +7,9 @@ function getPrefix(settings) {
 
 function buildFallbackText(prefix) {
   return (
-    `*CATALOGO HERRAMIENTAS*\n\n` +
+    `╔════════════════════════════╗\n` +
+    `║   FSOCIETY-V1 TOOLKIT HUB  ║\n` +
+    `╚════════════════════════════╝\n\n` +
     `Monitoreo:\n` +
     `- ${prefix}status\n` +
     `- ${prefix}ping\n` +
@@ -78,15 +80,18 @@ export default {
       return await sock.sendMessage(
         from,
         {
-          text: "Herramientas del bot",
-          title: "FSOCIETY BOT",
-          subtitle: "Catalogo herramientas",
-          footer: "Ordenado por tipo",
+          text:
+            "╭━━〔 🧰 TOOLKIT FSOCIETY-V1 〕━━⬣\n" +
+            "┃ Monitoreo, utilidades y gestion en un solo panel.\n" +
+            "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+          title: "FSOCIETY-V1",
+          subtitle: "Toolkit operativo",
+          footer: "Selecciona la herramienta",
           interactiveButtons: [
             {
               name: "single_select",
               buttonParamsJson: JSON.stringify({
-                title: "Abrir catalogo",
+                title: "Abrir toolkit",
                 sections,
               }),
             },

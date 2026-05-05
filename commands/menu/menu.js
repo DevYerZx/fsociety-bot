@@ -430,20 +430,22 @@ function buildTopPanel({
   botLine,
 }) {
   return [
-    "╭━〔 ⚡ *FSOCIETY-V1 CONTROL CENTER* 〕━⬣",
-    `┃ *${menuTitle}*`,
-    `┃ _${menuSubtitle}_`,
-    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "╔════════════════════════════╗",
+    "║   FSOCIETY-V1 CONTROL HUB  ║",
+    "╚════════════════════════════╝",
+    `┃ 🛰️ *${menuTitle}*`,
+    `┃ └─ _${menuSubtitle}_`,
+    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "┃",
-    `┃ 🧬 *Bot:* _${botLine || settings?.botName || "Fsociety-V1"}_`,
+    `┃ 🤖 *Bot:* _${botLine || settings?.botName || "Fsociety-V1"}_`,
     `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
-    `┃ 🛠️ *Prefijos:* *${prefixLabel}*`,
-    `┃ ⏱️ *Activo:* _${uptime}_`,
-    `┃ 📚 *Categorías:* *${totalCategories}*`,
-    `┃ 🚀 *Comandos reales:* *${totalCommands}*`,
+    `┃ 🧷 *Prefijos:* *${prefixLabel}*`,
+    `┃ ⏱️ *Uptime:* _${uptime}_`,
+    `┃ 🗂️ *Categorias:* *${totalCategories}*`,
+    `┃ ⚙️ *Comandos reales:* *${totalCommands}*`,
     "┃",
-    "┃ _Conteo limpio por plugin, sin inflar alias._",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "┃ _Panel optimizado, sin alias inflados._",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
@@ -464,7 +466,7 @@ function buildCategoryIndex(categoryNames, categories) {
     .join("\n┃ ");
 
   return [
-    "╭─〔 🧭 *MAPA DE CATEGORÍAS* 〕",
+    "╭─〔 🧭 *MAPA DE CATEGORIAS* 〕",
     `┃ ${list}`,
     "╰────────────────────────⬣",
   ].join("\n");
@@ -501,11 +503,12 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
 
 function buildFooter(primaryPrefix) {
   return [
-    "╭─〔 💡 *ACCESOS RÁPIDOS* 〕",
-    `┃ ✦ ${primaryPrefix}menu → abrir panel`,
-    `┃ ✦ ${primaryPrefix}menu descargas → ver categoria`,
-    `┃ ✦ ${primaryPrefix}status → ver estado`,
-    `┃ ✦ ${primaryPrefix}owner → soporte`,
+    "╭─〔 ⚡ *ATAJOS RAPIDOS* 〕",
+    `┃ ✦ ${primaryPrefix}menu -> panel principal`,
+    `┃ ✦ ${primaryPrefix}menu descargas -> multimedia`,
+    `┃ ✦ ${primaryPrefix}menugrupo -> control de grupo`,
+    `┃ ✦ ${primaryPrefix}status -> estado general`,
+    `┃ ✦ ${primaryPrefix}owner -> soporte`,
     "╰────────────────────────⬣",
   ].join("\n");
 }
@@ -639,13 +642,13 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
   const flowButton = {
     buttonId: "menu_action_select",
     buttonText: {
-      displayText: "☷ SELECT MENU",
+      displayText: "☷ ABRIR MENU",
     },
     type: 4,
     nativeFlowInfo: {
       name: "single_select",
       paramsJson: JSON.stringify({
-        title: "☠️ FSOCIETY-V1 SELECT MENU",
+        title: "☠️ FSOCIETY-V1 COMMAND SELECTOR",
         sections,
       }),
     },
@@ -654,12 +657,12 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
   const quickButtons = [
     {
       buttonId: `${primaryPrefix}administradores`,
-      buttonText: { displayText: "↩ ADMINISTRADORES" },
+      buttonText: { displayText: "↩ STAFF BOT" },
       type: 1,
     },
     {
       buttonId: `${primaryPrefix}gruposoficiales`,
-      buttonText: { displayText: "↩ GRUPOS OFICIALES" },
+      buttonText: { displayText: "↩ COMUNIDAD" },
       type: 1,
     },
   ];
@@ -669,13 +672,15 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
 
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
-    "╭━━〔 ☠️ *FSOCIETY-V1* 〕━━⬣",
-    `┃ 👋 Hola, *${menuContext.botLine || settings?.botName || "usuario"}*`,
-    "┃ Bienvenido al panel principal",
-    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "╔════════════════════════════╗",
+    "║      FSOCIETY-V1 MENU      ║",
+    "╚════════════════════════════╝",
+    `┃ 👋 *${menuContext.botLine || settings?.botName || "usuario"}*`,
+    "┃ Bienvenido al centro de comandos.",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
     "",
     "╭━━〔 👤 *INFO USER* 〕━━⬣",
-    `┃ ⦿ Perfil: *${menuContext.subtitle}*`,
+    `┃ ⦿ Vista: *${menuContext.subtitle}*`,
     `┃ ⦿ Prefijos: *${prefixLabel}*`,
     "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
     "",
@@ -687,7 +692,7 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
     `┃ ⦿ Comandos: *${totalCommands}*`,
     "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
     "",
-    "Pulsa *SELECT MENU* para abrir la lista completa.",
+    "Pulsa *ABRIR MENU* para desplegar categorias.",
     `Tip: ${getPrimaryPrefix(settings)}menu descargas`,
   ].join("\n");
 }
