@@ -5,7 +5,7 @@ import os from "os";
 import axios from "axios";
 import ffmpeg from "fluent-ffmpeg";
 import { randomUUID } from "crypto";
-import { buildDvyerUrl } from "../../lib/api-manager.js";
+import { buildDvyerUrl, getDvyerBaseUrl } from "../../lib/api-manager.js";
 import { getPrimaryPrefix } from "../../lib/json-store.js";
 
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-tenor-gif");
@@ -97,9 +97,13 @@ export default {
     }
 
     try {
+      const publicApiEndpoint = `${getDvyerBaseUrl().replace(/\/+$/, "")}/search/tenor/gif`;
       await sock.sendMessage(
         from,
-        { text: "🔎 Buscando GIF en Tenor...", ...global.channelInfo },
+        {
+          text: `🔎 GIF buscando...\n🌐 API: ${publicApiEndpoint}`,
+          ...global.channelInfo,
+        },
         quoted
       );
 
