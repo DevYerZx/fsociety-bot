@@ -439,7 +439,6 @@ async function getYtmp3DlData(videoUrl) {
     timeout: API_LINK_TIMEOUT,
     params: {
       mode: "link",
-      quality: "128KBPS",
       url: videoUrl,
       ...withDvyerApiKey(),
     },
@@ -477,7 +476,7 @@ async function getYtmp3DlData(videoUrl) {
     title: cleanText(data.title || "YouTube MP3"),
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
     thumbnail: data.thumbnail || null,
-    provider: data.provider || "vidssave",
+    provider: data.provider || "savetube",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
   };
@@ -489,7 +488,6 @@ async function requestYtmp3DlStream(videoUrl) {
     timeout: REQUEST_TIMEOUT,
     params: {
       mode: "stream",
-      quality: "128KBPS",
       url: videoUrl,
       ...withDvyerApiKey(),
     },
@@ -526,7 +524,6 @@ async function requestYtmp3DlFileDownload(videoUrl) {
     timeout: REQUEST_TIMEOUT,
     params: {
       mode: "file",
-      quality: "128KBPS",
       url: videoUrl,
       ...withDvyerApiKey(),
     },
@@ -860,7 +857,7 @@ export default {
   command: ["ytmp3dl", "ytadl", "ytmp3128"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 128KBPS de YouTube usando ytmp3dl",
+  description: "Descarga audio MP3 de YouTube usando SaveTube",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
