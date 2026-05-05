@@ -338,6 +338,8 @@ function shouldRetryWithNextApi(errorOrText) {
   const text = String(errorOrText?.message || errorOrText || "").toLowerCase();
   if (!text) return true;
   return (
+    text.includes("not found") ||
+    text.includes("http 404") ||
     text.includes("econnrefused") ||
     text.includes("enotfound") ||
     text.includes("timeout") ||

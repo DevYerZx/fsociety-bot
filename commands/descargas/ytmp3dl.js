@@ -25,11 +25,11 @@ import {
 } from "../../lib/provider-guard.js";
 
 const API_YTMP3DL_URLS = [
-  "https://dv-yer-api.online/ytmp3dldl",
-  "https://dvyer-api.onrender.com/ytmp3dldl",
+  "https://dvyer-api.onrender.com/ytmp3dl",
+  "https://dv-yer-api.online/ytmp3dl",
 ];
 
-const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3dldl");
+const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3dl");
 
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
 const API_LINK_TIMEOUT = 90_000;
@@ -41,7 +41,7 @@ const MIN_AUDIO_BYTES = 20 * 1024;
 const RATE_LIMIT_MAX = 6;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-const PROVIDER_NAME = "dvyer_ytmp3dldl";
+const PROVIDER_NAME = "dvyer_ytmp3dl";
 
 const HTTP_AGENT = new http.Agent({
   keepAlive: true,
@@ -321,7 +321,7 @@ function extractApiError(data, status) {
 function getApiCandidates() {
   const envBase = String(process.env.DVYER_API_BASE_URL || "").trim();
   const envEndpoint = envBase
-    ? `${envBase.replace(/\/+$/, "")}/ytmp3dldl`
+    ? `${envBase.replace(/\/+$/, "")}/ytmp3dl`
     : "";
   const seen = new Set();
   return [envEndpoint, ...API_YTMP3DL_URLS]
@@ -338,6 +338,8 @@ function shouldRetryWithNextApi(errorOrText) {
   const text = String(errorOrText?.message || errorOrText || "").toLowerCase();
   if (!text) return true;
   return (
+    text.includes("not found") ||
+    text.includes("http 404") ||
     text.includes("econnrefused") ||
     text.includes("enotfound") ||
     text.includes("timeout") ||
