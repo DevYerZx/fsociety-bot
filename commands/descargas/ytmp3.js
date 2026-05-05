@@ -549,6 +549,7 @@ async function getYtmp3Data(videoUrl) {
     provider: data.provider || "ytmp3",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
+    sourceUrl: endpoint,
   };
 }
 
@@ -979,7 +980,7 @@ export default {
       const finalData = {
         ...apiData,
         title: apiData.title || resolved.title,
-        videoUrl: resolved.url,
+        sourceUrl: apiData.sourceUrl || getApiCandidates()[0] || "https://dv-yer-api.online/ytmp3",
       };
 
       try {
@@ -1013,7 +1014,7 @@ export default {
         title: finalData.title || resolved.title,
         thumbnail: finalData.thumbnail || null,
         duration: finalData.duration || 0,
-        videoUrl: resolved.url,
+        sourceUrl: finalData.sourceUrl,
       });
 
       sentSuccessfully = true;
