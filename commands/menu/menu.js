@@ -196,6 +196,50 @@ function resolveMenuImagePath() {
   return candidates.find((filePath) => fs.existsSync(filePath)) || "";
 }
 
+function resolveImagePathFromBase(base = "") {
+  const normalizedBase = cleanText(base);
+  if (!normalizedBase) return "";
+
+  const candidates = [
+    `${normalizedBase}.png`,
+    `${normalizedBase}.jpg`,
+    `${normalizedBase}.jpeg`,
+    `${normalizedBase}.webp`,
+  ];
+
+  return candidates.find((filePath) => fs.existsSync(filePath)) || "";
+}
+
+function resolveCategoryImagePath(category = "") {
+  const key = normalizeCategoryKey(category);
+  const imageDir = path.join(process.cwd(), "imagenes");
+
+  const baseByCategory = {
+    grupos: path.join(imageDir, "menu-grupo"),
+    sistema: path.join(imageDir, "menu-sistema"),
+    herramientas: path.join(imageDir, "menu-sistema"),
+    juegos: path.join(imageDir, "juegos"),
+    descargas: path.join(imageDir, "menu"),
+  };
+
+  const primaryBase = baseByCategory[key];
+  const primaryPath = resolveImagePathFromBase(primaryBase);
+  if (primaryPath) return primaryPath;
+
+  return resolveMenuImagePath();
+}
+
+function getCategoryImageBuffer(category = "") {
+  const imagePath = resolveCategoryImagePath(category);
+  if (!imagePath) return null;
+
+  try {
+    return fs.readFileSync(imagePath);
+  } catch {
+    return null;
+  }
+}
+
 function getMenuImageBuffer() {
   const imagePath = resolveMenuImagePath();
   if (!imagePath) return null;
@@ -775,15 +819,28 @@ export default {
           commandList,
           primaryPrefix
         );
+        const categoryImageBuffer = getCategoryImageBuffer(requestedCategory);
 
-        await sock.sendMessage(
-          from,
-          {
-            text: makeSingleCaption(categoryText, primaryPrefix),
-            ...global.channelInfo,
-          },
-          { quoted: msg }
-        );
+        if (categoryImageBuffer) {
+          await sock.sendMessage(
+            from,
+            {
+              image: categoryImageBuffer,
+              caption: makeSingleCaption(categoryText, primaryPrefix),
+              ...global.channelInfo,
+            },
+            { quoted: msg }
+          );
+        } else {
+          await sock.sendMessage(
+            from,
+            {
+              text: makeSingleCaption(categoryText, primaryPrefix),
+              ...global.channelInfo,
+            },
+            { quoted: msg }
+          );
+        }
 
         await react(sock, msg, "✅");
         return;
