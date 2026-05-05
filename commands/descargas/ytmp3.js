@@ -781,8 +781,31 @@ async function fetchAudioThumbnailBuffer(url) {
   }
 }
 
+function buildAudioContextInfo(data, thumbBuffer) {
+  const title = clipText(data?.title || data?.fileName || "YouTube MP3", 60);
+  const body = data?.duration
+    ? `Duración: ${formatDuration(data.duration)}`
+    : "Audio MP3";
+  const sourceUrl = String(data?.videoUrl || data?.sourceUrl || "").trim();
+  const thumbnailUrl = String(data?.thumbnail || "").trim();
+
+  return {
+    externalAdReply: {
+      title,
+      body,
+      mediaType: 1,
+      renderLargerThumbnail: true,
+      showAdAttribution: false,
+      ...(sourceUrl ? { sourceUrl } : {}),
+      ...(thumbnailUrl ? { thumbnailUrl } : {}),
+      ...(thumbBuffer ? { thumbnail: thumbBuffer } : {}),
+    },
+  };
+}
+
 async function sendRemoteMp3(sock, from, quoted, data) {
   const thumbBuffer = await fetchAudioThumbnailBuffer(data?.thumbnail);
+  const contextInfo = buildAudioContextInfo(data, thumbBuffer);
   await sock.sendMessage(
     from,
     {
@@ -791,6 +814,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
       fileName: data.fileName,
       ptt: false,
       ...(thumbBuffer ? { jpegThumbnail: thumbBuffer } : {}),
+      contextInfo,
     },
     quoted
   );
@@ -800,6 +824,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
 
 async function sendLocalMp3(sock, from, quoted, data) {
   const thumbBuffer = await fetchAudioThumbnailBuffer(data?.thumbnail);
+  const contextInfo = buildAudioContextInfo(data, thumbBuffer);
   if (data.size <= AUDIO_AS_DOCUMENT_THRESHOLD) {
     try {
       await sock.sendMessage(
@@ -810,6 +835,7 @@ async function sendLocalMp3(sock, from, quoted, data) {
           fileName: data.fileName,
           ptt: false,
           ...(thumbBuffer ? { jpegThumbnail: thumbBuffer } : {}),
+          contextInfo,
         },
         quoted
       );
@@ -953,6 +979,7 @@ export default {
       const finalData = {
         ...apiData,
         title: apiData.title || resolved.title,
+        videoUrl: resolved.url,
       };
 
       try {
@@ -986,6 +1013,7 @@ export default {
         title: finalData.title || resolved.title,
         thumbnail: finalData.thumbnail || null,
         duration: finalData.duration || 0,
+        videoUrl: resolved.url,
       });
 
       sentSuccessfully = true;
