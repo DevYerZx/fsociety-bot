@@ -88,7 +88,7 @@ async function buildStickerFromGifUrl(gifUrl) {
 export default {
   name: "gif",
   command: ["gif"],
-  category: "herramientas",
+  category: "media",
   description: "Busca un GIF en Tenor y lo envia en sticker",
 
   run: async ({ sock, msg, from, args = [], settings }) => {
