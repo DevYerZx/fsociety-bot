@@ -673,12 +673,6 @@ async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = 
     },
 
     async () => {
-      const response = await requestYtmp3DlStream(videoUrl);
-
-      return await saveResponseToFile(response, outputPath, preferredName);
-    },
-
-    async () => {
       const linkData = await getYtmp3DlData(videoUrl);
       const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
 
@@ -688,15 +682,26 @@ async function downloadYtmp3DlFallback(videoUrl, preferredName, knownLinkData = 
         linkData.fileName || preferredName
       );
     },
+
+    async () => {
+      const response = await requestYtmp3DlStream(videoUrl);
+
+      return await saveResponseToFile(response, outputPath, preferredName);
+    },
   ];
 
   const errors = [];
+  const seenErrors = new Set();
 
   for (const attempt of attempts) {
     try {
       return await attempt();
     } catch (error) {
-      errors.push(cleanErrorText(error));
+      const normalized = cleanErrorText(error);
+      if (!seenErrors.has(normalized)) {
+        seenErrors.add(normalized);
+        errors.push(normalized);
+      }
       await deleteFileSafe(outputPath);
     }
   }
@@ -857,7 +862,7 @@ export default {
   command: ["ytmp3dl", "ytadl", "ytmp3128"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube usando SaveTube",
+  description: "Descarga audio MP3 de YouTube usando yt1d",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -974,23 +979,13 @@ export default {
       };
 
       await sendDownloadingImage(sock, from, quoted, finalData);
-      let sentMode = null;
-      try {
-        sentMode = await withTimeout(
-          sendRemoteMp3(sock, from, quoted, finalData),
-          REMOTE_SEND_TIMEOUT_MS,
-          "remote_send_timeout"
-        );
-      } catch (remoteSendError) {
-        console.error("YTMP3DL REMOTE SEND ERROR:", remoteSendError?.message || remoteSendError);
-        const downloaded = await downloadYtmp3DlFallback(
-          resolved.url,
-          finalData.fileName,
-          finalData
-        );
-        tempPath = downloaded.tempPath;
-        sentMode = await sendLocalMp3(sock, from, quoted, downloaded);
-      }
+      const downloaded = await downloadYtmp3DlFallback(
+        resolved.url,
+        finalData.fileName,
+        finalData
+      );
+      tempPath = downloaded.tempPath;
+      const sentMode = await sendLocalMp3(sock, from, quoted, downloaded);
 
       if (!sentMode) {
         throw new Error("No se pudo enviar el audio al chat.");
