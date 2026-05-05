@@ -26,6 +26,14 @@ function usage(prefix = ".") {
   ].join("\n");
 }
 
+function parseGifInput(args = []) {
+  const raw = cleanText(Array.isArray(args) ? args.join(" ") : "");
+  if (!raw) return { query: "", more: false };
+  const more = /\s--more\s*$/i.test(raw);
+  const query = cleanText(raw.replace(/\s--more\s*$/i, ""));
+  return { query, more };
+}
+
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_DIR, { recursive: true });
 }
@@ -84,7 +92,9 @@ export default {
   description: "Busca un GIF en Tenor y lo envia en sticker",
 
   run: async ({ sock, msg, from, args = [], settings }) => {
-    const query = cleanText(Array.isArray(args) ? args.join(" ") : "");
+    const parsedInput = parseGifInput(args);
+    const query = parsedInput.query;
+    const isMoreRequest = parsedInput.more;
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const prefix = getPrimaryPrefix(settings);
 
@@ -110,7 +120,7 @@ export default {
       const endpoint = buildDvyerUrl("/search/tenor/gif");
       const response = await axios.get(endpoint, {
         timeout: API_TIMEOUT,
-        params: { q: query, limit: 6 },
+        params: { q: query, limit: 16 },
         validateStatus: () => true,
       });
 
@@ -124,21 +134,59 @@ export default {
         );
       }
 
-      const selected =
-        (Array.isArray(data.results) && data.results[0]) || data.result || null;
-      const gifUrl = String(
-        selected?.url_full || selected?.url || selected?.preview_url || ""
-      ).trim();
-      if (!gifUrl) {
+      const allResults = Array.isArray(data.results)
+        ? data.results.filter((item) => item?.url_full || item?.url || item?.preview_url)
+        : [];
+      const selectedResults = isMoreRequest
+        ? allResults.slice(4, 9)
+        : allResults.slice(0, 4);
+      if (!selectedResults.length) {
         throw new Error("No encontré un GIF válido para esa búsqueda.");
       }
 
-      const stickerBuffer = await buildStickerFromGifUrl(gifUrl);
-      await sock.sendMessage(
-        from,
-        { sticker: stickerBuffer, ...global.channelInfo },
-        quoted
-      );
+      for (const item of selectedResults) {
+        const gifUrl = String(item?.url_full || item?.url || item?.preview_url || "").trim();
+        if (!gifUrl) continue;
+        const stickerBuffer = await buildStickerFromGifUrl(gifUrl);
+        await sock.sendMessage(
+          from,
+          { sticker: stickerBuffer, ...global.channelInfo },
+          quoted
+        );
+      }
+
+      if (!isMoreRequest) {
+        const moreCommand = `${prefix}gif ${query} --more`;
+        try {
+          await sock.sendMessage(
+            from,
+            {
+              text: "¿Quieres más resultados?",
+              footer: "FSOCIETY GIF",
+              interactiveButtons: [
+                {
+                  name: "quick_reply",
+                  buttonParamsJson: JSON.stringify({
+                    display_text: "Otros 5",
+                    id: moreCommand,
+                  }),
+                },
+              ],
+              ...global.channelInfo,
+            },
+            quoted
+          );
+        } catch {
+          await sock.sendMessage(
+            from,
+            {
+              text: `Para otros 5 usa: *${moreCommand}*`,
+              ...global.channelInfo,
+            },
+            quoted
+          );
+        }
+      }
     } catch (error) {
       const message = cleanText(
         error?.message || "No pude generar el sticker GIF en este momento."
