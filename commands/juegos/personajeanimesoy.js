@@ -1,5 +1,5 @@
 import axios from "axios";
-import { buildDvyerUrl } from "../../lib/api-manager.js";
+import { buildDvyerUrl, getDvyerBaseUrl } from "../../lib/api-manager.js";
 
 const API_TIMEOUT = 45_000;
 
@@ -17,16 +17,20 @@ function formatTraits(traits = {}) {
 
 export default {
   name: "personajeanimesoy",
-  command: ["personajeanimesoy", "pasanime", "animechar"],
+  command: ["personajeanimesoy", "pasanime", "animechar", "rw"],
   category: "juegos",
   description: "Genera un personaje anime random con datos e imagen",
 
   run: async ({ sock, msg, from }) => {
     const quoted = msg?.key ? { quoted: msg } : undefined;
     try {
+      const apiPublic = `${getDvyerBaseUrl().replace(/\/+$/, "")}/anime/character/random`;
       await sock.sendMessage(
         from,
-        { text: "🎴 Buscando tu personaje anime random...", ...global.channelInfo },
+        {
+          text: `🎴 Buscando tu personaje anime random...\n🌐 API: ${apiPublic}`,
+          ...global.channelInfo,
+        },
         quoted
       );
 
@@ -48,7 +52,6 @@ export default {
       const character = data.character || {};
       const name = cleanText(character.name || "Personaje Anime");
       const series = cleanText(character.series || "Serie desconocida");
-      const detail = cleanText(character.detail_url || "");
       const imageUrl = cleanText(character.image_url_full || character.image_url || "");
       const traitsText = formatTraits(character.traits || {});
 
@@ -59,7 +62,6 @@ export default {
         "┃",
         "┃ 🧬 *Rasgos:*",
         ...traitsText.split("\n").map((line) => `┃ ${line}`),
-        detail ? `┃ 🔗 ${detail}` : "",
         "╰━━━━━━━━━━━━━━━━━━⬣",
       ]
         .filter(Boolean)
