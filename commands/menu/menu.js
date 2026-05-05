@@ -219,7 +219,7 @@ function resolveCategoryImagePath(category = "") {
     sistema: path.join(imageDir, "menu-sistema"),
     herramientas: path.join(imageDir, "menu-sistema"),
     juegos: path.join(imageDir, "juegos"),
-    descargas: path.join(imageDir, "menu"),
+    descargas: path.join(imageDir, "menu-descarga"),
   };
 
   const primaryBase = baseByCategory[key];
