@@ -132,12 +132,9 @@ Este proyecto usa Baileys (no API oficial de WhatsApp Business). Cambios de What
   <a href="https://github.com/crxsmods" target="_blank">
     <img src="https://github.com/crxsmods.png" width="96" height="96" alt="crxsmods" />
   </a>
-  <a href="https://github.com/rizkysaputra" target="_blank">
-    <img src="https://github.com/rizkysaputra.png" width="96" height="96" alt="Rizky Saputra" />
-  </a>
 </p>
 
 <p align="center">
   <b>Dueno:</b> <a href="https://github.com/DevYerZx">DevYerZx</a><br/>
-  <b>Colaboradores:</b> <a href="https://github.com/crxsmods">crxsmods</a> y <a href="https://github.com/rizkysaputra">Rizky Saputra</a>
+  <b>Colaborador:</b> <a href="https://github.com/crxsmods">crxsmods</a>
 </p>
