@@ -163,9 +163,9 @@ function getMenuContext({ settings, botId = "", botLabel = "" }) {
 
   if (!normalizedBotId || normalizedBotId === "main") {
     return {
-      title: "FSOCIETY BOT",
+      title: "FSOCIETY-V1",
       subtitle: "MENÚ PRINCIPAL",
-      botLine: settings?.botName || "Fsociety Bot",
+      botLine: settings?.botName || "Fsociety-V1",
     };
   }
 
@@ -174,10 +174,10 @@ function getMenuContext({ settings, botId = "", botLabel = "" }) {
   const subbotName =
     (slot >= 1 && Array.isArray(settings?.subbots) && settings.subbots[slot - 1]?.name) ||
     cleanText(botLabel) ||
-    `Fsociety Subbot ${slot || 1}`;
+    `Fsociety-V1 Subbot ${slot || 1}`;
 
   return {
-    title: `FSOCIETY SUBBOT ${slot || 1}`,
+    title: `FSOCIETY-V1 SUBBOT ${slot || 1}`,
     subtitle: "MENÚ SUBBOT",
     botLine: subbotName,
   };
@@ -386,12 +386,12 @@ function buildTopPanel({
   botLine,
 }) {
   return [
-    "╭━〔 ⚡ *FSOCIETY CONTROL CENTER* 〕━⬣",
+    "╭━〔 ⚡ *FSOCIETY-V1 CONTROL CENTER* 〕━⬣",
     `┃ *${menuTitle}*`,
     `┃ _${menuSubtitle}_`,
     "┣━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "┃",
-    `┃ 🧬 *Bot:* _${botLine || settings?.botName || "Fsociety Bot"}_`,
+    `┃ 🧬 *Bot:* _${botLine || settings?.botName || "Fsociety-V1"}_`,
     `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
     `┃ 🛠️ *Prefijos:* *${prefixLabel}*`,
     `┃ ⏱️ *Activo:* _${uptime}_`,
@@ -601,7 +601,7 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
     nativeFlowInfo: {
       name: "single_select",
       paramsJson: JSON.stringify({
-        title: "☠️ FSOCIETY SELECT MENU",
+        title: "☠️ FSOCIETY-V1 SELECT MENU",
         sections,
       }),
     },
@@ -625,7 +625,7 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
 
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   return [
-    "╭━━〔 ☠️ *FSOCIETY BOT* 〕━━⬣",
+    "╭━━〔 ☠️ *FSOCIETY-V1* 〕━━⬣",
     `┃ 👋 Hola, *${menuContext.botLine || settings?.botName || "usuario"}*`,
     "┃ Bienvenido al panel principal",
     "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
@@ -824,7 +824,7 @@ export default {
 
       try {
         const payload = {
-          footer: `© ${settings?.ownerName || "Fsociety"}`,
+          footer: `© ${settings?.ownerName || "Fsociety-V1"}`,
           buttons,
           headerType: 1,
           ...global.channelInfo,
@@ -852,7 +852,7 @@ export default {
             text: landingText,
             title: menuContext.title,
             subtitle: menuContext.subtitle,
-            footer: `© ${settings?.ownerName || "Fsociety"}`,
+            footer: `© ${settings?.ownerName || "Fsociety-V1"}`,
             interactiveButtons: [
               {
                 name: "single_select",

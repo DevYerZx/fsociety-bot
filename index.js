@@ -514,12 +514,12 @@ function ensureSystemSettings(currentSettings) {
     String(currentSettings.system.maintenanceMessage || "").trim().slice(0, 240);
   currentSettings.system.autoProfileOnConnect = currentSettings.system.autoProfileOnConnect !== false;
   currentSettings.system.mainBotBio =
-    String(currentSettings.system.mainBotBio || `Ya conectado bot ${currentSettings?.botName || "Fsociety bot"}`)
+    String(currentSettings.system.mainBotBio || `Ya conectado bot ${currentSettings?.botName || "Fsociety-V1"}`)
       .trim()
       .slice(0, 139);
   currentSettings.system.mainBotPhoto = String(currentSettings.system.mainBotPhoto || "").trim();
   currentSettings.system.subbotBioTemplate =
-    String(currentSettings.system.subbotBioTemplate || "Subbot Fsociety activo")
+    String(currentSettings.system.subbotBioTemplate || "Subbot Fsociety-V1 activo")
       .trim()
       .slice(0, 139);
   currentSettings.system.subbotPhoto = String(currentSettings.system.subbotPhoto || "").trim();
@@ -900,7 +900,7 @@ function normalizePairingPhoneNumber(value) {
 
 function resolveConfiguredBotName(config = {}) {
   if (String(config?.id || "").toLowerCase() === "main") {
-    return String(settings?.botName || "Fsociety bot").trim() || "Fsociety bot";
+    return String(settings?.botName || "Fsociety-V1").trim() || "Fsociety-V1";
   }
 
   const slot = getBotSlot(config?.id || config?.slot);
@@ -908,8 +908,8 @@ function resolveConfiguredBotName(config = {}) {
     slot >= 1 && Array.isArray(settings?.subbots) ? settings.subbots[slot - 1] : null;
 
   return (
-    String(slotConfig?.name || config?.displayName || `Fsociety Subbot ${slot || 1}`)
-      .trim() || `Fsociety Subbot ${slot || 1}`
+    String(slotConfig?.name || config?.displayName || `Fsociety-V1 Subbot ${slot || 1}`)
+      .trim() || `Fsociety-V1 Subbot ${slot || 1}`
   );
 }
 
@@ -929,9 +929,9 @@ function resolveConfiguredBotBio(config = {}) {
     slot >= 1 && Array.isArray(settings?.subbots) ? settings.subbots[slot - 1] : null;
 
   return (
-    String(slotConfig?.bio || settings?.system?.subbotBioTemplate || "Subbot Fsociety activo")
+    String(slotConfig?.bio || settings?.system?.subbotBioTemplate || "Subbot Fsociety-V1 activo")
       .trim()
-      .slice(0, 139) || "Subbot Fsociety activo"
+      .slice(0, 139) || "Subbot Fsociety-V1 activo"
   );
 }
 
@@ -5929,7 +5929,7 @@ function buildBridgeStatusPayload() {
 
   return {
     ok: true,
-    source: "Fsociety bot runtime",
+    source: "Fsociety-V1 runtime",
     mainReady: Boolean(runtime?.isMainReady?.()),
     publicRequests: Boolean(subbotState.publicRequests),
     maxSlots: Number(subbotState.maxSlots || 0),
@@ -6152,7 +6152,7 @@ async function handleBridgeRequest(req, res, requestUrl) {
 
     sendDashboardJson(res, 200, {
       ok: true,
-      source: "Fsociety bot runtime",
+      source: "Fsociety-V1 runtime",
       solicitudId: `subbot-${Date.now()}`,
       respuesta:
         `Solicitud aceptada. Usa el codigo para vincular ${result.displayName || "tu subbot"} en WhatsApp.`,
@@ -8554,7 +8554,7 @@ function getBotAutoJoinTargetLabel(botState) {
 function buildManagedGroupJoinNotice(botState, isAdmin = false) {
   const botId = String(botState?.config?.id || "main").trim().toLowerCase();
   const botName = resolveBotDisplayName(botId || "main") ||
-    String(botState?.config?.displayName || settings?.botName || "Fsociety bot");
+    String(botState?.config?.displayName || settings?.botName || "Fsociety-V1");
   const prefix = getPrimaryPrefix(settings);
 
   if (botId === "main") {

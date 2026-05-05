@@ -1,5 +1,5 @@
 {
-  "botName": "Fsociety bot",
+  "botName": "Fsociety-V1",
   "ownerName": "DVYER",
   "prefix": [".", "/", "!", "#"],
   "ownerNumber": "51966440866",
@@ -16,7 +16,7 @@
       "slot": 1,
       "enabled": true,
       "label": "SUBBOT1",
-      "name": "Fsociety Subbot 1",
+      "name": "Fsociety-V1 Subbot 1",
       "authFolder": "dvyer-session-subbot",
       "pairingNumber": ""
     },
@@ -24,7 +24,7 @@
       "slot": 2,
       "enabled": false,
       "label": "SUBBOT2",
-      "name": "Fsociety Subbot 2",
+      "name": "Fsociety-V1 Subbot 2",
       "authFolder": "dvyer-session-subbot-2",
       "pairingNumber": ""
     },
@@ -32,7 +32,7 @@
       "slot": 3,
       "enabled": false,
       "label": "SUBBOT3",
-      "name": "Fsociety Subbot 3",
+      "name": "Fsociety-V1 Subbot 3",
       "authFolder": "dvyer-session-subbot-3",
       "pairingNumber": ""
     },
@@ -40,7 +40,7 @@
       "slot": 4,
       "enabled": false,
       "label": "SUBBOT4",
-      "name": "Fsociety Subbot 4",
+      "name": "Fsociety-V1 Subbot 4",
       "authFolder": "dvyer-session-subbot-4",
       "pairingNumber": ""
     },
@@ -48,7 +48,7 @@
       "slot": 5,
       "enabled": false,
       "label": "SUBBOT5",
-      "name": "Fsociety Subbot 5",
+      "name": "Fsociety-V1 Subbot 5",
       "authFolder": "dvyer-session-subbot-5",
       "pairingNumber": ""
     },
@@ -56,7 +56,7 @@
       "slot": 6,
       "enabled": false,
       "label": "SUBBOT6",
-      "name": "Fsociety Subbot 6",
+      "name": "Fsociety-V1 Subbot 6",
       "authFolder": "dvyer-session-subbot-6",
       "pairingNumber": ""
     },
@@ -64,7 +64,7 @@
       "slot": 7,
       "enabled": false,
       "label": "SUBBOT7",
-      "name": "Fsociety Subbot 7",
+      "name": "Fsociety-V1 Subbot 7",
       "authFolder": "dvyer-session-subbot-7",
       "pairingNumber": ""
     },
@@ -72,7 +72,7 @@
       "slot": 8,
       "enabled": false,
       "label": "SUBBOT8",
-      "name": "Fsociety Subbot 8",
+      "name": "Fsociety-V1 Subbot 8",
       "authFolder": "dvyer-session-subbot-8",
       "pairingNumber": ""
     },
@@ -80,7 +80,7 @@
       "slot": 9,
       "enabled": false,
       "label": "SUBBOT9",
-      "name": "Fsociety Subbot 9",
+      "name": "Fsociety-V1 Subbot 9",
       "authFolder": "dvyer-session-subbot-9",
       "pairingNumber": ""
     },
@@ -88,7 +88,7 @@
       "slot": 10,
       "enabled": false,
       "label": "SUBBOT10",
-      "name": "Fsociety Subbot 10",
+      "name": "Fsociety-V1 Subbot 10",
       "authFolder": "dvyer-session-subbot-10",
       "pairingNumber": ""
     },
@@ -96,7 +96,7 @@
       "slot": 11,
       "enabled": false,
       "label": "SUBBOT11",
-      "name": "Fsociety Subbot 11",
+      "name": "Fsociety-V1 Subbot 11",
       "authFolder": "dvyer-session-subbot-11",
       "pairingNumber": ""
     },
@@ -104,7 +104,7 @@
       "slot": 12,
       "enabled": false,
       "label": "SUBBOT12",
-      "name": "Fsociety Subbot 12",
+      "name": "Fsociety-V1 Subbot 12",
       "authFolder": "dvyer-session-subbot-12",
       "pairingNumber": ""
     },
@@ -112,7 +112,7 @@
       "slot": 13,
       "enabled": false,
       "label": "SUBBOT13",
-      "name": "Fsociety Subbot 13",
+      "name": "Fsociety-V1 Subbot 13",
       "authFolder": "dvyer-session-subbot-13",
       "pairingNumber": ""
     },
@@ -120,7 +120,7 @@
       "slot": 14,
       "enabled": false,
       "label": "SUBBOT14",
-      "name": "Fsociety Subbot 14",
+      "name": "Fsociety-V1 Subbot 14",
       "authFolder": "dvyer-session-subbot-14",
       "pairingNumber": ""
     },
@@ -128,16 +128,16 @@
       "slot": 15,
       "enabled": false,
       "label": "SUBBOT15",
-      "name": "Fsociety Subbot 15",
+      "name": "Fsociety-V1 Subbot 15",
       "authFolder": "dvyer-session-subbot-15",
       "pairingNumber": ""
     }
   ],
   "system": {
     "autoProfileOnConnect": true,
-    "mainBotBio": "Ya conectado bot Fsociety",
+    "mainBotBio": "Ya conectado bot Fsociety-V1",
     "mainBotPhoto": "assets/profile/fsociety-bot-profile",
-    "subbotBioTemplate": "Subbot Fsociety activo",
+    "subbotBioTemplate": "Subbot Fsociety-V1 activo",
     "subbotPhoto": "",
     "autoJoinGroups": {
       "enabled": true,
@@ -173,6 +173,7 @@
   "newsletter": {
     "enabled": true,
     "jid": "120363354701957370@newsletter",
-    "name": "Fsociety bot"
+    "name": "Fsociety-V1",
+    "url": "https://whatsapp.com/channel/120363354701957370"
   }
 }
