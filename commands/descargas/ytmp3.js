@@ -235,6 +235,29 @@ function extractYouTubeUrl(text) {
   return match ? match[0].trim() : "";
 }
 
+function buildYoutubeThumbFromUrl(url) {
+  try {
+    const parsed = new URL(String(url || "").trim());
+    const host = String(parsed.hostname || "").toLowerCase();
+    let id = "";
+    if (host.endsWith("youtu.be")) {
+      id = String(parsed.pathname || "").replace(/^\/+/, "").split("/", 1)[0];
+    } else {
+      id = String(parsed.searchParams.get("v") || "").trim();
+      if (!id) {
+        const match = String(parsed.pathname || "").match(
+          /\/(?:shorts|live|embed)\/([a-zA-Z0-9_-]{11})(?:\/|$)/
+        );
+        id = match?.[1] || "";
+      }
+    }
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) return null;
+    return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  } catch {
+    return null;
+  }
+}
+
 function parseContentDispositionFileName(headerValue) {
   const text = String(headerValue || "");
 
@@ -545,7 +568,7 @@ async function getYtmp3Data(videoUrl) {
     remoteUrl,
     title: cleanText(data.title || "YouTube MP3"),
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
-    thumbnail: data.thumbnail || null,
+    thumbnail: data.thumbnail || buildYoutubeThumbFromUrl(videoUrl) || null,
     provider: data.provider || "ytmp3",
     duration: data.duration || 0,
     cached: Boolean(data.cached),
