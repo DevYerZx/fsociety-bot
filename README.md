@@ -1,15 +1,37 @@
-# Fsociety-V1
+<p align="center">
+  <a href="https://whatsapp.com/channel/120363354701957370" target="_blank">
+    <img src="https://img.shields.io/badge/Canal%20WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Canal WhatsApp" />
+  </a>
+  <a href="https://chat.whatsapp.com/GuLWXlFUdy3BJA9OXcc1Hj" target="_blank">
+    <img src="https://img.shields.io/badge/Comunidad-128C7E?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Comunidad" />
+  </a>
+  <a href="https://chat.whatsapp.com/FsrlWXVdG3RCLYbZ5LazBO" target="_blank">
+    <img src="https://img.shields.io/badge/Soporte-1EBEA5?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Soporte" />
+  </a>
+</p>
 
-Bot de WhatsApp multi-instancia con Baileys, pensado para correr como bot principal y tambien como sistema de subbots.
+<p align="center">
+  <img src="assets/profile/fsociety-bot-profile.png" alt="Fsociety-V1" width="140" />
+</p>
+
+<h1 align="center">Fsociety-V1</h1>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-43853D?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 18+" />
+  <img src="https://img.shields.io/badge/Baileys-MultiBot-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Baileys MultiBot" />
+  <img src="https://img.shields.io/badge/PM2-Ready-2B037A?style=for-the-badge&logo=pm2&logoColor=white" alt="PM2 Ready" />
+</p>
+
+Bot de WhatsApp multi-instancia con Baileys, preparado para bot principal + subbots con soporte para VPS, Termux y Windows.
 
 ## Caracteristicas
 
-- Bot principal + subbots por slots.
-- Pairing por codigo para bot principal y subbots.
-- Comandos por categorias (admin, grupos, descargas, juegos, economia, sistema, etc.).
-- Soporte para `PM2` y entorno VPS.
-- Persistencia de sesiones y base local.
-- Comando `gruposoficiales` con acceso directo a soporte/comunidad.
+- Multi-bot por slots (main + subbots).
+- Pairing por codigo.
+- Menus por categorias y comandos modulares.
+- Descargas, juegos, economia, admin, grupos y utilidades.
+- Integracion de canal/newsletter para soporte.
+- Persistencia de sesiones y datos.
 
 ## Requisitos
 
@@ -47,56 +69,29 @@ Si falla `npm install` por red:
 npm install --fetch-retries=5
 ```
 
+## Instalacion en Windows
+
+1. Instala `Node.js LTS`, `Git` y `FFmpeg` (en PATH).
+2. En PowerShell:
+
+```powershell
+git clone https://github.com/DevYerZx/fsociety-bot.git
+cd fsociety-bot
+npm install
+npm start
+```
+
 ## Scripts disponibles
 
 ```bash
-npm start        # inicia el bot
-npm run check    # validacion sintactica de index.js
-npm run smoke    # chequeo rapido de comandos/carga
+npm start
+npm run check
+npm run smoke
 npm run pm2:start
 npm run pm2:restart
 ```
 
-## Configuracion principal
-
-Archivo: `settings/settings.json`
-
-Campos clave:
-
-- `botName`: nombre mostrado del bot.
-- `ownerNumber` / `ownerNumbers`: numeros owner.
-- `prefix`: prefijos de comandos.
-- `subbots`: configuracion de slots.
-- `system.autoProfileOnConnect`: actualiza bio/foto al conectar.
-- `newsletter.enabled`: activa metadatos de canal en mensajes.
-- `newsletter.jid`: JID del canal (`...@newsletter`).
-- `newsletter.name`: nombre visible del canal.
-- `newsletter.url`: enlace directo del canal para boton de soporte.
-
-Ejemplo minimo para soporte por canal:
-
-```json
-{
-  "newsletter": {
-    "enabled": true,
-    "jid": "120363354701957370@newsletter",
-    "name": "Fsociety-V1",
-    "url": "https://whatsapp.com/channel/TU_CODIGO_DE_CANAL"
-  }
-}
-```
-
-## Soporte y comunidad
-
-Comando:
-
-```text
-.gruposoficiales
-```
-
-Este comando muestra enlaces oficiales y, si `newsletter.url` esta configurado, envia tambien un boton directo para abrir el canal de WhatsApp.
-
-## Ejecucion con PM2
+## PM2 (recomendado para VPS)
 
 ```bash
 npm install -g pm2
@@ -105,25 +100,58 @@ pm2 save
 pm2 logs
 ```
 
-## Rutas importantes para respaldos
+## Configuracion importante
 
-- `settings/`
-- `database/`
-- `dvyer-session/`
-- `dvyer-session-subbot*/`
+Archivo: `settings/settings.json`
 
-## Troubleshooting rapido
+- `botName`: nombre del bot.
+- `ownerNumber` / `ownerNumbers`: dueños.
+- `prefix`: prefijos de comandos.
+- `subbots`: slots de subbots.
+- `system.autoProfileOnConnect`: bio/foto al conectar.
+- `newsletter.enabled`: habilita metadatos de canal.
+- `newsletter.jid`: JID del canal (`...@newsletter`).
+- `newsletter.name`: nombre del canal.
+- `newsletter.url`: URL directa para boton de soporte.
 
-- Si el bot no responde: ejecuta `npm run smoke`.
-- Si hay error de sintaxis: ejecuta `npm run check`.
-- Si no abre el boton del canal: revisa `settings.newsletter.url`.
-- Si perdiste vinculacion: valida carpetas de sesion (`dvyer-session*`).
+Ejemplo:
 
-## Nota
+```json
+{
+  "newsletter": {
+    "enabled": true,
+    "jid": "120363354701957370@newsletter",
+    "name": "Fsociety-V1",
+    "url": "https://whatsapp.com/channel/120363354701957370"
+  }
+}
+```
 
-Este proyecto usa Baileys (no API oficial de WhatsApp Business). Cambios de WhatsApp pueden afectar funciones sin previo aviso.
+## Boton directo al canal desde el bot
 
-## Dueno y colaboradores
+Comando:
+
+```text
+.gruposoficiales
+```
+
+Si `newsletter.url` existe, el bot envia boton directo para abrir tu canal de WhatsApp.
+
+## Recomendaciones
+
+- Ejecuta `npm run smoke` despues de actualizar.
+- No borres carpetas de sesion: `dvyer-session/` y `dvyer-session-subbot*/`.
+- Haz backup de `settings/` y `database/`.
+- En VPS usa PM2 para auto-reinicio.
+
+## Troubleshooting
+
+- No responde comandos: `npm run smoke`.
+- Error de sintaxis: `npm run check`.
+- No abre canal: revisa `settings.newsletter.url`.
+- Perdida de vinculacion: valida carpetas de sesion.
+
+## Dueno y colaborador
 
 <p align="center">
   <a href="https://github.com/DevYerZx" target="_blank">
@@ -138,3 +166,7 @@ Este proyecto usa Baileys (no API oficial de WhatsApp Business). Cambios de What
   <b>Dueno:</b> <a href="https://github.com/DevYerZx">DevYerZx</a><br/>
   <b>Colaborador:</b> <a href="https://github.com/crxsmods">crxsmods</a>
 </p>
+
+## Nota
+
+Este proyecto usa Baileys (no API oficial de WhatsApp Business). Cambios de WhatsApp pueden afectar funciones sin previo aviso.
