@@ -59,6 +59,8 @@ const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
 const DELETE_RETRIES = 4;
 const DELETE_RETRY_DELAY_MS = 120;
 const REMOTE_SEND_TIMEOUT_MS = 25_000;
+const THUMB_TIMEOUT_MS = 8_000;
+const MAX_THUMB_BYTES = 220 * 1024;
 
 function resolveMaxAudioBytes(ctx) {
   const policy = getDownloadExecutionPolicy(ctx, "ytmp3");
@@ -753,7 +755,34 @@ function buildErrorMessage(errorText) {
   ].join("\n");
 }
 
+async function fetchAudioThumbnailBuffer(url) {
+  const target = String(url || "").trim();
+  if (!/^https?:\/\//i.test(target)) return null;
+  try {
+    const response = await axios.get(target, {
+      responseType: "arraybuffer",
+      timeout: THUMB_TIMEOUT_MS,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
+        Accept: "image/*,*/*;q=0.8",
+      },
+      httpAgent: HTTP_AGENT,
+      httpsAgent: HTTPS_AGENT,
+      maxRedirects: 3,
+      maxContentLength: MAX_THUMB_BYTES,
+      validateStatus: (status) => status >= 200 && status < 400,
+    });
+    const buffer = Buffer.from(response.data || []);
+    if (!buffer.length || buffer.length > MAX_THUMB_BYTES) return null;
+    return buffer;
+  } catch {
+    return null;
+  }
+}
+
 async function sendRemoteMp3(sock, from, quoted, data) {
+  const thumbBuffer = await fetchAudioThumbnailBuffer(data?.thumbnail);
   await sock.sendMessage(
     from,
     {
@@ -761,6 +790,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
       mimetype: "audio/mpeg",
       fileName: data.fileName,
       ptt: false,
+      ...(thumbBuffer ? { jpegThumbnail: thumbBuffer } : {}),
     },
     quoted
   );
@@ -769,6 +799,7 @@ async function sendRemoteMp3(sock, from, quoted, data) {
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
+  const thumbBuffer = await fetchAudioThumbnailBuffer(data?.thumbnail);
   if (data.size <= AUDIO_AS_DOCUMENT_THRESHOLD) {
     try {
       await sock.sendMessage(
@@ -778,6 +809,7 @@ async function sendLocalMp3(sock, from, quoted, data) {
           mimetype: "audio/mpeg",
           fileName: data.fileName,
           ptt: false,
+          ...(thumbBuffer ? { jpegThumbnail: thumbBuffer } : {}),
         },
         quoted
       );
