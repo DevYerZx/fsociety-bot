@@ -9893,6 +9893,32 @@ async function iniciarInstanciaBot(config) {
             return;
           }
 
+          if (pairingRejected405 && !isBotRegistered(botState)) {
+            const now = Date.now();
+            const cooldownUntil = Math.max(
+              Number(botState?.pairingCooldownUntil || 0),
+              now + PAIRING_405_COOLDOWN_MS
+            );
+            const waitMs = Math.max(15_000, cooldownUntil - now);
+            const waitMin = Math.ceil(waitMs / 60000);
+
+            botState.pairingCooldownUntil = cooldownUntil;
+            botState.pairingCooldownReason = "close_code_405";
+            botState.reconnectAttempts = 0;
+            writePersistedBotRuntimeState(botState);
+
+            if (!silencePreLinkLogs) {
+              logBotEvent(
+                botState,
+                "warn",
+                `WhatsApp devolvio 405. Reintentare conexion luego de ${waitMin} min para evitar mas bloqueos.`
+              );
+            }
+
+            scheduleReconnect(botState, waitMs, "pairing_405_cooldown");
+            return;
+          }
+
           const reconnectDelay = getReconnectDelay(botState, {
             loggedOut,
             closeCode: code,
