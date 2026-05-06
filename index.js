@@ -4076,6 +4076,7 @@ function ensureBotState(config) {
     lastPairingError: "",
     pairingCooldownUntil: 0,
     pairingCooldownReason: "",
+    hasOpenedSession: false,
     lastCommandName: "",
     lastCommandStartedAt: 0,
     lastCommandFinishedAt: 0,
@@ -4462,6 +4463,19 @@ function getQuoteOptions(message) {
 
 function isBotRegistered(botState) {
   return Boolean(botState?.authState?.creds?.registered);
+}
+
+function shouldSilencePreLinkDisconnectLogs(botState, closeCode = 0) {
+  if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
+    return false;
+  }
+
+  if (Boolean(botState?.hasOpenedSession)) {
+    return false;
+  }
+
+  const code = Number(closeCode || 0);
+  return code === 405 || code === 408;
 }
 
 function clearReconnectTimer(botState) {
@@ -5475,12 +5489,17 @@ function scheduleReconnect(botState, ms = RECONNECT_BASE_DELAY_MS, reason = "aut
     .slice(0, 80);
   const reconnectAttempt = Math.max(1, Number(botState?.reconnectAttempts || 1));
 
-  logBotEvent(
-    botState,
-    "warn",
-    `Reconexion en ${Math.ceil(reconnectDelayMs / 1000)}s ` +
-      `(intento ${reconnectAttempt}, motivo: ${botState.lastReconnectReason || "auto"})`
-  );
+  const reconnectReasonText = String(botState.lastReconnectReason || "auto");
+  const reconnectCodeMatch = reconnectReasonText.match(/^close_code_(\d{3})$/);
+  const reconnectCode = reconnectCodeMatch?.[1] ? Number(reconnectCodeMatch[1]) : 0;
+  if (!shouldSilencePreLinkDisconnectLogs(botState, reconnectCode)) {
+    logBotEvent(
+      botState,
+      "warn",
+      `Reconexion en ${Math.ceil(reconnectDelayMs / 1000)}s ` +
+        `(intento ${reconnectAttempt}, motivo: ${botState.lastReconnectReason || "auto"})`
+    );
+  }
 
   botState.reconnectTimer = setTimeout(() => {
     botState.reconnectTimer = null;
@@ -5564,7 +5583,9 @@ function attachSocketLifecycleWatchers(botState, sock) {
 
   rawSocket.on("error", (error) => {
     markBotSocketActivity(botState, "ws.error");
-    logBotEvent(botState, "warn", `WebSocket error: ${String(error?.message || error)}`);
+    if (!shouldSilencePreLinkDisconnectLogs(botState, 408)) {
+      logBotEvent(botState, "warn", `WebSocket error: ${String(error?.message || error)}`);
+    }
 
     const readyState = Number(sock.ws?.readyState);
     if (botState?.connectedAt || (Number.isFinite(readyState) && readyState >= 2)) {
@@ -9625,6 +9646,7 @@ async function iniciarInstanciaBot(config) {
           botState.lastDisconnectAt = 0;
           botState.lastDisconnectCode = 0;
           botState.connectionState = "open";
+          botState.hasOpenedSession = true;
           resetPairingCache(botState);
           botState.pairingCooldownUntil = 0;
           botState.pairingCooldownReason = "";
@@ -9673,14 +9695,17 @@ async function iniciarInstanciaBot(config) {
         if (connection === "close") {
           const code = getDisconnectStatusCode(lastDisconnect);
           const reasonText = getDisconnectReasonText(lastDisconnect);
+          const silencePreLinkLogs = shouldSilencePreLinkDisconnectLogs(botState, code);
 
           markBotSocketActivity(botState, `connection.close:${code || "unknown"}`);
-          logBotEvent(
-            botState,
-            "warn",
-            `Conexion cerrada: ${code || 0}` +
-              (reasonText ? ` (${reasonText.slice(0, 160)})` : "")
-          );
+          if (!silencePreLinkLogs) {
+            logBotEvent(
+              botState,
+              "warn",
+              `Conexion cerrada: ${code || 0}` +
+                (reasonText ? ` (${reasonText.slice(0, 160)})` : "")
+            );
+          }
 
           const loggedOut =
             code === 401 || code === DisconnectReason.loggedOut;
@@ -9748,7 +9773,7 @@ async function iniciarInstanciaBot(config) {
           const reconnectReason = loggedOut
             ? "logged_out"
             : `close_code_${Number(code || 0) || "unknown"}`;
-          if (pairingRejected405) {
+          if (pairingRejected405 && !silencePreLinkLogs) {
             logBotEvent(
               botState,
               "warn",
