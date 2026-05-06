@@ -7136,13 +7136,30 @@ function getCachedPairingCode(botState) {
 }
 
 function generatePairingCode(length = 8) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const size = Math.max(6, Number(length || 8));
+  try {
+    if (typeof baileys?.bytesToCrockford === "function") {
+      const generated = String(baileys.bytesToCrockford(crypto.randomBytes(5)) || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "");
+      if (generated.length === 8) {
+        return generated;
+      }
+      if (generated.length > 8) {
+        return generated.slice(0, 8);
+      }
+      if (generated.length > 0) {
+        return generated.padEnd(8, "A");
+      }
+    }
+  } catch {}
+
+  const chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const size = Math.max(8, Number(length || 8));
   let output = "";
   for (let i = 0; i < size; i += 1) {
     output += chars[Math.floor(Math.random() * chars.length)];
   }
-  return output;
+  return output.slice(0, 8);
 }
 
 function summarizeBotState(botState) {
@@ -8320,13 +8337,15 @@ async function requestPairingCode(botState, options = {}) {
   try {
     const socketReady = await waitForPairingSocketProgress(botState, sock);
     if (!socketReady) {
-      console.warn(
-        `${getBotTag(botState)} El socket no avanzo a tiempo para pairing. Intentare igual.`
-      );
-      await delay(1500);
-    } else {
-      await delay(1200);
+      botState.pairingRequested = false;
+      return {
+        ok: false,
+        status: "socket_not_ready",
+        message:
+          "La conexion con WhatsApp aun no esta lista. Espera unos segundos y vuelve a intentar una sola vez.",
+      };
     }
+    await delay(1200);
 
     const pairingCode = generatePairingCode(8);
     const code = await runTaskWithTimeout(
