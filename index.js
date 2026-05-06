@@ -4054,6 +4054,8 @@ function ensureBotState(config) {
     lastDisconnectAt: 0,
     pairingRequested: false,
     pairingResetTimer: null,
+    pairingSocketRetryTimer: null,
+    pairingSocketRetryAttempts: 0,
     pairingCommandHintShown: false,
     lastPairingCode: "",
     lastPairingNumber: "",
@@ -7064,8 +7066,16 @@ function clearPairingResetTimer(botState) {
   botState.pairingResetTimer = null;
 }
 
+function clearPairingSocketRetryTimer(botState) {
+  if (!botState?.pairingSocketRetryTimer) return;
+  clearTimeout(botState.pairingSocketRetryTimer);
+  botState.pairingSocketRetryTimer = null;
+}
+
 function resetPairingCache(botState) {
   clearPairingResetTimer(botState);
+  clearPairingSocketRetryTimer(botState);
+  botState.pairingSocketRetryAttempts = 0;
   botState.pairingRequested = false;
   botState.lastPairingCode = "";
   botState.lastPairingNumber = "";
@@ -7077,6 +7087,8 @@ function resetPairingCache(botState) {
 
 function cachePairingCode(botState, code, number) {
   clearPairingResetTimer(botState);
+  clearPairingSocketRetryTimer(botState);
+  botState.pairingSocketRetryAttempts = 0;
   botState.pairingRequested = true;
   botState.lastPairingCode = String(code || "");
   botState.lastPairingNumber = String(number || "");
@@ -8494,6 +8506,27 @@ async function requestPairingCodeSafe(botState) {
   }
 
   if (result.status === "socket_not_ready") {
+    const silentConsoleMode = shouldPromptInConsole(botState) && botState?.config?.id === "main";
+
+    if (silentConsoleMode) {
+      const attempts = Math.max(0, Number(botState?.pairingSocketRetryAttempts || 0));
+      if (attempts < 2 && !botState?.pairingSocketRetryTimer) {
+        botState.pairingSocketRetryAttempts = attempts + 1;
+        botState.pairingSocketRetryTimer = setTimeout(() => {
+          botState.pairingSocketRetryTimer = null;
+          if (
+            shouldAutoRequestPairingCode(botState) &&
+            !isBotRegistered(botState) &&
+            !botState?.pairingRequested
+          ) {
+            requestPairingCodeSafe(botState).catch(() => {});
+          }
+        }, 3500);
+        botState.pairingSocketRetryTimer.unref?.();
+      }
+      return;
+    }
+
     if (!botState.pairingCommandHintShown) {
       botState.pairingCommandHintShown = true;
       console.log(`${getBotTag(botState)} ${result.message}`);
