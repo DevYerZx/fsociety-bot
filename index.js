@@ -136,11 +136,9 @@ const DEFAULT_PAIRING_COUNTRY_CODE = String(
   .slice(0, 4);
 const logger = pino({ level: "silent" });
 const FIXED_BROWSER =
-  (typeof baileys?.Browsers?.macOS === "function" &&
-    baileys.Browsers.macOS("Google Chrome")) ||
   (typeof baileys?.Browsers?.windows === "function" &&
     baileys.Browsers.windows("Chrome")) ||
-  ["Windows", "Chrome", "114.0.5735.198"];
+  ["Windows", "Chrome", "10.0.22631"];
 
 applyStoredRuntimeVars();
 
@@ -7135,33 +7133,6 @@ function getCachedPairingCode(botState) {
   };
 }
 
-function generatePairingCode(length = 8) {
-  try {
-    if (typeof baileys?.bytesToCrockford === "function") {
-      const generated = String(baileys.bytesToCrockford(crypto.randomBytes(5)) || "")
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, "");
-      if (generated.length === 8) {
-        return generated;
-      }
-      if (generated.length > 8) {
-        return generated.slice(0, 8);
-      }
-      if (generated.length > 0) {
-        return generated.padEnd(8, "A");
-      }
-    }
-  } catch {}
-
-  const chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  const size = Math.max(8, Number(length || 8));
-  let output = "";
-  for (let i = 0; i < size; i += 1) {
-    output += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return output.slice(0, 8);
-}
-
 function summarizeBotState(botState) {
   const config = botState?.config || {};
   const cachedPairing = getCachedPairingCode(botState);
@@ -8347,11 +8318,10 @@ async function requestPairingCode(botState, options = {}) {
     }
     await delay(1200);
 
-    const pairingCode = generatePairingCode(8);
     const code = await runTaskWithTimeout(
       `${getBotTag(botState)} pairing code`,
       PAIRING_REQUEST_TIMEOUT_MS,
-      () => sock.requestPairingCode(resolvedNumber, pairingCode)
+      () => sock.requestPairingCode(resolvedNumber)
     );
     cachePairingCode(botState, code, resolvedNumber);
 
