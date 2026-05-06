@@ -137,9 +137,9 @@ const DEFAULT_PAIRING_COUNTRY_CODE = String(
   .slice(0, 4);
 const logger = pino({ level: "silent" });
 const FIXED_BROWSER =
-  (typeof baileys?.Browsers?.windows === "function" &&
-    baileys.Browsers.windows("Chrome")) ||
-  ["Windows", "Chrome", "10.0.22631"];
+  (typeof baileys?.Browsers?.macOS === "function" &&
+    baileys.Browsers.macOS("Google Chrome")) ||
+  ["Mac OS", "Google Chrome", "14.4.1"];
 const FALLBACK_BAILEYS_VERSION = (() => {
   const version = DEFAULT_CONNECTION_CONFIG?.version;
   if (
@@ -4509,7 +4509,7 @@ function shouldSilencePreLinkDisconnectLogs(botState, closeCode = 0) {
   }
 
   const code = Number(closeCode || 0);
-  return code === 405 || code === 408;
+  return code === 408;
 }
 
 function clearReconnectTimer(botState) {
@@ -8294,7 +8294,6 @@ async function requestPairingCode(botState, options = {}) {
 
   let resolvedNumber =
     explicitNumber || normalizePairingPhoneNumber(botState.config?.pairingNumber);
-  let enteredViaPrompt = false;
 
   if (!resolvedNumber && allowPrompt) {
     if (!botState.pairingPromptShown) {
@@ -8307,7 +8306,6 @@ async function requestPairingCode(botState, options = {}) {
         chalk.greenBright(`Numero del ${botState.config.label} > `)
       )
     );
-    enteredViaPrompt = Boolean(resolvedNumber);
   }
 
   if (!resolvedNumber) {
@@ -8327,11 +8325,7 @@ async function requestPairingCode(botState, options = {}) {
     };
   }
 
-  const manualConsoleRetryBypass =
-    enteredViaPrompt &&
-    shouldPromptInConsole(botState) &&
-    String(botState?.config?.id || "").trim().toLowerCase() === "main";
-  if (isPairingCooldownActive(botState) && !manualConsoleRetryBypass) {
+  if (isPairingCooldownActive(botState)) {
     const waitMs = Math.max(1000, Number(botState?.pairingCooldownUntil || 0) - Date.now());
     const waitMin = Math.ceil(waitMs / 60000);
     return {
@@ -8341,11 +8335,6 @@ async function requestPairingCode(botState, options = {}) {
         `WhatsApp aplico una pausa temporal para este numero. ` +
         `Espera aprox ${waitMin} min antes de pedir otro codigo.`,
     };
-  }
-
-  if (manualConsoleRetryBypass && isPairingCooldownActive(botState)) {
-    botState.pairingCooldownUntil = 0;
-    botState.pairingCooldownReason = "manual_console_retry";
   }
 
   // Persistimos el numero tan pronto sea valido para evitar pedirlo en bucle
@@ -8412,10 +8401,27 @@ async function requestPairingCode(botState, options = {}) {
   } catch (err) {
     const errMessage = String(err?.message || err || "").trim();
     const errStatusCode = Number(err?.output?.statusCode || err?.data?.statusCode || 0);
+    const pairingRejected405 =
+      errStatusCode === 405 ||
+      /(?:\b405\b|method\s*not\s*allowed|connection\s*failure)/i.test(errMessage);
     const socketClosed =
       errStatusCode === 428 ||
       /connection\s+closed/i.test(errMessage) ||
       /precondition\s+required/i.test(errMessage);
+
+    if (pairingRejected405) {
+      botState.pairingCooldownUntil = Date.now() + PAIRING_405_COOLDOWN_MS;
+      botState.pairingCooldownReason = "request_pairing_405";
+      botState.pairingCommandHintShown = false;
+      botState.pairingRequested = false;
+      writePersistedBotRuntimeState(botState);
+      return {
+        ok: false,
+        status: "cooldown_405",
+        message:
+          "WhatsApp devolvio 405 para este numero. Espera 30-40 min y vuelve a intentar una sola vez.",
+      };
+    }
 
     if (socketClosed) {
       botState.pairingRequested = false;
