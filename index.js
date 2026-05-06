@@ -74,6 +74,7 @@ const {
   makeInMemoryStore,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  DEFAULT_CONNECTION_CONFIG,
 } = baileys;
 
 // ================= CONFIG =================
@@ -139,6 +140,17 @@ const FIXED_BROWSER =
   (typeof baileys?.Browsers?.windows === "function" &&
     baileys.Browsers.windows("Chrome")) ||
   ["Windows", "Chrome", "10.0.22631"];
+const FALLBACK_BAILEYS_VERSION = (() => {
+  const version = DEFAULT_CONNECTION_CONFIG?.version;
+  if (
+    Array.isArray(version) &&
+    version.length >= 3 &&
+    version.slice(0, 3).every((item) => Number.isFinite(Number(item)))
+  ) {
+    return version.slice(0, 3).map((item) => Number(item));
+  }
+  return [2, 3000, 1027934701];
+})();
 
 applyStoredRuntimeVars();
 
@@ -2356,20 +2368,29 @@ function getStoreContactName(botState, ...ids) {
 }
 
 async function getVersionSafe() {
+  const fallbackVersion = [...FALLBACK_BAILEYS_VERSION];
   const forceLatest =
     String(process.env.BAILEYS_FORCE_LATEST_VERSION || "")
       .trim()
       .toLowerCase() === "1";
   if (!forceLatest) {
-    return undefined;
+    return fallbackVersion;
   }
 
   try {
     const data = await fetchLatestBaileysVersion();
-    return Array.isArray(data?.version) ? data.version : undefined;
+    if (
+      Array.isArray(data?.version) &&
+      data.version.length >= 3 &&
+      data.version.slice(0, 3).every((item) => Number.isFinite(Number(item)))
+    ) {
+      return data.version.slice(0, 3).map((item) => Number(item));
+    }
   } catch {
-    return undefined;
+    return fallbackVersion;
   }
+
+  return fallbackVersion;
 }
 
 function buildOwnerIds(currentSettings) {
@@ -4055,6 +4076,7 @@ function ensureBotState(config) {
     pairingSocketRetryTimer: null,
     pairingSocketRetryAttempts: 0,
     pairingCommandHintShown: false,
+    lastPairingNoticeAt: 0,
     lastPairingCode: "",
     lastPairingNumber: "",
     lastPairingAt: 0,
@@ -7070,6 +7092,43 @@ function clearPairingSocketRetryTimer(botState) {
   botState.pairingSocketRetryTimer = null;
 }
 
+function shouldShowPairingNotice(botState, cooldownMs = 20000) {
+  const now = Date.now();
+  const last = Number(botState?.lastPairingNoticeAt || 0);
+  if (!last || now - last >= Math.max(5000, Number(cooldownMs || 20000))) {
+    if (botState) {
+      botState.lastPairingNoticeAt = now;
+    }
+    return true;
+  }
+  return false;
+}
+
+function schedulePairingCodeRetry(botState, baseDelayMs = 3500) {
+  if (!botState || botState.pairingSocketRetryTimer) {
+    return false;
+  }
+
+  const attempts = Math.max(0, Number(botState?.pairingSocketRetryAttempts || 0));
+  const nextAttempt = attempts + 1;
+  const normalizedBase = Math.max(2000, Number(baseDelayMs || 3500));
+  const delayMs = Math.min(20000, normalizedBase + Math.min(12000, nextAttempt * 1200));
+
+  botState.pairingSocketRetryAttempts = nextAttempt;
+  botState.pairingSocketRetryTimer = setTimeout(() => {
+    botState.pairingSocketRetryTimer = null;
+    if (
+      shouldAutoRequestPairingCode(botState) &&
+      !isBotRegistered(botState) &&
+      !botState?.pairingRequested
+    ) {
+      requestPairingCodeSafe(botState).catch(() => {});
+    }
+  }, delayMs);
+  botState.pairingSocketRetryTimer.unref?.();
+  return true;
+}
+
 function resetPairingCache(botState) {
   clearPairingResetTimer(botState);
   clearPairingSocketRetryTimer(botState);
@@ -8208,18 +8267,6 @@ async function requestPairingCode(botState, options = {}) {
     };
   }
 
-  if (isPairingCooldownActive(botState)) {
-    const waitMs = Math.max(1000, Number(botState?.pairingCooldownUntil || 0) - Date.now());
-    const waitMin = Math.ceil(waitMs / 60000);
-    return {
-      ok: false,
-      status: "cooldown_405",
-      message:
-        `WhatsApp aplico una pausa temporal para este numero. ` +
-        `Espera aprox ${waitMin} min antes de pedir otro codigo.`,
-    };
-  }
-
   const explicitNumber = normalizePairingPhoneNumber(number);
   const cached = getCachedPairingCode(botState);
   const shouldForceRefresh =
@@ -8247,6 +8294,7 @@ async function requestPairingCode(botState, options = {}) {
 
   let resolvedNumber =
     explicitNumber || normalizePairingPhoneNumber(botState.config?.pairingNumber);
+  let enteredViaPrompt = false;
 
   if (!resolvedNumber && allowPrompt) {
     if (!botState.pairingPromptShown) {
@@ -8259,6 +8307,7 @@ async function requestPairingCode(botState, options = {}) {
         chalk.greenBright(`Numero del ${botState.config.label} > `)
       )
     );
+    enteredViaPrompt = Boolean(resolvedNumber);
   }
 
   if (!resolvedNumber) {
@@ -8277,6 +8326,31 @@ async function requestPairingCode(botState, options = {}) {
         `Ejemplo: ${prefix}subbot${slotHint} 51912345678`,
     };
   }
+
+  const manualConsoleRetryBypass =
+    enteredViaPrompt &&
+    shouldPromptInConsole(botState) &&
+    String(botState?.config?.id || "").trim().toLowerCase() === "main";
+  if (isPairingCooldownActive(botState) && !manualConsoleRetryBypass) {
+    const waitMs = Math.max(1000, Number(botState?.pairingCooldownUntil || 0) - Date.now());
+    const waitMin = Math.ceil(waitMs / 60000);
+    return {
+      ok: false,
+      status: "cooldown_405",
+      message:
+        `WhatsApp aplico una pausa temporal para este numero. ` +
+        `Espera aprox ${waitMin} min antes de pedir otro codigo.`,
+    };
+  }
+
+  if (manualConsoleRetryBypass && isPairingCooldownActive(botState)) {
+    botState.pairingCooldownUntil = 0;
+    botState.pairingCooldownReason = "manual_console_retry";
+  }
+
+  // Persistimos el numero tan pronto sea valido para evitar pedirlo en bucle
+  // cuando el socket todavia no termina de inicializar.
+  botState.config.pairingNumber = resolvedNumber;
 
   if (botState.pairingRequested && !botState.lastPairingCode) {
     return {
@@ -8297,7 +8371,6 @@ async function requestPairingCode(botState, options = {}) {
     };
   }
 
-  botState.config.pairingNumber = resolvedNumber;
   botState.pairingRequested = true;
   botState.pairingCommandHintShown = false;
   botState.lastPairingRequestAt = Date.now();
@@ -8486,8 +8559,27 @@ async function requestPairingCodeSafe(botState) {
     return;
   }
 
+  if (result.status === "unavailable") {
+    const silentConsoleMode = shouldPromptInConsole(botState) && botState?.config?.id === "main";
+    if (silentConsoleMode) {
+      schedulePairingCodeRetry(botState, 3000);
+      if (shouldShowPairingNotice(botState, 20000)) {
+        console.log(
+          `${getBotTag(botState)} Aun inicializando conexion... reintentare automaticamente hasta mostrar el codigo.`
+        );
+      }
+      return;
+    }
+
+    if (!botState.pairingCommandHintShown || shouldShowPairingNotice(botState, 30000)) {
+      botState.pairingCommandHintShown = true;
+      console.log(`${getBotTag(botState)} ${result.message}`);
+    }
+    return;
+  }
+
   if (result.status === "cooldown_405") {
-    if (!botState.pairingCommandHintShown) {
+    if (!botState.pairingCommandHintShown || shouldShowPairingNotice(botState, 30000)) {
       botState.pairingCommandHintShown = true;
       console.log(`${getBotTag(botState)} ${result.message}`);
     }
@@ -8498,20 +8590,11 @@ async function requestPairingCodeSafe(botState) {
     const silentConsoleMode = shouldPromptInConsole(botState) && botState?.config?.id === "main";
 
     if (silentConsoleMode) {
-      const attempts = Math.max(0, Number(botState?.pairingSocketRetryAttempts || 0));
-      if (attempts < 2 && !botState?.pairingSocketRetryTimer) {
-        botState.pairingSocketRetryAttempts = attempts + 1;
-        botState.pairingSocketRetryTimer = setTimeout(() => {
-          botState.pairingSocketRetryTimer = null;
-          if (
-            shouldAutoRequestPairingCode(botState) &&
-            !isBotRegistered(botState) &&
-            !botState?.pairingRequested
-          ) {
-            requestPairingCodeSafe(botState).catch(() => {});
-          }
-        }, 3500);
-        botState.pairingSocketRetryTimer.unref?.();
+      schedulePairingCodeRetry(botState, 3500);
+      if (shouldShowPairingNotice(botState, 25000)) {
+        console.log(
+          `${getBotTag(botState)} Aun conectando con WhatsApp... seguire reintentando hasta mostrar el codigo.`
+        );
       }
       return;
     }
@@ -9531,9 +9614,8 @@ async function iniciarInstanciaBot(config) {
       cachedGroupMetadata: async (jid) => cachedGroupMetadata(botState, jid),
     };
 
-    if (Array.isArray(version) && version.length >= 3) {
-      socketConfig.version = version;
-    }
+    socketConfig.version =
+      Array.isArray(version) && version.length >= 3 ? version : [...FALLBACK_BAILEYS_VERSION];
 
     const sock = makeWASocket(socketConfig);
 
