@@ -532,8 +532,7 @@ function ensureSystemSettings(currentSettings) {
   if (!isPlainObject(currentSettings.system.autoJoinGroups)) {
     currentSettings.system.autoJoinGroups = {};
   }
-  currentSettings.system.autoJoinGroups.enabled =
-    currentSettings.system.autoJoinGroups.enabled !== false;
+  currentSettings.system.autoJoinGroups.enabled = false;
   currentSettings.system.autoJoinGroups.mainInvite = normalizeInviteCode(
     currentSettings.system.autoJoinGroups.mainInvite || ""
   );
@@ -9486,8 +9485,7 @@ async function iniciarInstanciaBot(config) {
     );
     const version = await getVersionSafe();
 
-    const sock = makeWASocket({
-      version,
+    const socketConfig = {
       logger,
       printQRInTerminal: false,
       markOnlineOnConnect: false,
@@ -9509,7 +9507,13 @@ async function iniciarInstanciaBot(config) {
         }
       },
       cachedGroupMetadata: async (jid) => cachedGroupMetadata(botState, jid),
-    });
+    };
+
+    if (Array.isArray(version) && version.length >= 3) {
+      socketConfig.version = version;
+    }
+
+    const sock = makeWASocket(socketConfig);
 
     botState.sock = wrapSocketSendMessage(botState, sock);
     botState.authState = authState;
