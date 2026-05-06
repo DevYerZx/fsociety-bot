@@ -107,6 +107,7 @@ const DOWNLOAD_COMMAND_TIMEOUT_MS = 12 * 60 * 1000;
 const HOOK_TIMEOUT_MS = 20 * 1000;
 const PAIRING_SOCKET_WAIT_MS = 15 * 1000;
 const PAIRING_REQUEST_TIMEOUT_MS = 25 * 1000;
+const PAIRING_405_COOLDOWN_MS = 40 * 60 * 1000;
 const BOT_HEALTHCHECK_INTERVAL_MS = 30 * 1000;
 const BOT_CONNECTING_STALE_MS = 2 * 60 * 1000;
 const BOT_PAIRING_STALE_MS = 2 * 60 * 1000;
@@ -4073,6 +4074,8 @@ function ensureBotState(config) {
     lastPairingRequestNumber: "",
     lastPairingErrorAt: 0,
     lastPairingError: "",
+    pairingCooldownUntil: 0,
+    pairingCooldownReason: "",
     lastCommandName: "",
     lastCommandStartedAt: 0,
     lastCommandFinishedAt: 0,
@@ -7147,6 +7150,8 @@ function summarizeBotState(botState) {
     lastPairingRequestNumber: String(botState?.lastPairingRequestNumber || ""),
     lastPairingErrorAt: Number(botState?.lastPairingErrorAt || 0),
     lastPairingError: String(botState?.lastPairingError || ""),
+    pairingCooldownUntil: Number(botState?.pairingCooldownUntil || 0),
+    pairingCooldownReason: String(botState?.pairingCooldownReason || ""),
     lastCommandName: String(botState?.lastCommandName || ""),
     lastCommandStartedAt: Number(botState?.lastCommandStartedAt || 0),
     lastCommandFinishedAt: Number(botState?.lastCommandFinishedAt || 0),
@@ -7227,6 +7232,8 @@ function summarizeBotConfig(config) {
       lastPairingRequestNumber: String(persistedState.lastPairingRequestNumber || ""),
       lastPairingErrorAt: Number(persistedState.lastPairingErrorAt || 0),
       lastPairingError: String(persistedState.lastPairingError || ""),
+      pairingCooldownUntil: Number(persistedState.pairingCooldownUntil || 0),
+      pairingCooldownReason: String(persistedState.pairingCooldownReason || ""),
       lastCommandName: String(persistedState.lastCommandName || ""),
       lastCommandStartedAt: Number(persistedState.lastCommandStartedAt || 0),
       lastCommandFinishedAt: Number(persistedState.lastCommandFinishedAt || 0),
@@ -7280,6 +7287,8 @@ function summarizeBotConfig(config) {
     lastPairingRequestNumber: "",
     lastPairingErrorAt: 0,
     lastPairingError: "",
+    pairingCooldownUntil: 0,
+    pairingCooldownReason: "",
     lastCommandName: "",
     lastCommandStartedAt: 0,
     lastCommandFinishedAt: 0,
@@ -7584,8 +7593,17 @@ function shouldPromptInConsole(botState) {
   );
 }
 
+function isPairingCooldownActive(botState) {
+  const until = Number(botState?.pairingCooldownUntil || 0);
+  return Boolean(until && until > Date.now());
+}
+
 function shouldAutoRequestPairingCode(botState) {
   if (!ownsBotInThisProcess(botState?.config?.id)) {
+    return false;
+  }
+
+  if (isPairingCooldownActive(botState)) {
     return false;
   }
 
@@ -8147,6 +8165,18 @@ async function requestPairingCode(botState, options = {}) {
     };
   }
 
+  if (isPairingCooldownActive(botState)) {
+    const waitMs = Math.max(1000, Number(botState?.pairingCooldownUntil || 0) - Date.now());
+    const waitMin = Math.ceil(waitMs / 60000);
+    return {
+      ok: false,
+      status: "cooldown_405",
+      message:
+        `WhatsApp aplico una pausa temporal para este numero. ` +
+        `Espera aprox ${waitMin} min antes de pedir otro codigo.`,
+    };
+  }
+
   const explicitNumber = normalizePairingPhoneNumber(number);
   const cached = getCachedPairingCode(botState);
   const shouldForceRefresh =
@@ -8391,6 +8421,14 @@ async function requestPairingCodeSafe(botState) {
   }
 
   if (result.status === "pending" || result.status === "already_linked") {
+    return;
+  }
+
+  if (result.status === "cooldown_405") {
+    if (!botState.pairingCommandHintShown) {
+      botState.pairingCommandHintShown = true;
+      console.log(`${getBotTag(botState)} ${result.message}`);
+    }
     return;
   }
 
@@ -9552,6 +9590,8 @@ async function iniciarInstanciaBot(config) {
           botState.lastDisconnectCode = 0;
           botState.connectionState = "open";
           resetPairingCache(botState);
+          botState.pairingCooldownUntil = 0;
+          botState.pairingCooldownReason = "";
           botState.pairingCommandHintShown = false;
           scheduleProfileApply(botState, botState.sock);
           const connectedBotName = resolveConfiguredBotName(config);
@@ -9611,6 +9651,7 @@ async function iniciarInstanciaBot(config) {
           const connectionReplaced =
             code === 440 || code === DisconnectReason.connectionReplaced;
           const restartRequired = code === DisconnectReason.restartRequired;
+          const pairingRejected405 = Number(code || 0) === 405;
 
           if (loggedOut) {
             removeAuthFolder(config.authFolder);
@@ -9628,6 +9669,11 @@ async function iniciarInstanciaBot(config) {
           abortActiveDownloadJobs(botState, `connection_closed:${code || "unknown"}`);
           abortActiveCommand(botState, `connection_closed:${code || "unknown"}`);
           resetPairingCache(botState);
+          if (pairingRejected405) {
+            botState.pairingCooldownUntil = Date.now() + PAIRING_405_COOLDOWN_MS;
+            botState.pairingCooldownReason = "close_code_405";
+            botState.pairingCommandHintShown = false;
+          }
           writePersistedBotRuntimeState(botState);
 
           if (botState.config?.id !== "main" && loggedOut) {
@@ -9666,6 +9712,13 @@ async function iniciarInstanciaBot(config) {
           const reconnectReason = loggedOut
             ? "logged_out"
             : `close_code_${Number(code || 0) || "unknown"}`;
+          if (pairingRejected405) {
+            logBotEvent(
+              botState,
+              "warn",
+              "WhatsApp devolvio 405. Pauso auto-pairing por 40 min para evitar bloqueo por reintentos."
+            );
+          }
           scheduleReconnect(botState, reconnectDelay, reconnectReason);
         }
       } catch (err) {
