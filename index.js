@@ -7090,6 +7090,16 @@ function getCachedPairingCode(botState) {
   };
 }
 
+function generatePairingCode(length = 8) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const size = Math.max(6, Number(length || 8));
+  let output = "";
+  for (let i = 0; i < size; i += 1) {
+    output += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return output;
+}
+
 function summarizeBotState(botState) {
   const config = botState?.config || {};
   const cachedPairing = getCachedPairingCode(botState);
@@ -8273,10 +8283,11 @@ async function requestPairingCode(botState, options = {}) {
       await delay(1200);
     }
 
+    const pairingCode = generatePairingCode(8);
     const code = await runTaskWithTimeout(
       `${getBotTag(botState)} pairing code`,
       PAIRING_REQUEST_TIMEOUT_MS,
-      () => sock.requestPairingCode(resolvedNumber)
+      () => sock.requestPairingCode(resolvedNumber, pairingCode)
     );
     cachePairingCode(botState, code, resolvedNumber);
 
@@ -8292,6 +8303,23 @@ async function requestPairingCode(botState, options = {}) {
       expiresInMs: PAIRING_CODE_CACHE_MS,
     };
   } catch (err) {
+    const errMessage = String(err?.message || err || "").trim();
+    const errStatusCode = Number(err?.output?.statusCode || err?.data?.statusCode || 0);
+    const socketClosed =
+      errStatusCode === 428 ||
+      /connection\s+closed/i.test(errMessage) ||
+      /precondition\s+required/i.test(errMessage);
+
+    if (socketClosed) {
+      botState.pairingRequested = false;
+      return {
+        ok: false,
+        status: "socket_not_ready",
+        message:
+          "La conexion con WhatsApp aun no esta lista. Espera unos segundos y vuelve a intentar una sola vez.",
+      };
+    }
+
     botState.lastPairingErrorAt = Date.now();
     botState.lastPairingError = String(
       err?.message || err || "No pude obtener el codigo de vinculacion."
@@ -8425,6 +8453,14 @@ async function requestPairingCodeSafe(botState) {
   }
 
   if (result.status === "cooldown_405") {
+    if (!botState.pairingCommandHintShown) {
+      botState.pairingCommandHintShown = true;
+      console.log(`${getBotTag(botState)} ${result.message}`);
+    }
+    return;
+  }
+
+  if (result.status === "socket_not_ready") {
     if (!botState.pairingCommandHintShown) {
       botState.pairingCommandHintShown = true;
       console.log(`${getBotTag(botState)} ${result.message}`);
