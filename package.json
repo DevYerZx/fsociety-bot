@@ -17,7 +17,7 @@
     "pm2:restart": "pm2 restart ecosystem.config.cjs"
   },
   "dependencies": {
-    "@dvyer/baileys": "npm:baileys@7.0.0-rc.9",
+    "@dvyer/baileys": "git+https://github.com/Itsukichann/Baileys.git#master",
     "axios": "^1.16.0",
     "bytenode": "^1.5.7",
     "chalk": "^4.1.2",
