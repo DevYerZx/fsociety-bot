@@ -135,7 +135,12 @@ const DEFAULT_PAIRING_COUNTRY_CODE = String(
   .replace(/\D/g, "")
   .slice(0, 4);
 const logger = pino({ level: "silent" });
-const FIXED_BROWSER = ["Windows", "Chrome", "114.0.5735.198"];
+const FIXED_BROWSER =
+  (typeof baileys?.Browsers?.macOS === "function" &&
+    baileys.Browsers.macOS("Google Chrome")) ||
+  (typeof baileys?.Browsers?.windows === "function" &&
+    baileys.Browsers.windows("Chrome")) ||
+  ["Windows", "Chrome", "114.0.5735.198"];
 
 applyStoredRuntimeVars();
 
@@ -2354,9 +2359,17 @@ function getStoreContactName(botState, ...ids) {
 }
 
 async function getVersionSafe() {
+  const forceLatest =
+    String(process.env.BAILEYS_FORCE_LATEST_VERSION || "")
+      .trim()
+      .toLowerCase() === "1";
+  if (!forceLatest) {
+    return undefined;
+  }
+
   try {
     const data = await fetchLatestBaileysVersion();
-    return data?.version;
+    return Array.isArray(data?.version) ? data.version : undefined;
   } catch {
     return undefined;
   }
