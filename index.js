@@ -7867,15 +7867,17 @@ function preferQrFirstMode() {
   return true;
 }
 
-async function askPairingModeInConsole() {
-  if (runtimePairingMode) {
+async function askPairingModeInConsole(options = {}) {
+  const { forcePrompt = false } = options;
+
+  if (runtimePairingMode && !forcePrompt) {
     return;
   }
 
   // En PM2/hosting sin TTY interactivo, permitimos forzar el modo por entorno.
   // Valores validos: code | pairing | phone | legacy | qr
   const envRaw = String(process.env.PAIRING_MODE || "").trim().toLowerCase();
-  if (envRaw) {
+  if (envRaw && !forcePrompt) {
     runtimePairingMode = ["code", "pairing", "phone", "legacy"].includes(envRaw)
       ? "code"
       : "qr";
@@ -7911,7 +7913,7 @@ async function askPairingModeInConsole() {
     hasPersistedBotSession(mainConfig) || isBotRegistered(mainState);
 
   // Si ya existe sesion guardada, conectamos directo sin pedir modo de vinculacion.
-  if (hasSavedMainSession) {
+  if (hasSavedMainSession && !forcePrompt) {
     runtimePairingMode = "qr";
     return;
   }
@@ -10433,6 +10435,14 @@ async function iniciarInstanciaBot(config) {
           if (loggedOut && botState.config?.id === "main") {
             const loggedOutCount = Number(botState.consecutiveLoggedOutCount || 0);
             if (loggedOutCount < 3) {
+              if (
+                loggedOutCount === 1 &&
+                shouldPromptInConsole(botState) &&
+                !isBotRegistered(botState)
+              ) {
+                runtimePairingMode = "";
+                await askPairingModeInConsole({ forcePrompt: true });
+              }
               const retryDelay = Math.max(
                 RECONNECT_CODE0_MIN_DELAY_MS,
                 getReconnectDelay(botState, { loggedOut: false, closeCode: code })
@@ -10455,7 +10465,7 @@ async function iniciarInstanciaBot(config) {
             // Si la sesion guardada ya no sirve, reabrimos el selector interactivo
             // para que el usuario elija QR o numero+codigo antes del siguiente intento.
             runtimePairingMode = "";
-            await askPairingModeInConsole();
+            await askPairingModeInConsole({ forcePrompt: true });
           }
 
           const reconnectDelay = getReconnectDelay(botState, {
