@@ -304,6 +304,31 @@ function isIgnorableRuntimePath(filePath, settings = {}) {
   return false;
 }
 
+function isManagedHostingEnvironment(env = process.env) {
+  const cwd = String(process.cwd() || "").toLowerCase();
+  const startup = String(env?.STARTUP || "").trim();
+  const hasPteroHints = Boolean(
+    env?.PTERODACTYL_SERVER_UUID ||
+      env?.P_SERVER_UUID ||
+      env?.P_SERVER_LOCATION ||
+      env?.P_BUILD_ID ||
+      (startup && env?.SERVER_MEMORY)
+  );
+  const containerHomeHint =
+    cwd.startsWith("/home/container") && String(env?.USER || "").toLowerCase() === "container";
+
+  return Boolean(
+    env?.RAILWAY_ENVIRONMENT ||
+      env?.RENDER ||
+      env?.PTERODACTYL_SERVER_UUID ||
+      env?.SERVER_ID ||
+      env?.KOYEB_SERVICE_NAME ||
+      env?.DYNO ||
+      hasPteroHints ||
+      containerHomeHint
+  );
+}
+
 function getRestartMode() {
   if (process.env.pm_id || process.env.PM2_HOME) {
     return {
@@ -314,14 +339,7 @@ function getRestartMode() {
     };
   }
 
-  if (
-    process.env.RAILWAY_ENVIRONMENT ||
-    process.env.RENDER ||
-    process.env.PTERODACTYL_SERVER_UUID ||
-    process.env.SERVER_ID ||
-    process.env.KOYEB_SERVICE_NAME ||
-    process.env.DYNO
-  ) {
+  if (isManagedHostingEnvironment(process.env)) {
     return {
       kind: "managed",
       label: "Hosting administrado",

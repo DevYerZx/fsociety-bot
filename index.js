@@ -122,6 +122,7 @@ const RECONNECT_BASE_DELAY_MS = 1800;
 const RECONNECT_MAX_DELAY_MS = 30 * 1000;
 const RECONNECT_CODE0_MIN_DELAY_MS = 4500;
 const PRELINK_401_RECOVERY_RETRY_DELAY_MS = 1200;
+const PRELINK_401_SOFT_RETRY_MAX = 2;
 const TRANSIENT_401_RETRY_MAX = 5;
 const SUBBOT_RECONNECT_STAGGER_MS = 700;
 const SUBBOT_RECONNECT_STAGGER_MAX_MS = 8000;
@@ -4634,9 +4635,14 @@ function isMainPreLinkLoggedOut(botState, loggedOut) {
   if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
     return false;
   }
-  // Si en este arranque aun no abrio sesion, tratamos 401 como
-  // pre-vinculacion para evitar bucles de reintento antes de mostrar
-  // el flujo QR/CODIGO al usuario.
+  // Si este arranque detecto una sesion persistida, tratamos el 401
+  // como posible fallo temporal de reconexion (no como pre-vinculacion).
+  if (Boolean(botState?.hadPersistedSessionAtBoot)) {
+    return false;
+  }
+  if (hasPersistedBotSession(botState?.config)) {
+    return false;
+  }
   return !Boolean(botState?.hasOpenedSession);
 }
 
@@ -8184,6 +8190,23 @@ function shouldResetAuthOnPreLink405(botState) {
   return !["0", "false", "off", "no"].includes(raw);
 }
 
+function shouldAutoResetAuthOnPersistent401(botState) {
+  if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
+    return false;
+  }
+
+  // Permite forzar comportamiento por entorno.
+  const explicit = String(process.env.PERSISTENT_401_AUTO_RESET_AUTH || "")
+    .trim()
+    .toLowerCase();
+  if (explicit) {
+    return ["1", "true", "on", "yes"].includes(explicit);
+  }
+
+  // En hosting administrado priorizamos no borrar auth automaticamente.
+  return !isManagedHostingEnvironment(process.env);
+}
+
 function isPreLink405Paused(botState) {
   if (!botState || isBotRegistered(botState)) {
     return false;
@@ -10720,23 +10743,25 @@ async function iniciarInstanciaBot(config) {
 
           if (isMainPreLinkLoggedOut(botState, loggedOut)) {
             const recoveryAttempts = Math.max(0, Number(botState.preLink401RecoveryAttempts || 0));
-            if (recoveryAttempts < 1) {
-              botState.preLink401RecoveryAttempts = recoveryAttempts + 1;
+            if (recoveryAttempts < PRELINK_401_SOFT_RETRY_MAX) {
+              const nextAttempt = recoveryAttempts + 1;
+              botState.preLink401RecoveryAttempts = nextAttempt;
               botState.preLink401Paused = false;
               botState.reconnectAttempts = 0;
+              const retryDelay = Math.max(
+                RECONNECT_CODE0_MIN_DELAY_MS,
+                PRELINK_401_RECOVERY_RETRY_DELAY_MS + recoveryAttempts * 1500
+              );
               logBotEvent(
                 botState,
                 "warn",
-                "401 antes de vincular detectado. Reinicio auth una vez y preparo un intento limpio."
+                `401 antes de validar sesion (${nextAttempt}/${PRELINK_401_SOFT_RETRY_MAX}). ` +
+                  "Reintento sin borrar auth para no forzar re-vinculacion."
               );
-              removeAuthFolder(config.authFolder);
-              botState.authState = null;
-              runtimePairingMode = "";
-              await askPairingModeInConsole({ forcePrompt: true });
               scheduleReconnect(
                 botState,
-                PRELINK_401_RECOVERY_RETRY_DELAY_MS,
-                "prelink_401_reauth_once"
+                retryDelay,
+                "prelink_401_soft_retry"
               );
               return;
             }
@@ -10755,7 +10780,7 @@ async function iniciarInstanciaBot(config) {
             logBotEvent(
               botState,
               "warn",
-              "Solucion sugerida: reinicia el bot manualmente y vincula primero por QR."
+              "No borre auth automaticamente. Si la sesion sigue vigente, usa `.restart` y espera 30-60s."
             );
             return;
           }
@@ -10777,10 +10802,35 @@ async function iniciarInstanciaBot(config) {
               return;
             }
 
+            if (!shouldAutoResetAuthOnPersistent401(botState)) {
+              logBotEvent(
+                botState,
+                "warn",
+                "401 persistente detectado. En este hosting pauso antes de borrar auth."
+              );
+              botState.preLink401Paused = true;
+              botState.connectionState = "paused_401";
+              botState.reconnectAttempts = 0;
+              clearReconnectTimer(botState);
+              clearSocketRecoveryTimer(botState);
+              writePersistedBotRuntimeState(botState, { immediate: true });
+              logBotEvent(
+                botState,
+                "warn",
+                "Proteccion activa: no borre auth automaticamente en este hosting."
+              );
+              logBotEvent(
+                botState,
+                "warn",
+                "Usa `.restart` para reintento suave. Solo re-vincula si WhatsApp realmente cerro la sesion."
+              );
+              return;
+            }
+
             logBotEvent(
               botState,
               "warn",
-              "401 persistente detectado. Ahora si reinicio auth porque parece sesion cerrada en WhatsApp."
+              "401 persistente detectado. Reinicio auth porque parece sesion cerrada en WhatsApp."
             );
             removeAuthFolder(config.authFolder);
             // Si la sesion guardada ya no sirve, reabrimos el selector interactivo
