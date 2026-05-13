@@ -71,6 +71,12 @@ function normalizeCategoryKey(value = "") {
     dueno: "owner",
 
     admin: "admin",
+
+    "free streaming accounts": "free_streaming_accounts",
+    freestreamingaccounts: "free_streaming_accounts",
+    "cuentas streaming gratis": "free_streaming_accounts",
+    "cuentas streamig gratis": "free_streaming_accounts",
+    "streaming gratis": "free_streaming_accounts",
   };
 
   return aliases[key] || key || "otros";
@@ -82,6 +88,7 @@ function normalizeCategoryLabel(value = "") {
   const labels = {
     menu: "MENÚ",
     descargas: "DESCARGAS",
+    free_streaming_accounts: "FREE STREAMING ACCOUNTS",
     busqueda: "BÚSQUEDA",
     freefire: "FREE FIRE",
     juegos: "JUEGOS",
@@ -108,6 +115,7 @@ function getCategoryIcon(category = "") {
   const icons = {
     menu: "📜",
     descargas: "📥",
+    free_streaming_accounts: "📺",
     busqueda: "🔎",
     freefire: "🔥",
     juegos: "🎮",
@@ -132,6 +140,7 @@ function getCategorySortIndex(category = "") {
   const order = [
     "menu",
     "descargas",
+    "free_streaming_accounts",
     "busqueda",
     "freefire",
     "juegos",
@@ -220,6 +229,7 @@ function resolveCategoryImagePath(category = "") {
     herramientas: path.join(imageDir, "menu-sistema"),
     juegos: path.join(imageDir, "juegos"),
     descargas: path.join(imageDir, "menu-descarga"),
+    free_streaming_accounts: path.join(imageDir, "menu-descarga"),
   };
 
   const primaryBase = baseByCategory[key];
@@ -359,6 +369,7 @@ function getCategoryDescription(category = "", count = 0) {
   const descriptions = {
     menu: "Panel principal del bot",
     descargas: "Audio, video y descargas",
+    free_streaming_accounts: "Free streaming accounts and shared access",
     busqueda: "Busqueda y resultados rapidos",
     freefire: "Utilidades para Free Fire",
     juegos: "Diversion y minijuegos",
@@ -506,6 +517,7 @@ function buildFooter(primaryPrefix) {
     "╭─〔 ⚡ *ATAJOS RAPIDOS* 〕",
     `┃ ✦ ${primaryPrefix}menu -> panel principal`,
     `┃ ✦ ${primaryPrefix}menu descargas -> multimedia`,
+    `┃ ✦ ${primaryPrefix}menu free streaming accounts -> streaming`,
     `┃ ✦ ${primaryPrefix}menugrupo -> control de grupo`,
     `┃ ✦ ${primaryPrefix}status -> estado general`,
     `┃ ✦ ${primaryPrefix}owner -> soporte`,
@@ -577,6 +589,7 @@ function buildCategorySections(categoryNames, categories, primaryPrefix) {
   const mainRows = [
     pick("menu"),
     pick("descargas"),
+    pick("free_streaming_accounts"),
     pick("grupos"),
   ].filter(Boolean);
   if (mainRows.length) {

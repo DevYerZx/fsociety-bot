@@ -7170,6 +7170,16 @@ function normalizeLoadedCommandMetadata(cmd) {
   cmd.command = normalizedCommands;
   cmd.name = String(cmd.name || normalizedCommands[0] || "").trim().toLowerCase();
   cmd.category = String(cmd.category || cmd.categoria || "otros").trim().toLowerCase() || "otros";
+
+  // Keep protected netflix loader untouched: remap category here.
+  const isNetflixCommand =
+    cmd.name === "netflix" ||
+    normalizedCommands.includes("netflix") ||
+    normalizedCommands.includes("nflix");
+  if (isNetflixCommand) {
+    cmd.category = "free_streaming_accounts";
+  }
+
   cmd.categoria = cmd.category;
   cmd.description = String(cmd.description || cmd.desc || cmd.help || "").replace(/\s+/g, " ").trim();
   cmd.ownerOnly = cmd.ownerOnly === true;
