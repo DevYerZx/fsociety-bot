@@ -74,6 +74,8 @@ function normalizeCategoryKey(value = "") {
 
     "free streaming accounts": "free_streaming_accounts",
     freestreamingaccounts: "free_streaming_accounts",
+    "generador de cuentas": "free_streaming_accounts",
+    generadordecuentas: "free_streaming_accounts",
     "cuentas streaming gratis": "free_streaming_accounts",
     "cuentas streamig gratis": "free_streaming_accounts",
     "streaming gratis": "free_streaming_accounts",
@@ -229,7 +231,7 @@ function resolveCategoryImagePath(category = "") {
     herramientas: path.join(imageDir, "menu-sistema"),
     juegos: path.join(imageDir, "juegos"),
     descargas: path.join(imageDir, "menu-descarga"),
-    free_streaming_accounts: path.join(imageDir, "menu-descarga"),
+    free_streaming_accounts: path.join(imageDir, "menu-generador"),
   };
 
   const primaryBase = baseByCategory[key];
