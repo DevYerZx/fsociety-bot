@@ -35,6 +35,14 @@ function getPrefixLabel(settings) {
   return cleanText(settings?.prefix || ".") || ".";
 }
 
+function getGithubLink(settings) {
+  const fallback = "https://github.com/DevYerZx/fsociety-bot";
+  const raw = cleanText(
+    settings?.githubUrl || settings?.repoUrl || settings?.repository || fallback
+  );
+  return raw || fallback;
+}
+
 function normalizeCategoryKey(value = "") {
   const key = cleanText(value).toLowerCase();
 
@@ -442,23 +450,23 @@ function buildTopPanel({
   menuSubtitle,
   botLine,
 }) {
+  const githubLink = getGithubLink(settings);
   return [
-    "╔════════════════════════════╗",
-    "║   FSOCIETY-V1 CONTROL HUB  ║",
-    "╚════════════════════════════╝",
+    "╔══════════════════════════════════════╗",
+    "║      FSOCIETY • COMMAND CENTER       ║",
+    "╚══════════════════════════════════════╝",
     `┃ 🛰️ *${menuTitle}*`,
     `┃ └─ _${menuSubtitle}_`,
-    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "┃",
+    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     `┃ 🤖 *Bot:* _${botLine || settings?.botName || "Fsociety-V1"}_`,
     `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
+    `┃ 🔗 *GitHub:* ${githubLink}`,
     `┃ 🧷 *Prefijos:* *${prefixLabel}*`,
     `┃ ⏱️ *Uptime:* _${uptime}_`,
     `┃ 🗂️ *Categorias:* *${totalCategories}*`,
     `┃ ⚙️ *Comandos reales:* *${totalCommands}*`,
-    "┃",
-    "┃ _Panel optimizado, sin alias inflados._",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "┃ _Panel optimizado y ordenado por categorias._",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
@@ -523,6 +531,7 @@ function buildFooter(primaryPrefix) {
     `┃ ✦ ${primaryPrefix}menugrupo -> control de grupo`,
     `┃ ✦ ${primaryPrefix}status -> estado general`,
     `┃ ✦ ${primaryPrefix}owner -> soporte`,
+    `┃ ✦ Repo: https://github.com/DevYerZx/fsociety-bot`,
     "╰────────────────────────⬣",
   ].join("\n");
 }
@@ -686,13 +695,14 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
 }
 
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
+  const githubLink = getGithubLink(settings);
   return [
-    "╔════════════════════════════╗",
-    "║      FSOCIETY-V1 MENU      ║",
-    "╚════════════════════════════╝",
+    "╔══════════════════════════════════════╗",
+    "║          FSOCIETY-V1 MENU            ║",
+    "╚══════════════════════════════════════╝",
     `┃ 👋 *${menuContext.botLine || settings?.botName || "usuario"}*`,
     "┃ Bienvenido al centro de comandos.",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
     "",
     "╭━━〔 👤 *INFO USER* 〕━━⬣",
     `┃ ⦿ Vista: *${menuContext.subtitle}*`,
@@ -705,10 +715,11 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
     `┃ ⦿ Runtime: *${uptime}*`,
     `┃ ⦿ Categorias: *${totalCategories}*`,
     `┃ ⦿ Comandos: *${totalCommands}*`,
+    `┃ ⦿ GitHub: ${githubLink}`,
     "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
     "",
     "Pulsa *ABRIR MENU* para desplegar categorias.",
-    `Tip: ${getPrimaryPrefix(settings)}menu descargas`,
+    `Tip: ${getPrimaryPrefix(settings)}menu free streaming accounts`,
   ].join("\n");
 }
 

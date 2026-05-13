@@ -10341,10 +10341,11 @@ async function iniciarInstanciaBot(config) {
           (preferQrFirstMode() || isPairingQrFallbackActive(botState)) &&
           shouldShowPairingNotice(botState, 15000)
         ) {
-          const qrHint = isPairingQrFallbackActive(botState)
+          const qrFallback = isPairingQrFallbackActive(botState);
+          const qrHint = qrFallback
             ? "Modo QR activo por bloqueo 405. Escanea el QR para vincular y evitar el limite por numero."
-            : "QR detectado. Vincula escaneando el QR para evitar limite por codigo numerico.";
-          logBotEvent(botState, "warn", qrHint);
+            : "QR listo para escanear. Este aviso es normal durante la vinculacion por QR.";
+          logBotEvent(botState, qrFallback ? "warn" : "info", qrHint);
         }
 
         if (connection === "connecting") {
