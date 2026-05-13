@@ -4610,9 +4610,6 @@ function isMainPreLinkLoggedOut(botState, loggedOut) {
   if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
     return false;
   }
-  if (isBotRegistered(botState)) {
-    return false;
-  }
   return !Boolean(botState?.hasOpenedSession);
 }
 
@@ -7875,12 +7872,27 @@ function isPairingQrFallbackActive(botState) {
 }
 
 function preferQrFirstMode() {
-  const raw = String(runtimePairingMode || process.env.PAIRING_MODE || "")
+  const runtimeRaw = String(runtimePairingMode || "")
     .trim()
     .toLowerCase();
-  if (!raw) return true;
-  if (["code", "pairing", "phone", "legacy"].includes(raw)) return false;
-  return true;
+
+  if (runtimeRaw) {
+    if (["code", "pairing", "phone", "legacy"].includes(runtimeRaw)) return false;
+    if (["qr", "scan"].includes(runtimeRaw)) return true;
+    return false;
+  }
+
+  if (canPromptInConsole()) {
+    return false;
+  }
+
+  const envRaw = String(process.env.PAIRING_MODE || "")
+    .trim()
+    .toLowerCase();
+  if (!envRaw) return false;
+  if (["code", "pairing", "phone", "legacy"].includes(envRaw)) return false;
+  if (["qr", "scan"].includes(envRaw)) return true;
+  return false;
 }
 
 async function askPairingModeInConsole(options = {}) {
@@ -7930,7 +7942,7 @@ async function askPairingModeInConsole(options = {}) {
 
   // Si ya existe sesion guardada, conectamos directo sin pedir modo de vinculacion.
   if (hasSavedMainSession && !forcePrompt) {
-    runtimePairingMode = "qr";
+    runtimePairingMode = "";
     return;
   }
 
@@ -7959,6 +7971,16 @@ async function askPairingModeInConsole(options = {}) {
       break;
     }
     console.log(chalk.redBright("Opcion invalida. Escribe 1 o 2."));
+  }
+
+  if (option !== "1" && option !== "2") {
+    runtimePairingMode = "";
+    console.log(
+      chalk.yellowBright(
+        "No se eligio un modo valido. Pauso auto-vinculacion hasta que selecciones 1 (QR) o 2 (CODIGO)."
+      )
+    );
+    return;
   }
 
   runtimePairingMode = option === "2" ? "code" : "qr";
@@ -8087,6 +8109,27 @@ function shouldWaitMainNumberBeforeConnect(botState) {
   }
 
   return !sanitizePhoneNumber(botState?.config?.pairingNumber);
+}
+
+function shouldWaitMainPairingModeSelection(botState) {
+  if (!botState || String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
+    return false;
+  }
+
+  if (!shouldPromptInConsole(botState)) {
+    return false;
+  }
+
+  // Si todavia hay sesion guardada, dejamos que intente conectar normalmente.
+  // Solo pausamos cuando ya no hay sesion y aun no eligieron QR/CODIGO.
+  if (hasPersistedBotSession(botState?.config) || isBotRegistered(botState)) {
+    return false;
+  }
+
+  const mode = String(runtimePairingMode || "")
+    .trim()
+    .toLowerCase();
+  return mode !== "qr" && mode !== "code";
 }
 
 function getMainBotState() {
@@ -8566,6 +8609,13 @@ async function syncManagedProcessBots() {
         !botState.connecting
       ) {
         botState.connectionState = "waiting_secondary_queue";
+        writePersistedBotRuntimeState(botState);
+        continue;
+      }
+
+      if (shouldWaitMainPairingModeSelection(botState)) {
+        botState.connectionState = "waiting_pairing_mode";
+        botState.bootStartedAt = 0;
         writePersistedBotRuntimeState(botState);
         continue;
       }
