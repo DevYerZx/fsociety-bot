@@ -124,6 +124,7 @@ const RECONNECT_CODE0_MIN_DELAY_MS = 4500;
 const PRELINK_401_RECOVERY_RETRY_DELAY_MS = 1200;
 const PRELINK_401_SOFT_RETRY_MAX = 2;
 const TRANSIENT_401_RETRY_MAX = 5;
+const MANUAL_RESTART_CLOSE_SUPPRESS_MS = 20 * 1000;
 const SUBBOT_RECONNECT_STAGGER_MS = 700;
 const SUBBOT_RECONNECT_STAGGER_MAX_MS = 8000;
 const RESTART_PENDING_TTL_MS = 60 * 1000;
@@ -4208,6 +4209,8 @@ function ensureBotState(config) {
     hadPersistedSessionAtBoot: false,
     preLink401RecoveryAttempts: 0,
     preLink401Paused: false,
+    manualRestartGraceUntil: 0,
+    lastManualRestartCloseLogAt: 0,
     lastCommandName: "",
     lastCommandStartedAt: 0,
     lastCommandFinishedAt: 0,
@@ -7795,10 +7798,12 @@ async function restartMainSession(options = {}) {
   mainState.preLink401RecoveryAttempts = 0;
   mainState.preLink401Paused = false;
   mainState.consecutiveLoggedOutCount = 0;
+  mainState.manualRestartGraceUntil =
+    Date.now() + Math.max(8_000, Number(options?.graceMs || MANUAL_RESTART_CLOSE_SUPPRESS_MS));
   recycleBotInstance(mainState, String(options?.reason || "owner_main_restart"));
   scheduleReconnect(
     mainState,
-    Math.max(800, Number(options?.delayMs || 1200)),
+    Math.max(4_500, Number(options?.delayMs || 6500)),
     String(options?.reason || "owner_main_restart")
   );
   writePersistedBotRuntimeState(mainState, { immediate: true });
@@ -10519,6 +10524,7 @@ async function iniciarInstanciaBot(config) {
           botState.lastDisconnectCode = 0;
           botState.connectionState = "open";
           botState.hasOpenedSession = true;
+          botState.manualRestartGraceUntil = 0;
           botState.requireManualPairingNumber = false;
           botState.blockingPairingInput = false;
           botState.preLink401RecoveryAttempts = 0;
@@ -10574,7 +10580,11 @@ async function iniciarInstanciaBot(config) {
           const reasonText = getDisconnectReasonText(lastDisconnect);
           const silencePreLinkLogs = shouldSilencePreLinkDisconnectLogs(botState, code);
           const restartRequired = code === DisconnectReason.restartRequired;
-          const suppressCloseWarn = restartRequired;
+          const manualRestartGraceActive =
+            Number(botState.manualRestartGraceUntil || 0) > Date.now();
+          const manualRestartGraceClose =
+            manualRestartGraceActive && Number(code || 0) === 0;
+          const suppressCloseWarn = restartRequired || manualRestartGraceClose;
 
           markBotSocketActivity(botState, `connection.close:${code || "unknown"}`);
           if (!silencePreLinkLogs && !suppressCloseWarn) {
@@ -10623,6 +10633,22 @@ async function iniciarInstanciaBot(config) {
           writePersistedBotRuntimeState(botState, {
             immediate: pairingRejected405,
           });
+
+          if (manualRestartGraceClose) {
+            botState.reconnectAttempts = 0;
+            if (!silencePreLinkLogs) {
+              const now = Date.now();
+              if (now - Number(botState.lastManualRestartCloseLogAt || 0) >= 8_000) {
+                botState.lastManualRestartCloseLogAt = now;
+                logBotEvent(
+                  botState,
+                  "info",
+                  "Cierre controlado por .restart detectado. Espero reconexion programada sin duplicar intentos."
+                );
+              }
+            }
+            return;
+          }
 
           if (isProcessRestartPending()) {
             botState.reconnectAttempts = 0;

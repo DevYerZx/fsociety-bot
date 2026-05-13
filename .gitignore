@@ -14,6 +14,10 @@ dvyer-session/
 dvyer-session*/
 dvyer-session-subbot/
 dvyer-session-subbot*/
+fsociety-botV1-session/
+fsociety-botV1-session*/
+fsociety-botV1-subbot/
+fsociety-botV1-subbot*/
 database/runtime/
 database/autoclean.json
 database/economy.json
