@@ -121,6 +121,7 @@ const RECONNECT_JITTER_RATIO = 0.2;
 const RECONNECT_BASE_DELAY_MS = 1800;
 const RECONNECT_MAX_DELAY_MS = 30 * 1000;
 const RECONNECT_CODE0_MIN_DELAY_MS = 4500;
+const PRELINK_401_RECOVERY_RETRY_DELAY_MS = 1200;
 const SUBBOT_RECONNECT_STAGGER_MS = 700;
 const SUBBOT_RECONNECT_STAGGER_MAX_MS = 8000;
 const DEFAULT_PAIRING_KEY = String(process.env.PAIRING_FIXED_KEY || "DVYER123")
@@ -4184,6 +4185,8 @@ function ensureBotState(config) {
     pairingCooldownReason: "",
     pairingQrFallbackUntil: 0,
     hasOpenedSession: false,
+    preLink401RecoveryAttempts: 0,
+    preLink401Paused: false,
     lastCommandName: "",
     lastCommandStartedAt: 0,
     lastCommandFinishedAt: 0,
@@ -4602,6 +4605,17 @@ function shouldSilencePreLinkDisconnectLogs(botState, closeCode = 0) {
   return code === 408;
 }
 
+function isMainPreLinkLoggedOut(botState, loggedOut) {
+  if (!loggedOut) return false;
+  if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
+    return false;
+  }
+  if (isBotRegistered(botState)) {
+    return false;
+  }
+  return !Boolean(botState?.hasOpenedSession);
+}
+
 function clearReconnectTimer(botState) {
   if (!botState?.reconnectTimer) return;
   clearTimeout(botState.reconnectTimer);
@@ -4780,6 +4794,8 @@ function resetMainBotSession(botState, options = {}) {
   botState.lastPairingRequestNumber = "";
   botState.lastPairingErrorAt = 0;
   botState.lastPairingError = "";
+  botState.preLink401RecoveryAttempts = 0;
+  botState.preLink401Paused = false;
   botState.reconnectAttempts = 0;
   botState.lastProfileSignature = "";
   botState.connectionState = "reset";
@@ -7874,22 +7890,22 @@ async function askPairingModeInConsole(options = {}) {
     return;
   }
 
-  // En PM2/hosting sin TTY interactivo, permitimos forzar el modo por entorno.
-  // Valores validos: code | pairing | phone | legacy | qr
-  const envRaw = String(process.env.PAIRING_MODE || "").trim().toLowerCase();
-  if (envRaw && !forcePrompt) {
-    runtimePairingMode = ["code", "pairing", "phone", "legacy"].includes(envRaw)
-      ? "code"
-      : "qr";
-    console.log(
-      chalk.cyanBright(
-        `[PAIRING] Modo forzado por PAIRING_MODE=${envRaw} -> ${runtimePairingMode.toUpperCase()}`
-      )
-    );
-    return;
-  }
-
   if (!canPromptInConsole()) {
+    // En PM2/hosting sin TTY interactivo, permitimos forzar el modo por entorno.
+    // Valores validos: code | pairing | phone | legacy | qr
+    const envRaw = String(process.env.PAIRING_MODE || "").trim().toLowerCase();
+    if (envRaw && !forcePrompt) {
+      runtimePairingMode = ["code", "pairing", "phone", "legacy"].includes(envRaw)
+        ? "code"
+        : "qr";
+      console.log(
+        chalk.cyanBright(
+          `[PAIRING] Modo forzado por PAIRING_MODE=${envRaw} -> ${runtimePairingMode.toUpperCase()}`
+        )
+      );
+      return;
+    }
+
     const mainState = getMainBotState();
     const mainConfig = mainState?.config || buildMainBotConfig(settings);
     const configuredNumber = sanitizePhoneNumber(
@@ -8164,6 +8180,9 @@ function evaluateManagedProcessStartDecision(config = {}, options = {}) {
   }
 
   if (config.id === "main") {
+    if (Boolean(botState?.preLink401Paused)) {
+      return { start: false, reason: "prelink_401_paused" };
+    }
     return { start: true, reason: "main_process" };
   }
 
@@ -10233,6 +10252,8 @@ async function iniciarInstanciaBot(config) {
           botState.lastDisconnectCode = 0;
           botState.connectionState = "open";
           botState.hasOpenedSession = true;
+          botState.preLink401RecoveryAttempts = 0;
+          botState.preLink401Paused = false;
           resetPairingCache(botState);
           botState.pairingCooldownUntil = 0;
           botState.pairingCooldownReason = "";
@@ -10432,17 +10453,51 @@ async function iniciarInstanciaBot(config) {
             return;
           }
 
+          if (isMainPreLinkLoggedOut(botState, loggedOut)) {
+            const recoveryAttempts = Math.max(0, Number(botState.preLink401RecoveryAttempts || 0));
+            if (recoveryAttempts < 1) {
+              botState.preLink401RecoveryAttempts = recoveryAttempts + 1;
+              botState.preLink401Paused = false;
+              botState.reconnectAttempts = 0;
+              logBotEvent(
+                botState,
+                "warn",
+                "401 antes de vincular detectado. Reinicio auth una vez y preparo un intento limpio."
+              );
+              removeAuthFolder(config.authFolder);
+              botState.authState = null;
+              runtimePairingMode = "";
+              await askPairingModeInConsole({ forcePrompt: true });
+              scheduleReconnect(
+                botState,
+                PRELINK_401_RECOVERY_RETRY_DELAY_MS,
+                "prelink_401_reauth_once"
+              );
+              return;
+            }
+
+            botState.preLink401Paused = true;
+            botState.connectionState = "paused_401";
+            botState.reconnectAttempts = 0;
+            clearReconnectTimer(botState);
+            clearSocketRecoveryTimer(botState);
+            writePersistedBotRuntimeState(botState, { immediate: true });
+            logBotEvent(
+              botState,
+              "warn",
+              "401 pre-vinculacion persistente. Pauso reconexion automatica para evitar bucle."
+            );
+            logBotEvent(
+              botState,
+              "warn",
+              "Solucion sugerida: reinicia el bot manualmente y vincula primero por QR."
+            );
+            return;
+          }
+
           if (loggedOut && botState.config?.id === "main") {
             const loggedOutCount = Number(botState.consecutiveLoggedOutCount || 0);
             if (loggedOutCount < 3) {
-              if (
-                loggedOutCount === 1 &&
-                shouldPromptInConsole(botState) &&
-                !isBotRegistered(botState)
-              ) {
-                runtimePairingMode = "";
-                await askPairingModeInConsole({ forcePrompt: true });
-              }
               const retryDelay = Math.max(
                 RECONNECT_CODE0_MIN_DELAY_MS,
                 getReconnectDelay(botState, { loggedOut: false, closeCode: code })
