@@ -4187,6 +4187,7 @@ function ensureBotState(config) {
     pairingCooldownReason: "",
     pairingQrFallbackUntil: 0,
     hasOpenedSession: false,
+    hadPersistedSessionAtBoot: false,
     preLink401RecoveryAttempts: 0,
     preLink401Paused: false,
     lastCommandName: "",
@@ -4223,6 +4224,11 @@ function ensureBotState(config) {
     state.lastDisconnectAt = Number(persistedState.lastDisconnectAt || 0);
     state.lastDisconnectCode = Number(persistedState.lastDisconnectCode || 0);
     state.connectionState = String(persistedState.connectionState || "");
+    state.hasOpenedSession = Boolean(
+      persistedState.hasOpenedSession ||
+        persistedState.connected ||
+        persistedState.registered
+    );
     state.lastSocketEventAt = Number(persistedState.lastSocketEventAt || 0);
     state.lastSocketEvent = String(persistedState.lastSocketEvent || "");
     state.pairingCooldownUntil = Number(persistedState.pairingCooldownUntil || 0);
@@ -4610,6 +4616,12 @@ function shouldSilencePreLinkDisconnectLogs(botState, closeCode = 0) {
 function isMainPreLinkLoggedOut(botState, loggedOut) {
   if (!loggedOut) return false;
   if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
+    return false;
+  }
+  if (Boolean(botState?.hadPersistedSessionAtBoot)) {
+    return false;
+  }
+  if (hasPersistedBotSession(botState?.config)) {
     return false;
   }
   return !Boolean(botState?.hasOpenedSession);
@@ -10161,6 +10173,7 @@ async function iniciarInstanciaBot(config) {
   markBotSocketActivity(botState, "booting");
 
   try {
+    botState.hadPersistedSessionAtBoot = hasPersistedBotSession(config);
     ensureAuthFolderExists(config.authFolder);
     const { state: authState, saveCreds } = await useMultiFileAuthState(
       config.authFolder
