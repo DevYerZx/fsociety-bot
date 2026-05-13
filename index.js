@@ -4147,6 +4147,7 @@ function ensureBotState(config) {
     pairingSocketRetryAttempts: 0,
     pairingCommandHintShown: false,
     requireManualPairingNumber: false,
+    blockingPairingInput: false,
     lastPairingNoticeAt: 0,
     lastRenderedQr: "",
     lastRenderedQrAt: 0,
@@ -4793,6 +4794,7 @@ function resetMainBotSession(botState, options = {}) {
   botState.lastPairingErrorAt = 0;
   botState.lastPairingError = "";
   botState.requireManualPairingNumber = false;
+  botState.blockingPairingInput = false;
   botState.preLink401RecoveryAttempts = 0;
   botState.preLink401Paused = false;
   botState.reconnectAttempts = 0;
@@ -7979,6 +7981,7 @@ async function askPairingModeInConsole(options = {}) {
     runtimePairingMode = "";
     if (mainState?.config?.id === "main") {
       mainState.requireManualPairingNumber = true;
+      mainState.blockingPairingInput = true;
     }
     console.log(
       chalk.yellowBright(
@@ -7991,6 +7994,7 @@ async function askPairingModeInConsole(options = {}) {
   runtimePairingMode = option === "2" ? "code" : "qr";
   if (mainState?.config?.id === "main") {
     mainState.requireManualPairingNumber = runtimePairingMode === "code";
+    mainState.blockingPairingInput = runtimePairingMode === "code";
   }
   console.log(
     chalk.cyanBright(
@@ -8001,11 +8005,19 @@ async function askPairingModeInConsole(options = {}) {
   );
 
   if (runtimePairingMode !== "code") {
+    if (mainState?.config?.id === "main") {
+      mainState.blockingPairingInput = false;
+    }
     return;
   }
 
   let resolvedNumber = "";
-  for (let i = 0; i < 3; i++) {
+  while (!resolvedNumber) {
+    if (!canPromptInConsole()) {
+      console.log(chalk.yellowBright("Consola no interactiva detectada. Esperando numero por configuracion."));
+      break;
+    }
+
     const entered = normalizePairingPhoneNumber(
       await preguntarSeguro(
         chalk.greenBright(
@@ -8015,6 +8027,9 @@ async function askPairingModeInConsole(options = {}) {
     );
     if (entered) {
       resolvedNumber = entered;
+      break;
+    }
+    if (!canPromptInConsole()) {
       break;
     }
     console.log(chalk.redBright("Numero invalido. Usa 10 a 15 digitos con codigo de pais."));
@@ -8034,6 +8049,7 @@ async function askPairingModeInConsole(options = {}) {
   if (mainStateForSave?.config) {
     mainStateForSave.config.pairingNumber = resolvedNumber;
     mainStateForSave.requireManualPairingNumber = false;
+    mainStateForSave.blockingPairingInput = false;
   }
   console.log(chalk.cyanBright(`Numero guardado para codigo: ${resolvedNumber}`));
 }
@@ -8141,6 +8157,14 @@ function shouldWaitMainPairingModeSelection(botState) {
   return mode !== "qr" && mode !== "code";
 }
 
+function shouldBlockMainStartupForPairingInput(botState) {
+  if (!botState || String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
+    return false;
+  }
+
+  return Boolean(botState?.blockingPairingInput);
+}
+
 function getMainBotState() {
   return botStates.get("main") || null;
 }
@@ -8232,6 +8256,9 @@ function evaluateManagedProcessStartDecision(config = {}, options = {}) {
   }
 
   if (config.id === "main") {
+    if (shouldBlockMainStartupForPairingInput(botState)) {
+      return { start: false, reason: "waiting_pairing_number_input" };
+    }
     if (Boolean(botState?.preLink401Paused)) {
       return { start: false, reason: "prelink_401_paused" };
     }
@@ -10321,6 +10348,7 @@ async function iniciarInstanciaBot(config) {
           botState.connectionState = "open";
           botState.hasOpenedSession = true;
           botState.requireManualPairingNumber = false;
+          botState.blockingPairingInput = false;
           botState.preLink401RecoveryAttempts = 0;
           botState.preLink401Paused = false;
           resetPairingCache(botState);
