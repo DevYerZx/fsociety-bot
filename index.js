@@ -4146,6 +4146,7 @@ function ensureBotState(config) {
     pairingSocketRetryTimer: null,
     pairingSocketRetryAttempts: 0,
     pairingCommandHintShown: false,
+    requireManualPairingNumber: false,
     lastPairingNoticeAt: 0,
     lastRenderedQr: "",
     lastRenderedQrAt: 0,
@@ -4791,6 +4792,7 @@ function resetMainBotSession(botState, options = {}) {
   botState.lastPairingRequestNumber = "";
   botState.lastPairingErrorAt = 0;
   botState.lastPairingError = "";
+  botState.requireManualPairingNumber = false;
   botState.preLink401RecoveryAttempts = 0;
   botState.preLink401Paused = false;
   botState.reconnectAttempts = 0;
@@ -7975,6 +7977,9 @@ async function askPairingModeInConsole(options = {}) {
 
   if (option !== "1" && option !== "2") {
     runtimePairingMode = "";
+    if (mainState?.config?.id === "main") {
+      mainState.requireManualPairingNumber = true;
+    }
     console.log(
       chalk.yellowBright(
         "No se eligio un modo valido. Pauso auto-vinculacion hasta que selecciones 1 (QR) o 2 (CODIGO)."
@@ -7984,6 +7989,9 @@ async function askPairingModeInConsole(options = {}) {
   }
 
   runtimePairingMode = option === "2" ? "code" : "qr";
+  if (mainState?.config?.id === "main") {
+    mainState.requireManualPairingNumber = runtimePairingMode === "code";
+  }
   console.log(
     chalk.cyanBright(
       runtimePairingMode === "code"
@@ -8025,6 +8033,7 @@ async function askPairingModeInConsole(options = {}) {
   const mainStateForSave = getMainBotState();
   if (mainStateForSave?.config) {
     mainStateForSave.config.pairingNumber = resolvedNumber;
+    mainStateForSave.requireManualPairingNumber = false;
   }
   console.log(chalk.cyanBright(`Numero guardado para codigo: ${resolvedNumber}`));
 }
@@ -8761,8 +8770,16 @@ async function requestPairingCode(botState, options = {}) {
     resetPairingCache(botState);
   }
 
-  let resolvedNumber =
-    explicitNumber || normalizePairingPhoneNumber(botState.config?.pairingNumber);
+  const forceManualMainNumber =
+    botState?.config?.id === "main" &&
+    shouldPromptInConsole(botState) &&
+    runtimePairingMode === "code" &&
+    Boolean(botState?.requireManualPairingNumber);
+
+  let resolvedNumber = explicitNumber;
+  if (!resolvedNumber && !forceManualMainNumber) {
+    resolvedNumber = normalizePairingPhoneNumber(botState.config?.pairingNumber);
+  }
 
   if (!resolvedNumber && allowPrompt) {
     if (!botState.pairingPromptShown) {
@@ -8810,6 +8827,7 @@ async function requestPairingCode(botState, options = {}) {
   // cuando el socket todavia no termina de inicializar.
   botState.config.pairingNumber = resolvedNumber;
   if (botState?.config?.id === "main") {
+    botState.requireManualPairingNumber = false;
     saveMainBotPairingNumber(resolvedNumber);
   }
 
@@ -10302,6 +10320,7 @@ async function iniciarInstanciaBot(config) {
           botState.lastDisconnectCode = 0;
           botState.connectionState = "open";
           botState.hasOpenedSession = true;
+          botState.requireManualPairingNumber = false;
           botState.preLink401RecoveryAttempts = 0;
           botState.preLink401Paused = false;
           resetPairingCache(botState);
