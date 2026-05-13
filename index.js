@@ -10218,7 +10218,10 @@ async function iniciarInstanciaBot(config) {
       botState.store.bind(botState.sock.ev);
     }
 
+    const boundSock = botState.sock;
+
     botState.sock.ev.on("creds.update", (...args) => {
+      if (botState.sock !== boundSock) return;
       markBotSocketActivity(botState, "creds.update");
       return saveCreds(...args);
     });
@@ -10319,6 +10322,11 @@ async function iniciarInstanciaBot(config) {
 
     botState.sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
       try {
+        // Ignore late events from an old socket after a recycle/reconnect.
+        if (botState.sock !== boundSock) {
+          return;
+        }
+
         botState.connectionState = String(connection || botState.connectionState || "")
           .trim()
           .toLowerCase();
@@ -10338,6 +10346,7 @@ async function iniciarInstanciaBot(config) {
 
         if (
           qr &&
+          !isBotRegistered(botState) &&
           (preferQrFirstMode() || isPairingQrFallbackActive(botState)) &&
           shouldShowPairingNotice(botState, 15000)
         ) {
@@ -10669,8 +10678,6 @@ async function iniciarInstanciaBot(config) {
         );
       }
     });
-
-    const boundSock = botState.sock;
 
     boundSock.ev.on("messages.upsert", async ({ messages, type }) => {
       // Ignore late events from a socket that is no longer the active one.
