@@ -536,6 +536,9 @@ async function resolveInputToUrl(input) {
     return {
       url: directUrl,
       title: "YouTube MP3",
+      thumbnail: "",
+      duration: 0,
+      author: "",
       searched: false,
     };
   }
@@ -556,6 +559,9 @@ async function resolveInputToUrl(input) {
   return {
     url: video.url,
     title: cleanText(video.title || "YouTube MP3"),
+    thumbnail: cleanText(video.thumbnail || ""),
+    duration: Number(video.seconds || 0),
+    author: cleanText(video.author?.name || ""),
     searched: true,
   };
 }
@@ -592,6 +598,8 @@ async function getYtmp3Data(videoUrl) {
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
     provider: data.provider || "ytmp3",
     duration: data.duration || 0,
+    thumbnail: cleanText(data.thumbnail || data.thumb || ""),
+    author: cleanText(data.author || data.channel || data.uploader || ""),
     cached: Boolean(data.cached),
     sourceUrl: endpoint,
   };
@@ -808,6 +816,74 @@ function buildErrorMessage(errorText) {
   ].join("\n");
 }
 
+async function getBuffer(url = "", timeout = 12_000) {
+  const target = cleanText(url);
+  if (!target || !/^https?:\/\//i.test(target)) return null;
+
+  try {
+    const response = await axios.get(target, {
+      responseType: "arraybuffer",
+      timeout,
+      httpAgent: HTTP_AGENT,
+      httpsAgent: HTTPS_AGENT,
+      maxRedirects: 4,
+      validateStatus: () => true,
+    });
+    if (Number(response.status || 0) >= 400) return null;
+    return Buffer.from(response.data);
+  } catch {
+    return null;
+  }
+}
+
+function buildPreviewCaption(data = {}) {
+  const title = clipText(data.title || data.fileName || "YouTube MP3", 78);
+  const duration = formatDuration(data.duration);
+  const author = clipText(data.author || "", 46);
+
+  return [
+    "╭─〔 🎧 *FSOCIETY MP3* 〕─⬣",
+    `│ *${title}*`,
+    duration ? `│ ⏱️ Duración: *${duration}*` : null,
+    author ? `│ 🎤 Canal: *${author}*` : null,
+    "│ Preparando audio...",
+    "╰────────────────⬣",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function sendAudioPreview(sock, from, quoted, data = {}) {
+  const caption = buildPreviewCaption(data);
+  const thumbBuffer = await getBuffer(data.thumbnail);
+
+  if (thumbBuffer) {
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          image: thumbBuffer,
+          caption,
+          ...global.channelInfo,
+        },
+        quoted
+      );
+      return;
+    } catch {}
+  }
+
+  try {
+    await sock.sendMessage(
+      from,
+      {
+        text: caption,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  } catch {}
+}
+
 async function sendRemoteMp3(sock, from, quoted, data) {
   await sock.sendMessage(
     from,
@@ -860,7 +936,7 @@ export default {
   command: ["ytmp3", "yta", "ytaudio"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube sin portada",
+  description: "Descarga audio MP3 de YouTube con portada previa",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -971,11 +1047,16 @@ export default {
       const finalData = {
         ...apiData,
         title: apiData.title || resolved.title,
+        thumbnail: apiData.thumbnail || resolved.thumbnail || "",
+        author: apiData.author || resolved.author || "",
+        duration: Number(apiData.duration || resolved.duration || 0),
         sourceUrl:
           apiData.sourceUrl ||
           getApiCandidates()[0] ||
           "https://dv-yer-api.online/ytmp3",
       };
+
+      await sendAudioPreview(sock, from, quoted, finalData);
 
       try {
         await Promise.race([
