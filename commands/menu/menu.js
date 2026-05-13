@@ -452,21 +452,20 @@ function buildTopPanel({
 }) {
   const githubLink = getGithubLink(settings);
   return [
-    "╔══════════════════════════════════════╗",
-    "║      FSOCIETY • COMMAND CENTER       ║",
-    "╚══════════════════════════════════════╝",
-    `┃ 🛰️ *${menuTitle}*`,
-    `┃ └─ _${menuSubtitle}_`,
-    "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    `┃ 🤖 *Bot:* _${botLine || settings?.botName || "Fsociety-V1"}_`,
-    `┃ 👑 *Owner:* _${settings?.ownerName || "Owner"}_`,
-    `┃ 🔗 *GitHub:* ${githubLink}`,
-    `┃ 🧷 *Prefijos:* *${prefixLabel}*`,
-    `┃ ⏱️ *Uptime:* _${uptime}_`,
-    `┃ 🗂️ *Categorias:* *${totalCategories}*`,
-    `┃ ⚙️ *Comandos reales:* *${totalCommands}*`,
-    "┃ _Panel optimizado y ordenado por categorias._",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "╔════════════════════════════════════════════╗",
+    "║            ⚡ FSOCIETY COMMAND HUB         ║",
+    "╠════════════════════════════════════════════╣",
+    `║ 🛰️  *${menuTitle}*`,
+    `║     _${menuSubtitle}_`,
+    "╟────────────────────────────────────────────╢",
+    `║ 🤖 Bot: *${botLine || settings?.botName || "Fsociety-V1"}*`,
+    `║ 👑 Owner: *${settings?.ownerName || "Owner"}*`,
+    `║ 🧷 Prefix: *${prefixLabel}*`,
+    `║ ⏱️ Uptime: *${uptime}*`,
+    `║ 🗂️ Categories: *${totalCategories}*`,
+    `║ ⚙️ Real Commands: *${totalCommands}*`,
+    `║ 🔗 GitHub: ${githubLink}`,
+    "╚════════════════════════════════════════════╝",
   ].join("\n");
 }
 
@@ -477,19 +476,22 @@ function buildCategoryIndex(categoryNames, categories) {
   );
 
   const list = categoryNames
-    .map((category) => {
+    .map((category, index) => {
       const icon = getCategoryIcon(category);
       const label = normalizeCategoryLabel(category);
       const count = categories[category]?.length || 0;
       const density = buildDensityBar(count, totalCommands, 5);
-      return `${icon} ${label} ${density} ${count}`;
+      const slot = String(index + 1).padStart(2, "0");
+      return `${slot}) ${icon} ${label}  [${count}] ${density}`;
     })
-    .join("\n┃ ");
+    .join("\n│ ");
 
   return [
-    "╭─〔 🧭 *MAPA DE CATEGORIAS* 〕",
-    `┃ ${list}`,
-    "╰────────────────────────⬣",
+    "╭────────────────────────────────────────────╮",
+    "│ 🧭 *CATEGORY DIRECTORY*",
+    "├────────────────────────────────────────────┤",
+    `│ ${list}`,
+    "╰────────────────────────────────────────────╯",
   ].join("\n");
 }
 
@@ -497,42 +499,51 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
   const icon = getCategoryIcon(category);
   const title = normalizeCategoryLabel(category);
   const highlight = getCategoryHighlight(commands, primaryPrefix);
+  const maxPreview = 6;
 
   const lines = [
-    `╭─〔 ${icon} *${title}* 〕`,
-    `┃ ${getCategoryDescription(category, commands.length)}`,
-    `┃ Modo dominante: *${highlight.mainAccess}*`,
+    `╭──────────────── ${icon} *${title}* ────────────────╮`,
+    `│ ${getCategoryDescription(category, commands.length)}`,
+    `│ Access Mix: PUBLICO ${highlight.accessCounts.PUBLICO} • ADMIN ${highlight.accessCounts.ADMIN} • OWNER ${highlight.accessCounts.OWNER}`,
+    `│ Dominant Access: *${highlight.mainAccess}*`,
+    "├────────────────────────────────────────────────────┤",
   ];
 
   const commandLines = commands
-    .slice(0, 5)
-    .map((item) => `┃ ✦ *${primaryPrefix}${item.name}*`);
+    .slice(0, maxPreview)
+    .map((item, index) => {
+      const slot = String(index + 1).padStart(2, "0");
+      return `│ ${slot}. *${primaryPrefix}${item.name}*  [${item.access}]`;
+    });
   lines.push(...commandLines);
 
-  if (commands.length > 5) {
-    lines.push(`┃ … y *${commands.length - 5}* mas`);
+  if (commands.length > maxPreview) {
+    lines.push(`│ … and *${commands.length - maxPreview}* more commands`);
   }
 
   if (highlight.quick.length) {
-    lines.push(`┃ Preview: ${highlight.quick.join(" • ")}`);
+    lines.push("├────────────────────────────────────────────────────┤");
+    lines.push(`│ Quick Start: ${highlight.quick.join(" • ")}`);
   }
 
-  lines.push("╰────────────────────────⬣");
+  lines.push("╰────────────────────────────────────────────────────╯");
 
   return lines.join("\n");
 }
 
-function buildFooter(primaryPrefix) {
+function buildFooter(primaryPrefix, settings = {}) {
   return [
-    "╭─〔 ⚡ *ATAJOS RAPIDOS* 〕",
-    `┃ ✦ ${primaryPrefix}menu -> panel principal`,
-    `┃ ✦ ${primaryPrefix}menu descargas -> multimedia`,
-    `┃ ✦ ${primaryPrefix}menu free streaming accounts -> streaming`,
-    `┃ ✦ ${primaryPrefix}menugrupo -> control de grupo`,
-    `┃ ✦ ${primaryPrefix}status -> estado general`,
-    `┃ ✦ ${primaryPrefix}owner -> soporte`,
-    `┃ ✦ Repo: https://github.com/DevYerZx/fsociety-bot`,
-    "╰────────────────────────⬣",
+    "╔════════════════════════════════════════════╗",
+    "║               🚀 QUICK ACCESS              ║",
+    "╠════════════════════════════════════════════╣",
+    `║ • ${primaryPrefix}menu`,
+    `║ • ${primaryPrefix}menu descargas`,
+    `║ • ${primaryPrefix}menu free streaming accounts`,
+    `║ • ${primaryPrefix}menugrupo`,
+    `║ • ${primaryPrefix}status`,
+    `║ • ${primaryPrefix}owner`,
+    `║ • Repo: ${getGithubLink(settings)}`,
+    "╚════════════════════════════════════════════╝",
   ].join("\n");
 }
 
@@ -697,83 +708,79 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
 function buildMenuLandingText(menuContext, settings, uptime, totalCategories, totalCommands, prefixLabel) {
   const githubLink = getGithubLink(settings);
   return [
-    "╔══════════════════════════════════════╗",
-    "║          FSOCIETY-V1 MENU            ║",
-    "╚══════════════════════════════════════╝",
-    `┃ 👋 *${menuContext.botLine || settings?.botName || "usuario"}*`,
-    "┃ Bienvenido al centro de comandos.",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
-    "",
-    "╭━━〔 👤 *INFO USER* 〕━━⬣",
-    `┃ ⦿ Vista: *${menuContext.subtitle}*`,
-    `┃ ⦿ Prefijos: *${prefixLabel}*`,
-    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
-    "",
-    "╭━━〔 🤖 *INFO BOT* 〕━━⬣",
-    `┃ ⦿ Bot: *${menuContext.title}*`,
-    `┃ ⦿ Owner: *${settings?.ownerName || "Owner"}*`,
-    `┃ ⦿ Runtime: *${uptime}*`,
-    `┃ ⦿ Categorias: *${totalCategories}*`,
-    `┃ ⦿ Comandos: *${totalCommands}*`,
-    `┃ ⦿ GitHub: ${githubLink}`,
-    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
-    "",
-    "Pulsa *ABRIR MENU* para desplegar categorias.",
-    `Tip: ${getPrimaryPrefix(settings)}menu free streaming accounts`,
+    "╔════════════════════════════════════════════╗",
+    "║            ☠️ FSOCIETY-V1 MENU             ║",
+    "╠════════════════════════════════════════════╣",
+    `║ 👋 Hola, *${menuContext.botLine || settings?.botName || "usuario"}*`,
+    "║ Pulsa *ABRIR MENU* para desplegar categorías.",
+    "╠════════════════════════════════════════════╣",
+    `║ 👤 Vista: *${menuContext.subtitle}*`,
+    `║ 🧷 Prefijos: *${prefixLabel}*`,
+    `║ 🤖 Bot: *${menuContext.title}*`,
+    `║ 👑 Owner: *${settings?.ownerName || "Owner"}*`,
+    `║ ⏱️ Runtime: *${uptime}*`,
+    `║ 🗂️ Categorías: *${totalCategories}*`,
+    `║ ⚙️ Comandos: *${totalCommands}*`,
+    `║ 🔗 GitHub: ${githubLink}`,
+    "╠════════════════════════════════════════════╣",
+    `║ Tip: ${getPrimaryPrefix(settings)}menu free streaming accounts`,
+    "╚════════════════════════════════════════════╝",
   ].join("\n");
 }
 
-function buildCategoryMenuText(category, commands, primaryPrefix) {
+function buildCategoryMenuText(category, commands, primaryPrefix, settings = {}) {
   const icon = getCategoryIcon(category);
   const label = normalizeCategoryLabel(category);
   const count = commands.length;
   const highlight = getCategoryHighlight(commands, primaryPrefix);
   const commandBlocks = chunkRows(commands, 8).map((chunk, index) => {
-    const title =
+    const pageLabel =
       commands.length > 8
-        ? `╭─〔 ${icon} *${label} ${index + 1}/${Math.ceil(commands.length / 8)}* 〕`
-        : `╭─〔 ${icon} *${label}* 〕`;
+        ? `Page ${index + 1}/${Math.ceil(commands.length / 8)}`
+        : "Page 1/1";
+    const title = `╭──────── ${icon} *${label}* • ${pageLabel} ────────╮`;
 
     const lines = [title];
 
-    for (const item of chunk) {
+    for (const [itemIndex, item] of chunk.entries()) {
       const aliasText = item.aliases?.length
         ? `Alias: ${item.aliases.slice(0, 3).join(", ")}`
         : "";
-      lines.push(`┃ ✦ *${primaryPrefix}${item.name}* [${item.access}]`);
-      lines.push(`┃   ${item.description || "Comando disponible del bot."}`);
+      const slot = String(index * 8 + itemIndex + 1).padStart(2, "0");
+      lines.push(`│ ${slot}. *${primaryPrefix}${item.name}*  [${item.access}]`);
+      lines.push(`│     ${item.description || "Comando disponible del bot."}`);
       if (aliasText) {
-        lines.push(`┃   ${aliasText}`);
+        lines.push(`│     ${aliasText}`);
       }
-      lines.push("┃");
+      lines.push("│");
     }
 
-    if (lines[lines.length - 1] === "┃") {
+    if (lines[lines.length - 1] === "│") {
       lines.pop();
     }
 
-    lines.push("╰────────────⬣");
+    lines.push("╰────────────────────────────────────────────╯");
     return lines.join("\n");
   });
 
   return [
-    `╭━━〔 ${icon} *${label}* 〕━━⬣`,
-    `┃ ${getCategoryDescription(category, count)}`,
-    "┃",
-    `┃ 📌 *Comandos:* ${count}`,
-    `┃ 🔓 *Publicos:* ${highlight.accessCounts.PUBLICO}`,
-    `┃ 🛡️ *Admin:* ${highlight.accessCounts.ADMIN}`,
-    `┃ 👑 *Owner:* ${highlight.accessCounts.OWNER}`,
-    "┃",
+    "╔════════════════════════════════════════════╗",
+    `║ ${icon} *${label}*`,
+    "╠════════════════════════════════════════════╣",
+    `║ ${getCategoryDescription(category, count)}`,
+    `║ 📌 Commands: *${count}*`,
+    `║ 🔓 Public: *${highlight.accessCounts.PUBLICO}*`,
+    `║ 🛡️ Admin: *${highlight.accessCounts.ADMIN}*`,
+    `║ 👑 Owner: *${highlight.accessCounts.OWNER}*`,
     highlight.quick.length
-      ? `┃ ⚡ *Inicio rapido:* ${highlight.quick.join(" • ")}`
-      : "┃ ⚡ *Inicio rapido:* categoria lista para usar",
-    "┃ Usa el prefijo + comando para ejecutarlo.",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+      ? `║ ⚡ Quick Start: ${highlight.quick.join(" • ")}`
+      : "║ ⚡ Quick Start: category ready to use",
+    "║ Usa prefijo + comando para ejecutar.",
+    "╚════════════════════════════════════════════╝",
     "",
     ...commandBlocks,
     "",
-    buildFooter(primaryPrefix),
+    buildFooter(primaryPrefix, settings),
   ].join("\n");
 }
 
@@ -848,7 +855,8 @@ export default {
         const categoryText = buildCategoryMenuText(
           requestedCategory,
           commandList,
-          primaryPrefix
+          primaryPrefix,
+          settings
         );
         const categoryImageBuffer = getCategoryImageBuffer(requestedCategory);
 
@@ -894,7 +902,7 @@ export default {
         ...categoryNames.map((category) =>
           buildCategoryBlock(category, categories[category], primaryPrefix)
         ),
-        buildFooter(primaryPrefix),
+        buildFooter(primaryPrefix, settings),
       ];
 
       const fullCaption = textParts.join("\n\n").trim();
