@@ -4241,11 +4241,10 @@ function ensureBotState(config) {
     state.lastDisconnectAt = Number(persistedState.lastDisconnectAt || 0);
     state.lastDisconnectCode = Number(persistedState.lastDisconnectCode || 0);
     state.connectionState = String(persistedState.connectionState || "");
-    state.hasOpenedSession = Boolean(
-      persistedState.hasOpenedSession ||
-        persistedState.connected ||
-        persistedState.registered
-    );
+    // Este flag debe representar solo el arranque/proceso actual.
+    // No lo heredamos del estado persistido para evitar falsos
+    // positivos de "sesion abierta" cuando la auth ya no sirve.
+    state.hasOpenedSession = false;
     state.lastSocketEventAt = Number(persistedState.lastSocketEventAt || 0);
     state.lastSocketEvent = String(persistedState.lastSocketEvent || "");
     state.pairingCooldownUntil = Number(persistedState.pairingCooldownUntil || 0);
@@ -4635,12 +4634,9 @@ function isMainPreLinkLoggedOut(botState, loggedOut) {
   if (String(botState?.config?.id || "").trim().toLowerCase() !== "main") {
     return false;
   }
-  if (Boolean(botState?.hadPersistedSessionAtBoot)) {
-    return false;
-  }
-  if (hasPersistedBotSession(botState?.config)) {
-    return false;
-  }
+  // Si en este arranque aun no abrio sesion, tratamos 401 como
+  // pre-vinculacion para evitar bucles de reintento antes de mostrar
+  // el flujo QR/CODIGO al usuario.
   return !Boolean(botState?.hasOpenedSession);
 }
 
