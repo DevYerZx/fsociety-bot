@@ -38,7 +38,6 @@ export default {
       ? `https://whatsapp.com/channel/${newsletterJid.replace("@newsletter", "")}`
       : "";
     const supportChannelUrl = String(newsletter.url || inferredChannelUrl || "").trim();
-    const supportChannelName = String(newsletter.name || "Canal de soporte").trim();
     const communityImage = getCommunityImageBuffer();
 
     const lines = [
@@ -60,7 +59,7 @@ export default {
         : []),
       "┃",
       "┃ *Si algun enlace falla:*",
-      "┃ *UNETE DIRECTO AL CANAL desde el boton de abajo.*",
+      "┃ *UNETE DIRECTO A LA COMUNIDAD desde el boton de abajo.*",
       "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
     ];
     const communityText = lines.join("\n");
@@ -76,7 +75,7 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: "⚡ Si no abre algun grupo, entra directo al canal oficial desde aqui:",
+            text: "⚡ Si no abre algun grupo, entra directo a la comunidad oficial desde aqui:",
             title: "FSOCIETY-V1",
             subtitle: "Soporte y comunidad",
             footer: "Boton directo de comunidad",
@@ -84,9 +83,9 @@ export default {
               {
                 name: "cta_url",
                 buttonParamsJson: JSON.stringify({
-                  display_text: `Abrir ${supportChannelName}`,
-                  url: supportChannelUrl,
-                  merchant_url: supportChannelUrl,
+                  display_text: "Unete a la comunidad",
+                  url: COMMUNITY_MAIN_LINK,
+                  merchant_url: COMMUNITY_MAIN_LINK,
                 }),
               },
             ],
@@ -103,14 +102,14 @@ export default {
             text: communityText,
             title: "FSOCIETY-V1",
             subtitle: "Soporte y comunidad",
-            footer: "Usa el boton para abrir el canal directo",
+            footer: "Usa el boton para abrir la comunidad directo",
             interactiveButtons: [
               {
                 name: "cta_url",
                 buttonParamsJson: JSON.stringify({
-                  display_text: `Abrir ${supportChannelName}`,
-                  url: supportChannelUrl,
-                  merchant_url: supportChannelUrl,
+                  display_text: "Unete a la comunidad",
+                  url: COMMUNITY_MAIN_LINK,
+                  merchant_url: COMMUNITY_MAIN_LINK,
                 }),
               },
             ],
