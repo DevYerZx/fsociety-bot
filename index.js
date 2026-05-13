@@ -4210,6 +4210,7 @@ function ensureBotState(config) {
     preLink401RecoveryAttempts: 0,
     preLink401Paused: false,
     manualRestartGraceUntil: 0,
+    manualRestartCloseSuppressPending: false,
     lastManualRestartCloseLogAt: 0,
     lastCommandName: "",
     lastCommandStartedAt: 0,
@@ -7800,6 +7801,7 @@ async function restartMainSession(options = {}) {
   mainState.consecutiveLoggedOutCount = 0;
   mainState.manualRestartGraceUntil =
     Date.now() + Math.max(8_000, Number(options?.graceMs || MANUAL_RESTART_CLOSE_SUPPRESS_MS));
+  mainState.manualRestartCloseSuppressPending = true;
   recycleBotInstance(mainState, String(options?.reason || "owner_main_restart"));
   scheduleReconnect(
     mainState,
@@ -10525,6 +10527,7 @@ async function iniciarInstanciaBot(config) {
           botState.connectionState = "open";
           botState.hasOpenedSession = true;
           botState.manualRestartGraceUntil = 0;
+          botState.manualRestartCloseSuppressPending = false;
           botState.requireManualPairingNumber = false;
           botState.blockingPairingInput = false;
           botState.preLink401RecoveryAttempts = 0;
@@ -10583,7 +10586,9 @@ async function iniciarInstanciaBot(config) {
           const manualRestartGraceActive =
             Number(botState.manualRestartGraceUntil || 0) > Date.now();
           const manualRestartGraceClose =
-            manualRestartGraceActive && Number(code || 0) === 0;
+            manualRestartGraceActive &&
+            Boolean(botState.manualRestartCloseSuppressPending) &&
+            Number(code || 0) === 0;
           const suppressCloseWarn = restartRequired || manualRestartGraceClose;
 
           markBotSocketActivity(botState, `connection.close:${code || "unknown"}`);
@@ -10606,6 +10611,9 @@ async function iniciarInstanciaBot(config) {
             botState.consecutiveLoggedOutCount = Number(botState.consecutiveLoggedOutCount || 0) + 1;
           } else {
             botState.consecutiveLoggedOutCount = 0;
+          }
+          if (manualRestartGraceActive && !manualRestartGraceClose) {
+            botState.manualRestartCloseSuppressPending = false;
           }
 
           clearSocketRecoveryTimer(botState);
@@ -10636,6 +10644,7 @@ async function iniciarInstanciaBot(config) {
 
           if (manualRestartGraceClose) {
             botState.reconnectAttempts = 0;
+            botState.manualRestartCloseSuppressPending = false;
             if (!silencePreLinkLogs) {
               const now = Date.now();
               if (now - Number(botState.lastManualRestartCloseLogAt || 0) >= 8_000) {
