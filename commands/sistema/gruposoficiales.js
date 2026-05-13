@@ -1,3 +1,29 @@
+import fs from "fs";
+import path from "path";
+
+const COMMUNITY_MAIN_LINK = "https://chat.whatsapp.com/GuLWXlFUdy3BJA9OXcc1Hj";
+
+function resolveCommunityImagePath() {
+  const imageDir = path.join(process.cwd(), "imagenes");
+  const candidates = [
+    path.join(imageDir, "comunidad.jpg"),
+    path.join(imageDir, "comunidad.jpeg"),
+    path.join(imageDir, "comunidad.png"),
+    path.join(imageDir, "comunidad.webp"),
+  ];
+  return candidates.find((filePath) => fs.existsSync(filePath)) || "";
+}
+
+function getCommunityImageBuffer() {
+  const imagePath = resolveCommunityImagePath();
+  if (!imagePath) return null;
+  try {
+    return fs.readFileSync(imagePath);
+  } catch {
+    return null;
+  }
+}
+
 export default {
   command: ["gruposoficiales", "grupooficial", "comunidad", "soportebot"],
   category: "sistema",
@@ -13,11 +39,12 @@ export default {
       : "";
     const supportChannelUrl = String(newsletter.url || inferredChannelUrl || "").trim();
     const supportChannelName = String(newsletter.name || "Canal de soporte").trim();
+    const communityImage = getCommunityImageBuffer();
 
     const lines = [
       "╭━━〔 🌐 *GRUPOS OFICIALES FSOCIETY-V1* 〕━━⬣",
       "┃ *Comunidad (DVYER):*",
-      "┃ https://chat.whatsapp.com/GuLWXlFUdy3BJA9OXcc1Hj",
+      `┃ ${COMMUNITY_MAIN_LINK}`,
       "┃",
       "┃ *Grupo oficial del bot:*",
       "┃ https://chat.whatsapp.com/ItdJRKVJGCsIXZjviN3MZO",
@@ -31,15 +58,49 @@ export default {
             `┃ ${supportChannelUrl}`,
           ]
         : []),
+      "┃",
+      "┃ *Si algun enlace falla:*",
+      "┃ *UNETE DIRECTO AL CANAL desde el boton de abajo.*",
       "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
     ];
+    const communityText = lines.join("\n");
 
     if (supportChannelUrl) {
+      if (communityImage) {
+        await sock.sendMessage(
+          from,
+          { image: communityImage, caption: communityText, ...global.channelInfo },
+          { quoted: msg }
+        );
+
+        return sock.sendMessage(
+          from,
+          {
+            text: "⚡ Si no abre algun grupo, entra directo al canal oficial desde aqui:",
+            title: "FSOCIETY-V1",
+            subtitle: "Soporte y comunidad",
+            footer: "Boton directo de comunidad",
+            interactiveButtons: [
+              {
+                name: "cta_url",
+                buttonParamsJson: JSON.stringify({
+                  display_text: `Abrir ${supportChannelName}`,
+                  url: supportChannelUrl,
+                  merchant_url: supportChannelUrl,
+                }),
+              },
+            ],
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
+
       try {
         return await sock.sendMessage(
           from,
           {
-            text: lines.join("\n"),
+            text: communityText,
             title: "FSOCIETY-V1",
             subtitle: "Soporte y comunidad",
             footer: "Usa el boton para abrir el canal directo",
@@ -60,6 +121,14 @@ export default {
       } catch {}
     }
 
-    return sock.sendMessage(from, { text: lines.join("\n"), ...global.channelInfo }, { quoted: msg });
+    if (communityImage) {
+      return sock.sendMessage(
+        from,
+        { image: communityImage, caption: communityText, ...global.channelInfo },
+        { quoted: msg }
+      );
+    }
+
+    return sock.sendMessage(from, { text: communityText, ...global.channelInfo }, { quoted: msg });
   },
 };
