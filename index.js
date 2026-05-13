@@ -122,8 +122,10 @@ const RECONNECT_BASE_DELAY_MS = 1800;
 const RECONNECT_MAX_DELAY_MS = 30 * 1000;
 const RECONNECT_CODE0_MIN_DELAY_MS = 4500;
 const PRELINK_401_RECOVERY_RETRY_DELAY_MS = 1200;
+const TRANSIENT_401_RETRY_MAX = 5;
 const SUBBOT_RECONNECT_STAGGER_MS = 700;
 const SUBBOT_RECONNECT_STAGGER_MAX_MS = 8000;
+const RESTART_PENDING_TTL_MS = 60 * 1000;
 const DEFAULT_PAIRING_KEY = String(process.env.PAIRING_FIXED_KEY || "DVYER123")
   .trim()
   .slice(0, 32);
@@ -229,13 +231,27 @@ function normalizeProcessBotId(value = "") {
 }
 
 function isManagedHostingEnvironment(env = process.env) {
+  const cwd = String(process.cwd() || "").toLowerCase();
+  const startup = String(env?.STARTUP || "").trim();
+  const hasPteroHints = Boolean(
+    env?.PTERODACTYL_SERVER_UUID ||
+      env?.P_SERVER_UUID ||
+      env?.P_SERVER_LOCATION ||
+      env?.P_BUILD_ID ||
+      (startup && env?.SERVER_MEMORY)
+  );
+  const containerHomeHint =
+    cwd.startsWith("/home/container") && String(env?.USER || "").toLowerCase() === "container";
+
   return Boolean(
     env?.RAILWAY_ENVIRONMENT ||
       env?.RENDER ||
       env?.PTERODACTYL_SERVER_UUID ||
       env?.SERVER_ID ||
       env?.KOYEB_SERVICE_NAME ||
-      env?.DYNO
+      env?.DYNO ||
+      hasPteroHints ||
+      containerHomeHint
   );
 }
 
@@ -3047,6 +3063,7 @@ let liveConsoleTelemetryInterval = null;
 let dashboardServer = null;
 let structuredLogStream = null;
 let runtimeRequestCounter = 0;
+let processRestartRequestedAt = 0;
 const runtimeMetrics = {
   startedAt: Date.now(),
   logs: {
@@ -5545,6 +5562,24 @@ async function processInternalSubbotRequest(payload = {}) {
   };
 }
 
+function markProcessRestartRequested() {
+  processRestartRequestedAt = Date.now();
+}
+
+function clearProcessRestartRequested() {
+  processRestartRequestedAt = 0;
+}
+
+function isProcessRestartPending() {
+  const startedAt = Number(processRestartRequestedAt || 0);
+  if (!startedAt) return false;
+  if (Date.now() - startedAt > RESTART_PENDING_TTL_MS) {
+    clearProcessRestartRequested();
+    return false;
+  }
+  return true;
+}
+
 function getRestartMode() {
   if (isPm2Environment(process.env)) {
     return {
@@ -5608,6 +5643,8 @@ function scheduleProcessRestart(delayMs = PROCESS_RESTART_DELAY_MS) {
       scheduled: false,
     };
   }
+
+  markProcessRestartRequested();
 
   if (restartMode.kind === "pm2") {
     const pm2Name = getMainPm2ProcessName();
@@ -5675,6 +5712,10 @@ function scheduleProcessRestart(delayMs = PROCESS_RESTART_DELAY_MS) {
 
 function scheduleReconnect(botState, ms = RECONNECT_BASE_DELAY_MS, reason = "auto") {
   if (botState?.config?.id !== "main" && botState?.config?.enabled === false) {
+    return;
+  }
+
+  if (isProcessRestartPending()) {
     return;
   }
 
@@ -7717,6 +7758,57 @@ function runSubbotReservationCleanup() {
   return releasedCount;
 }
 
+async function restartMainSession(options = {}) {
+  const mainConfig = buildMainBotConfig(settings);
+  const mainState = ensureBotState(mainConfig);
+  mainState.config = {
+    ...mainState.config,
+    ...mainConfig,
+  };
+
+  if (isProcessRestartPending()) {
+    return {
+      ok: false,
+      status: "process_restart_pending",
+      message: "Ya hay un reinicio de proceso en curso.",
+      bot: summarizeBotConfig(mainConfig),
+    };
+  }
+
+  const startDecision = evaluateManagedProcessStartDecision(mainState.config, {
+    botState: mainState,
+  });
+
+  if (!startDecision.start) {
+    return {
+      ok: false,
+      status: "not_allowed_now",
+      message:
+        `No puedo reiniciar la sesion MAIN ahora (motivo: ${startDecision.reason}).`,
+      bot: summarizeBotConfig(mainConfig),
+    };
+  }
+
+  clearReplacementBlock(mainState);
+  mainState.preLink401RecoveryAttempts = 0;
+  mainState.preLink401Paused = false;
+  mainState.consecutiveLoggedOutCount = 0;
+  recycleBotInstance(mainState, String(options?.reason || "owner_main_restart"));
+  scheduleReconnect(
+    mainState,
+    Math.max(800, Number(options?.delayMs || 1200)),
+    String(options?.reason || "owner_main_restart")
+  );
+  writePersistedBotRuntimeState(mainState, { immediate: true });
+
+  return {
+    ok: true,
+    status: "reconnecting_main",
+    message: "Sesion MAIN reiniciada. Reconectando...",
+    bot: summarizeBotConfig(mainConfig),
+  };
+}
+
 async function reconnectManagedSubbot(botId, options = {}) {
   const targetConfig = getSubbotConfigById(botId);
   if (!targetConfig) {
@@ -8460,6 +8552,10 @@ function recycleBotInstance(botState, reason = "recovery") {
 }
 
 function runBotHealthChecks() {
+  if (isProcessRestartPending()) {
+    return;
+  }
+
   const now = Date.now();
 
   for (const botState of botStates.values()) {
@@ -9826,6 +9922,7 @@ global.botRuntime = {
     });
   },
   isMainReady: () => isMainBotReady(),
+  restartMainSession: (options = {}) => restartMainSession(options),
   restartProcess: (delayMs = PROCESS_RESTART_DELAY_MS) =>
     scheduleProcessRestart(delayMs),
   getRestartMode: () => getRestartMode(),
@@ -10331,6 +10428,10 @@ async function iniciarInstanciaBot(config) {
           return;
         }
 
+        if (isProcessRestartPending() && connection !== "close") {
+          return;
+        }
+
         if (isReplacementBlocked(botState) && connection !== "close") {
           if (connection === "open") {
             const now = Date.now();
@@ -10504,6 +10605,24 @@ async function iniciarInstanciaBot(config) {
             immediate: pairingRejected405,
           });
 
+          if (isProcessRestartPending()) {
+            botState.reconnectAttempts = 0;
+            clearReconnectTimer(botState);
+            clearSocketRecoveryTimer(botState);
+            if (!silencePreLinkLogs) {
+              const now = Date.now();
+              if (now - Number(botState.lastRestartPendingCloseLogAt || 0) >= 12_000) {
+                botState.lastRestartPendingCloseLogAt = now;
+                logBotEvent(
+                  botState,
+                  "info",
+                  "Reinicio de proceso en curso. Omito reconexion local en esta instancia."
+                );
+              }
+            }
+            return;
+          }
+
           if (botState.config?.id !== "main" && loggedOut) {
             releaseSubbotSlot(botState, {
               reason: "desconectado",
@@ -10647,7 +10766,7 @@ async function iniciarInstanciaBot(config) {
 
           if (loggedOut && botState.config?.id === "main") {
             const loggedOutCount = Number(botState.consecutiveLoggedOutCount || 0);
-            if (loggedOutCount < 3) {
+            if (loggedOutCount < TRANSIENT_401_RETRY_MAX) {
               const retryDelay = Math.max(
                 RECONNECT_CODE0_MIN_DELAY_MS,
                 getReconnectDelay(botState, { loggedOut: false, closeCode: code })
@@ -10655,7 +10774,8 @@ async function iniciarInstanciaBot(config) {
               logBotEvent(
                 botState,
                 "warn",
-                `Detecte 401 temporal (${loggedOutCount}/3). Mantengo sesion y reintento sin borrar auth.`
+                `Detecte 401 temporal (${loggedOutCount}/${TRANSIENT_401_RETRY_MAX}). ` +
+                  "Mantengo sesion y reintento sin borrar auth."
               );
               scheduleReconnect(botState, retryDelay, "transient_401_retry");
               return;
