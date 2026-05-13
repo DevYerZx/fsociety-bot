@@ -8365,10 +8365,14 @@ function logManagedStopDecision(botState, config, decision) {
     return;
   }
   const now = Date.now();
+  const replacementPause = reason.startsWith("replacement_blocked");
+  const throttleMs = replacementPause
+    ? Math.max(MANAGED_STOP_LOG_THROTTLE_MS, 60_000)
+    : MANAGED_STOP_LOG_THROTTLE_MS;
 
   if (
     botState.lastManagedStopDecisionReason === reason &&
-    now - Number(botState.lastManagedStopDecisionAt || 0) < MANAGED_STOP_LOG_THROTTLE_MS
+    now - Number(botState.lastManagedStopDecisionAt || 0) < throttleMs
   ) {
     return;
   }
@@ -8378,7 +8382,7 @@ function logManagedStopDecision(botState, config, decision) {
 
   logBotEvent(
     botState,
-    "warn",
+    replacementPause ? "info" : "warn",
     `Sync: pausa gestionada (${reason})` +
       ` | enabled=${config?.enabled !== false}` +
       ` | state=${String(botState.connectionState || "unknown")}` +
@@ -10327,6 +10331,21 @@ async function iniciarInstanciaBot(config) {
           return;
         }
 
+        if (isReplacementBlocked(botState) && connection !== "close") {
+          if (connection === "open") {
+            const now = Date.now();
+            if (now - Number(botState.lastReplacementBlockedOpenLogAt || 0) >= 30_000) {
+              botState.lastReplacementBlockedOpenLogAt = now;
+              logBotEvent(
+                botState,
+                "warn",
+                "OPEN ignorado: la sesion sigue bloqueada por conflicto 440 en otro dispositivo."
+              );
+            }
+          }
+          return;
+        }
+
         botState.connectionState = String(connection || botState.connectionState || "")
           .trim()
           .toLowerCase();
@@ -10496,6 +10515,7 @@ async function iniciarInstanciaBot(config) {
 
           if (connectionReplaced) {
             markReplacementBlocked(botState);
+            botState.connectionState = "replacement_blocked";
             botState.reconnectAttempts = 0;
             clearReconnectTimer(botState);
             writePersistedBotRuntimeState(botState);
