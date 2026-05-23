@@ -144,6 +144,17 @@ function buildUpdateMessage(title, lines = [], footer = "") {
   ].join("\n");
 }
 
+function summarizeChangedFiles(changedFiles = [], limit = 8) {
+  const files = uniquePaths(changedFiles);
+  if (!files.length) return "";
+
+  const shown = files.slice(0, Math.max(1, Number(limit || 8)));
+  const hidden = files.length - shown.length;
+  const suffix = hidden > 0 ? ` y ${hidden} mas` : "";
+
+  return `${shown.join(", ")}${suffix}`;
+}
+
 function hasRestartSensitiveChanges(changedFiles = []) {
   return uniquePaths(changedFiles).some((filePath) => {
     const normalized = normalizeGitPath(filePath);
@@ -1305,7 +1316,7 @@ export default {
                 `• Hot-reload runtime: *${global?.botRuntime?.applyHotRuntimeRefresh ? "SI" : "NO"}*`,
                 `• Cambios bloqueantes: *${dirtyCount}*`,
               ],
-              "`.update` sin reinicio\n`.update hot` actualiza y recarga\n`.update restart` actualiza y reinicia\n`.update norestart` actualiza sin reiniciar"
+              "`.update` actualiza y recarga sin reiniciar\n`.update restart` actualiza y reinicia\n`.update nohot` actualiza sin intentar recarga"
             ),
             ...global.channelInfo,
           },
@@ -1362,8 +1373,11 @@ export default {
       const forceRestart = normalizedArgs.some((value) =>
         ["force", "restart", "reboot"].includes(value)
       );
-      const requestedHotReload = normalizedArgs.some((value) =>
+      const explicitHotReload = normalizedArgs.some((value) =>
         ["hot", "reload", "recargar", "hotreload", "hot-reload"].includes(value)
+      );
+      const disabledHotReload = normalizedArgs.some((value) =>
+        ["nohot", "no-hot", "sinhot", "sin-hot", "soloarchivos", "solo-archivos"].includes(value)
       );
       const requestedNoRestart = normalizedArgs.some((value) =>
         ["norestart", "no-restart", "sinreinicio", "sin-reinicio"].includes(value)
@@ -1371,6 +1385,7 @@ export default {
       const restartMode = getRestartMode();
       const allowAutomaticRestart = forceRestart && !requestedNoRestart;
       const skipRestart = !allowAutomaticRestart;
+      const requestedHotReload = explicitHotReload || (skipRestart && !disabledHotReload);
       const gitRepoAvailable = await isInsideGitWorkTree();
 
       await sock.sendMessage(
@@ -1385,6 +1400,9 @@ export default {
               requestedHotReload
                 ? "• Modo hot-reload: *activo*"
                 : "• Modo hot-reload: *inactivo*",
+              skipRestart
+                ? "• Reinicio automatico: *NO*"
+                : "• Reinicio automatico: *SI, solicitado por owner*",
               `• Entorno: *${restartMode.label}*`,
             ]
           ),
@@ -1431,6 +1449,7 @@ export default {
       const changedSummary = updateResult.changedFiles.length
         ? `Archivos: *${updateResult.changedFiles.length}*`
         : "Archivos: *sin cambios nuevos*";
+      const changedFilesLine = summarizeChangedFiles(updateResult.changedFiles);
       const depsSummary = updateResult.depsInstalled
         ? "Dependencias: *actualizadas*"
         : "Dependencias: *sin cambios*";
@@ -1462,6 +1481,7 @@ export default {
                 `• Origen: *${updateResult.repoLabel}*`,
                 `• ${summary}`,
                 `• ${changedSummary}`,
+                ...(changedFilesLine ? [`• Reemplazados: ${changedFilesLine}`] : []),
                 `• ${depsSummary}`,
                 `• ${updateResult.stashSummary}`,
                 `• Detalle: ${updateResult.detailLine}`,
@@ -1493,6 +1513,7 @@ export default {
                 `• Origen: *${updateResult.repoLabel}*`,
                 `• ${summary}`,
                 `• ${changedSummary}`,
+                ...(changedFilesLine ? [`• Reemplazados: ${changedFilesLine}`] : []),
                 `• ${depsSummary}`,
                 `• ${updateResult.stashSummary}`,
                 `• Detalle: ${updateResult.detailLine}`,
@@ -1519,6 +1540,7 @@ export default {
               `• Origen: *${updateResult.repoLabel}*`,
               `• ${summary}`,
               `• ${changedSummary}`,
+              ...(changedFilesLine ? [`• Reemplazados: ${changedFilesLine}`] : []),
               `• ${depsSummary}`,
               `• ${updateResult.stashSummary}`,
               `• Detalle: ${updateResult.detailLine}`,
@@ -1549,6 +1571,7 @@ export default {
                 `• Origen: *${updateResult.repoLabel}*`,
                 `• ${summary}`,
                 `• ${changedSummary}`,
+                ...(changedFilesLine ? [`• Reemplazados: ${changedFilesLine}`] : []),
                 `• ${depsSummary}`,
                 `• ${updateResult.stashSummary}`,
                 `• Detalle: ${updateResult.detailLine}`,
