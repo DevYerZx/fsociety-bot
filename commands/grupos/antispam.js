@@ -148,13 +148,13 @@ export default {
           await sock.sendMessage(from, {
             text: `🚫 Antispam: ${getParticipantDisplayTag(null, sender)} expulsado por spam.`,
             mentions: mentionJid ? [mentionJid] : [],
-            ...global.channelInfo
+
           });
         } catch {
           await sock.sendMessage(from, {
             text: `⚠️ Antispam: ${getParticipantDisplayTag(null, sender)} spameando (no pude expulsar).`,
             mentions: mentionJid ? [mentionJid] : [],
-            ...global.channelInfo
+
           });
         }
       } else {
@@ -163,7 +163,7 @@ export default {
             `⚠️ Antispam: ${getParticipantDisplayTag(null, sender)} baja el spam. ` +
             `(strike ${data.strikes}/${MAX_STRIKES + 1})`,
           mentions: mentionJid ? [mentionJid] : [],
-          ...global.channelInfo
+
         });
       }
     }

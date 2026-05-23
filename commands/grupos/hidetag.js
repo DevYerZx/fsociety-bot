@@ -19,7 +19,7 @@ export default {
 
     return sock.sendMessage(
       from,
-      { text: texto, mentions: members, ...global.channelInfo },
+      { text: texto, mentions: members },
       { quoted: msg }
     );
   }

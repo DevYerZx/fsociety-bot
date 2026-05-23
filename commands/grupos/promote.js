@@ -45,7 +45,7 @@ export default {
         {
           text: `✅ ${getParticipantDisplayTag(participant, targetJid)} promovido a admin.`,
           mentions: [promoteResult.jid],
-          ...global.channelInfo,
+
         },
         { quoted: msg }
       );

@@ -849,7 +849,7 @@ export default {
             `🔗 Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*\n` +
             `✅ Fue expulsado del grupo.`,
           mentions: mentionJids,
-          ...global.channelInfo,
+
         });
         return;
       } catch {}
@@ -873,7 +873,7 @@ export default {
             `🔗 Enlace bloqueado: *${blockedLink.domain || blockedLink.raw}*\n` +
             `⚠️ No pude expulsarlo. Verifica si el bot es admin.`,
           mentions: mentionJids,
-          ...global.channelInfo,
+
         });
         return;
       }
@@ -894,7 +894,7 @@ export default {
           `🔗 Detectado: *${blockedLink.domain || blockedLink.raw}*\n` +
           `📌 A la advertencia *${MAX_WARNS}* seras expulsado.`,
         mentions: mentionJids,
-        ...global.channelInfo,
+
       });
       return;
     }

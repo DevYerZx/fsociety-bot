@@ -96,7 +96,7 @@ export default {
             `${getParticipantDisplayTag(participant, target)}\n` +
             `Total: ${result.total}`,
           mentions: jid ? [jid] : [],
-          ...global.channelInfo,
+
         },
         quoted
       );
@@ -131,7 +131,7 @@ export default {
             `${getParticipantDisplayTag(participant, target)}\n` +
             `Total: ${result.total}`,
           mentions: jid ? [jid] : [],
-          ...global.channelInfo,
+
         },
         quoted
       );

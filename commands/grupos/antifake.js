@@ -222,7 +222,7 @@ export default {
           `Numero detectado: *+${number}*\n` +
           `No coincide con los prefijos permitidos del grupo.`,
         mentions: mentionJid ? [mentionJid] : [],
-        ...global.channelInfo,
+
       });
     }
   },

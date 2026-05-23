@@ -95,7 +95,7 @@ export default {
 
 👤 Usuario: ${getParticipantDisplayTag(participant, targetJid)}`,
         mentions: [removeResult.jid],
-        ...global.channelInfo
+
       });
 
     } catch (e) {

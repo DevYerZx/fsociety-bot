@@ -243,7 +243,7 @@ export default {
             `${getParticipantDisplayTag(null, sender)} llegó a *${MAX_WARNS}/${MAX_WARNS}* advertencias.\n` +
             `✅ Fue expulsado del grupo.`,
           mentions: mentionJid ? [mentionJid] : [],
-          ...global.channelInfo
+
         });
       }
 
@@ -254,7 +254,7 @@ export default {
           `${getParticipantDisplayTag(null, sender)} llegó a *${MAX_WARNS}/${MAX_WARNS}* advertencias.\n` +
           `⚠️ No pude expulsar (¿bot sin admin?).`,
         mentions: mentionJid ? [mentionJid] : [],
-        ...global.channelInfo
+
       });
     }
 
@@ -265,7 +265,7 @@ export default {
         `${getParticipantDisplayTag(null, sender)} cuidado con el lenguaje.\n` +
         `📌 Advertencia: *${current}/${MAX_WARNS}*`,
       mentions: mentionJid ? [mentionJid] : [],
-      ...global.channelInfo
+
     });
   }
 };

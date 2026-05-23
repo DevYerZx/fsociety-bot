@@ -133,7 +133,7 @@ async function handleWarn(context) {
     {
       text: `Advertencia para ${formatShortJid(targetJid)}: *${reason}*\nTotal warns: *${total}*`,
       mentions: [targetJid],
-      ...global.channelInfo,
+
     },
     { quoted: msg }
   );
@@ -169,7 +169,7 @@ async function handleWarnings(context) {
         `Warnings de ${formatShortJid(targetJid)}: *${entries.length}*\n\n` +
         (lines.length ? lines.join("\n") : "Sin advertencias."),
       mentions: [targetJid],
-      ...global.channelInfo,
+
     },
     { quoted: msg }
   );
@@ -197,7 +197,7 @@ async function handleAdd(context) {
       {
         text: `Usuario agregado: ${formatShortJid(targetJid)}`,
         mentions: [targetJid],
-        ...global.channelInfo,
+
       },
       { quoted: msg }
     );

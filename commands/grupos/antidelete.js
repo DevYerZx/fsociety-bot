@@ -152,7 +152,7 @@ export default {
     await sock.sendMessage(from, {
       text: body,
       mentions: mentionJid ? [mentionJid] : [],
-      ...global.channelInfo,
+
     });
   },
 };

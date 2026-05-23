@@ -560,7 +560,7 @@ export default {
           image: cardBuffer,
           caption: text,
           mentions: mentionJid ? [mentionJid] : [],
-          ...global.channelInfo,
+
         });
         continue;
       }
@@ -570,7 +570,7 @@ export default {
           image: { url: imageUrl },
           caption: text,
           mentions: mentionJid ? [mentionJid] : [],
-          ...global.channelInfo,
+
         });
         continue;
       }
@@ -578,7 +578,7 @@ export default {
       await sock.sendMessage(update.id, {
         text,
         mentions: mentionJid ? [mentionJid] : [],
-        ...global.channelInfo,
+
       });
     }
   },

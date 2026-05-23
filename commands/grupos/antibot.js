@@ -190,7 +190,7 @@ export default {
             {
               text: `🚫 Antibot: ${tag} expulsado por comportamiento de bot clone.`,
               mentions: mentionJid ? [mentionJid] : [],
-              ...global.channelInfo,
+
             }
           );
         } catch {
@@ -199,7 +199,7 @@ export default {
             {
               text: `⚠️ Antibot: ${tag} detectado como bot clone, pero no pude expulsar.`,
               mentions: mentionJid ? [mentionJid] : [],
-              ...global.channelInfo,
+
             }
           );
         }
@@ -211,7 +211,7 @@ export default {
               `⚠️ Antibot: ${tag} comportamiento sospechoso.\n` +
               `Strike: ${state.strikes}/${MAX_STRIKES + 1}`,
             mentions: mentionJid ? [mentionJid] : [],
-            ...global.channelInfo,
+
           }
         );
       }

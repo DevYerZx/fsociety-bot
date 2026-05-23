@@ -45,7 +45,7 @@ export default {
         {
           text: `✅ Admin removido a ${getParticipantDisplayTag(participant, targetJid)}.`,
           mentions: [demoteResult.jid],
-          ...global.channelInfo,
+
         },
         { quoted: msg }
       );

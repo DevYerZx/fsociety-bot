@@ -88,7 +88,7 @@ export default {
       {
         text: `Antiflood: ${getParticipantDisplayTag(null, sender)} baja la velocidad de mensajes.`,
         mentions: mentionJid ? [mentionJid] : [],
-        ...global.channelInfo,
+
       },
       {}
     );

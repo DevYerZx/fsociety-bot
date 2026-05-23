@@ -338,7 +338,7 @@ export default {
         {
           text: warningText,
           mentions: mentionJid ? [mentionJid] : [],
-          ...global.channelInfo,
+
         },
         msg?.key ? { quoted: msg } : undefined
       );
