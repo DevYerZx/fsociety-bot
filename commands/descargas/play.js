@@ -113,22 +113,29 @@ function buildResultCaption(query, video, currentIndex, total) {
   const published = clipText(video?.ago || video?.publishedAt || "No definido", 24);
 
   return [
-    "╭━━━〔 🎧 *FSOCIETY PLAY* 🎧 〕━━━⬣",
-    "┃",
-    `┃ 🔎 *Búsqueda:* ${clipText(query, 48)}`,
-    `┃ 🎯 *Resultado:* ${currentIndex + 1}/${total}`,
-    "┃",
-    `┃ 🎵 *Título:* ${title}`,
-    `┃ 👤 *Canal:* ${author}`,
-    `┃ ⏱️ *Duración:* ${duration}`,
-    `┃ 👁️ *Views:* ${views || "No definido"}`,
-    `┃ 🗓️ *Publicado:* ${published}`,
-    `┃ 🌐 *API:* ${PLAY_SOURCE_URL}`,
-    "┃",
-    "┃ ✦ Toca *MP3* o *MP4* para descargar",
-    currentIndex < total - 1 ? "┃ ✦ Usa *Siguiente* para ver otro resultado" : "┃ ✦ Este es el último resultado disponible",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
-  ].join("\n");
+  "╭═━━〔 🜲 🎶 ༺ＰＬＡＹ༻ 🎶 🜲 〕━━═⬣",
+  "┃",
+  `┃ ⪩🧿⪨ *Búsqueda:* ${clipText(query, 48)}`,
+  `┃ ⪩📑⪨ *Resultado:* ${currentIndex + 1}/${total}`,
+  "┃",
+  `┃ ⪩🎵⪨ *Título:* ${title}`,
+  `┃ ⪩👤⪨ *Canal:* ${author}`,
+  `┃ ⪩⏳⪨ *Duración:* ${duration}`,
+  `┃ ⪩👁️⪨ *Views:* ${views || "No definido"}`,
+  `┃ ⪩📆⪨ *Publicado:* ${published}`,
+  `┃ ⪩🌐⪨ *API:* ${PLAY_SOURCE_URL}`,
+  "┃",
+  "┣━━━〔 ✦ 🎧 𝐃𝐄𝐒𝐂𝐀𝐑𝐆𝐀𝐒 🎧 ✦ 〕━━━⬣",
+  "┃ ✧ ➜ *MP3* ▸ Audio",
+  "┃ ✧ ➜ *MP4* ▸ Video",
+  currentIndex < total - 1
+    ? "┃ ✧ ➜ *Siguiente* ▸ Ver más resultados"
+    : "┃ ✧ ➜ ✅ Último resultado disponible",
+  "┃",
+  "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
+  "┃ ⚡ 𝐅𝐒𝐎𝐂𝐈𝐄𝐓𝐘 - 𝐌𝐔𝐒𝐈𝐂 𝐄𝐍𝐆𝐈𝐍𝐄 ⚡",
+  "╰═━━〔 ☯ ✦ ☯ ✦ ☯ 〕━━═⬣"
+]. join("\n");
 }
 
 function buildButtonPanel(query, video, currentIndex, total) {
