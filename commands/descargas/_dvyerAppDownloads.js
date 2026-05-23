@@ -69,7 +69,6 @@ const COMMAND_CONFIG = {
     resolvePickerFromDownloadPicks: true,
     syntheticSearchPicks: 10,
     hidePackageName: true,
-    previewBeforeSend: true,
   },
 
   windows: {
