@@ -780,40 +780,56 @@ async function react(sock, msg, emoji) {
 }
 
 function buildUsageMessage() {
-  return [
-    "╭─〔 🎧 *FSOCIETY MP3* 〕─⬣",
-    "│",
-    "│ ✘ Falta el link o nombre de la música.",
-    "│",
-    "│ ✦ Uso:",
-    "│ *.ytmp3 <link o nombre>*",
-    "│",
-    "│ ✦ Ejemplo:",
-    "│ *.ytmp3 ozuna odisea*",
-    "│",
-    "╰────────────────⬣",
-  ].join("\n");
+  return  [
+    "╭━━━〔 🎧 ✦ *ＦＳＯＣＩＥＴＹ ＭＰ３* ✦ 🎧 〕━━━⬣",
+    "┃",
+    "┃ ⚠️ No enviaste un link o nombre válido.",
+    "┃",
+    "┣━━━〔 📌 USO CORRECTO 📌 〕━━━⬣",
+    `┃ ➤ ${prefix}ytmp3 ozuna odisea`,
+    `┃ ➤ ${prefix}ytmp3 bad bunny monaco`,
+    `┃ ➤ ${prefix}ytmp3 https://youtu.be/xxxx`,
+    "┃",
+    "┣━━━〔 🎵 SOPORTADO 🎵 〕━━━⬣",
+    "┃ ✦ Links de YouTube",
+    "┃ ✦ Nombre de canciones",
+    "┃ ✦ Búsqueda automática",
+    "┃",
+    "╰━━━〔 ⚡ DVYER - MUSIC SYSTEM ⚡ 〕━━━⬣",
+  ].join(\"\\n\");
 }
 
 function buildLimitMessage(retryMs) {
   return [
-    "╭─〔 ⚠️ *LÍMITE YTMP3* 〕─⬣",
-    "│",
-    "│ Estás usando mucho este comando.",
-    `│ Reintenta en *${formatRetrySeconds(retryMs)}s*.`,
-    "│",
-    "╰────────────────⬣",
-  ].join("\n");
+    "╭━━━〔 ⚠️ ✦ *ＬÍＭＩＴＥ ＤＥ ＵＳＯ* ✦ ⚠️ 〕━━━⬣",
+    "┃",
+    "┃ 🚫 Estás usando mucho este comando.",
+    `┃ ⏳ Espera *${formatRetrySeconds(retryMs)}s*`,
+    "┃ para volver a descargar música.",
+    "┃",
+    "┣━━━〔 📢 AVISO 📢 〕━━━⬣",
+    "┃ ✦ Evita spam masivo",
+    "┃ ✦ Mantén estable el sistema",
+    "┃ ✦ Usa el comando con calma",
+    "┃",
+    "╰━━━〔 🌙 FSOCIETY PROTECTION 🌙 〕━━━⬣",
+  ].join(\"\\n\");
 }
 
 function buildErrorMessage(errorText) {
   return [
-    "╭─〔 ❌ *YTMP3 ERROR* 〕─⬣",
-    "│",
-    `│ ${String(errorText || "No se pudo preparar el MP3.")}`,
-    "│",
-    "╰────────────────⬣",
-  ].join("\n");
+    "╭━━━〔 ❌ ✦ *ＹＴＭＰ３ ＥＲＲＯＲ* ✦ ❌ 〕━━━⬣",
+    "┃",
+    `┃ 🚫 ${String(errorText || "No se pudo preparar el MP3.")}`,
+    "┃",
+    "┣━━━〔 🔧 POSIBLES CAUSAS 🔧 〕━━━⬣",
+    "┃ ✦ API fuera de línea",
+    "┃ ✦ Video restringido",
+    "┃ ✦ Error de conexión",
+    "┃ ✦ Archivo demasiado pesado",
+    "┃",
+    "╰━━━〔 ⚡ DVYER API SYSTEM ⚡ 〕━━━⬣",
+  ].join(\"\\n\");
 }
 
 async function getBuffer(url = "", timeout = 12_000) {
@@ -842,13 +858,21 @@ function buildPreviewCaption(data = {}) {
   const author = clipText(data.author || "", 46);
 
   return [
-    "╭─〔 🎧 *FSOCIETY MP3* 〕─⬣",
-    `│ *${title}*`,
-    duration ? `│ ⏱️ Duración: *${duration}*` : null,
-    author ? `│ 🎤 Canal: *${author}*` : null,
-    "│ Preparando audio...",
-    "╰────────────────⬣",
-  ]
+  "╭━━━〔 🜲 🎧 *ＦＳＯＣＩＥＴＹ ＡＵＤＩＯ* 🎧 🜲 〕━━━⬣",
+  "┃",
+  `┃ 🎶 *Título:* ${title}`,
+  duration ? `┃ ⌛ *Tiempo:* ${duration}` : null,
+  author ? `┃ 👤 *Artista/Canal:* ${author}` : null,
+  "┃",
+  "┣━━━〔 ⚡ DESCARGA EN PROCESO ⚡ 〕━━━⬣",
+  "┃ ✦ Buscando mejor calidad...",
+  "┃ ✦ Generando archivo MP3...",
+  "┃ ✦ Enviando música...",
+  "┃",
+  "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
+  "┃ 🌙 *DVYER • FSOCIETY SYSTEM*",
+  "╰━━━〔 ✧ 🎵 ✧ 🎵 ✧ 〕━━━⬣",
+]
     .filter(Boolean)
     .join("\n");
 }
