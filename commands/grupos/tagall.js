@@ -131,7 +131,6 @@ export default {
     const participants = uniqueById(Array.isArray(metadata?.participants) ? metadata.participants : []);
     const mentionIds = participants.map((participant) => participant.id).filter(Boolean);
     const text = buildCaption(metadata, participants, args.join(" "), getContactName);
-    const baseContextInfo = global.channelInfo?.contextInfo || {};
 
     return sock.sendMessage(
       from,
@@ -139,7 +138,6 @@ export default {
         text,
         mentions: mentionIds,
         contextInfo: {
-          ...baseContextInfo,
           mentionedJid: mentionIds,
         },
       },
