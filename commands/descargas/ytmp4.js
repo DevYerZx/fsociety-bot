@@ -58,33 +58,43 @@ function clip(value = "", max = 80) {
 function bytes(size = 0) {
   const n = Number(size || 0);
   if (!Number.isFinite(n) || n <= 0) return "N/D";
+
   const units = ["B", "KB", "MB", "GB"];
   let value = n;
   let index = 0;
+
   while (value >= 1024 && index < units.length - 1) {
     value /= 1024;
     index++;
   }
+
   return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 }
 
 function safeName(name = "youtube-video") {
   const parsed = path.parse(String(name || "youtube-video"));
+
   const base = clean(parsed.name || name)
     .replace(/[\\/:*?"<>|]/g, "")
     .replace(/[^\w .()[\]-]/g, "")
     .slice(0, 120)
     .trim();
+
   return `${base || "youtube-video"}.mp4`;
 }
 
 function quality(value = "") {
   const text = clean(value).toLowerCase();
+
   if (!text || text === "best" || text === "sd") return DEFAULT_QUALITY;
   if (text === "hd") return "720p";
+
   const match = text.match(/(\d{3,4})/);
   const q = match ? `${match[1]}p` : DEFAULT_QUALITY;
-  return ["1080p", "720p", "480p", "360p", "240p", "144p"].includes(q) ? q : DEFAULT_QUALITY;
+
+  return ["1080p", "720p", "480p", "360p", "240p", "144p"].includes(q)
+    ? q
+    : DEFAULT_QUALITY;
 }
 
 function uniqQualities(preferred) {
@@ -93,6 +103,7 @@ function uniqQualities(preferred) {
 
 function sanitizeError(error, fallback = "No se pudo preparar el MP4.") {
   let text = clean(error?.message || error || fallback);
+
   try {
     const parsed = JSON.parse(text);
     text = clean(parsed?.detail || parsed?.message || text);
@@ -103,25 +114,39 @@ function sanitizeError(error, fallback = "No se pudo preparar el MP4.") {
     .replace(/https?:\/\/\S+/gi, "[URL OCULTA]");
 
   const low = text.toLowerCase();
+
   if (low.includes("429") || low.includes("too many requests") || low.includes("rate-overlimit")) {
     return "El servidor recibió muchas solicitudes. Reintenta en un momento.";
   }
+
   if (low.includes("timeout") || low.includes("econnaborted")) {
     return "La API tardó demasiado. Intenta otra vez o usa calidad 240p.";
   }
+
   if (low.includes("403")) return "El enlace expiró o fue bloqueado. Intenta nuevamente.";
   if (low.includes("404")) return "No encontré el video o el enlace ya no está disponible.";
+
   if (low.includes("socket hang up") || low.includes("econnreset")) {
     return "El proveedor de video está inestable. Reintenta en un momento.";
   }
+
   return text || fallback;
 }
 
 async function react(sock, msg, emoji) {
   try {
     if (!emoji || !sock || !msg?.key) return;
+
     const jid = msg.key.remoteJid || msg.chat || msg.from;
-    if (jid) await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
+
+    if (jid) {
+      await sock.sendMessage(jid, {
+        react: {
+          text: emoji,
+          key: msg.key,
+        },
+      });
+    }
   } catch {}
 }
 
@@ -138,13 +163,19 @@ async function deleteSafe(file) {
 async function cleanupOldFiles() {
   try {
     await ensureTmp();
+
     const now = Date.now();
     const files = await fsp.readdir(TMP_DIR, { withFileTypes: true });
+
     for (const file of files) {
       if (!file.isFile()) continue;
+
       const full = path.join(TMP_DIR, file.name);
       const stat = await fsp.stat(full).catch(() => null);
-      if (stat?.mtimeMs && now - stat.mtimeMs > sleepCleanupMs) await deleteSafe(full);
+
+      if (stat?.mtimeMs && now - stat.mtimeMs > sleepCleanupMs) {
+        await deleteSafe(full);
+      }
     }
   } catch {}
 }
@@ -168,57 +199,93 @@ function textFromMessage(message) {
 function rawInput(ctx) {
   const msg = ctx.m || ctx.msg || {};
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
-  const quoted = ctx.quoted || msg.quoted || msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+  const quoted =
+    ctx.quoted ||
+    msg.quoted ||
+    msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+
   return clean(argsText || textFromMessage(quoted));
 }
 
 function ytUrl(text = "") {
-  return clean(String(text).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i)?.[0] || "");
+  return clean(
+    String(text).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i)?.[0] || ""
+  );
 }
 
 function ytId(url = "") {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\./, "");
-    if (host === "youtu.be") return clean(parsed.pathname.replace(/^\/+/, "").split("/")[0]);
+
+    if (host === "youtu.be") {
+      return clean(parsed.pathname.replace(/^\/+/, "").split("/")[0]);
+    }
+
     const v = clean(parsed.searchParams.get("v"));
     if (v) return v;
+
     const parts = parsed.pathname.split("/").filter(Boolean);
-    if (["shorts", "embed", "live", "v"].includes(parts[0])) return clean(parts[1]);
+
+    if (["shorts", "embed", "live", "v"].includes(parts[0])) {
+      return clean(parts[1]);
+    }
   } catch {}
-  return clean(String(url).match(/(?:youtu\.be\/|[?&]v=|youtube\.com\/(?:shorts|embed|live)\/)([A-Za-z0-9_-]{6,})/i)?.[1] || "");
+
+  return clean(
+    String(url).match(
+      /(?:youtu\.be\/|[?&]v=|youtube\.com\/(?:shorts|embed|live)\/)([A-Za-z0-9_-]{6,})/i
+    )?.[1] || ""
+  );
 }
 
 function parseInput(input) {
   const tokens = clean(input).split(/\s+/).filter(Boolean);
+
   let q = DEFAULT_QUALITY;
   let fast = true;
   const rest = [];
 
   for (const token of tokens) {
     const lower = token.toLowerCase();
+
     if (QUALITY_RE.test(token) && q === DEFAULT_QUALITY) {
       q = quality(token);
       continue;
     }
+
     if (["fast", "-fast", "--fast"].includes(lower)) {
       fast = true;
       continue;
     }
+
     if (["nofast", "-nofast", "--nofast"].includes(lower)) {
       fast = false;
       continue;
     }
+
     rest.push(token);
   }
 
-  return { query: rest.join(" ").trim(), quality: q, fast };
+  return {
+    query: rest.join(" ").trim(),
+    quality: q,
+    fast,
+  };
 }
 
 async function resolveVideo(input) {
   const url = ytUrl(input);
+
   if (url) {
-    return { url, title: "YouTube Video", duration: "", author: "", thumbnail: "", videoId: ytId(url) };
+    return {
+      url,
+      title: "YouTube Video",
+      duration: "",
+      author: "",
+      thumbnail: "",
+      videoId: ytId(url),
+    };
   }
 
   const query = clean(input);
@@ -226,7 +293,10 @@ async function resolveVideo(input) {
 
   const results = await yts(query);
   const video = results?.videos?.find((v) => v?.url);
-  if (!video?.url) throw new Error("No encontré resultados en YouTube.");
+
+  if (!video?.url) {
+    throw new Error("No encontré resultados en YouTube.");
+  }
 
   return {
     url: video.url,
@@ -240,17 +310,23 @@ async function resolveVideo(input) {
 
 async function thumb(url) {
   if (!url) return null;
+
   try {
     const res = await axios.get(url, {
       responseType: "arraybuffer",
       timeout: THUMB_TIMEOUT,
-      headers: { "User-Agent": UA },
+      headers: {
+        "User-Agent": UA,
+      },
       httpAgent: HTTP_AGENT,
       httpsAgent: HTTPS_AGENT,
       validateStatus: () => true,
     });
+
     if (res.status >= 400 || !res.data) return null;
+
     const buffer = Buffer.from(res.data);
+
     return buffer.length ? buffer : null;
   } catch {
     return null;
@@ -260,9 +336,18 @@ async function thumb(url) {
 async function apiRequest(videoUrl, q, fast, signal) {
   const res = await axios.get(API_YTMP4_URL, {
     timeout: API_TIMEOUT,
-    params: { mode: "link", url: videoUrl, quality: q, fast, ...withDvyerApiKey() },
+    params: {
+      mode: "link",
+      url: videoUrl,
+      quality: q,
+      fast,
+      ...withDvyerApiKey(),
+    },
     signal,
-    headers: { "User-Agent": UA, Accept: "application/json" },
+    headers: {
+      "User-Agent": UA,
+      Accept: "application/json",
+    },
     httpAgent: HTTP_AGENT,
     httpsAgent: HTTPS_AGENT,
     maxRedirects: 5,
@@ -270,10 +355,16 @@ async function apiRequest(videoUrl, q, fast, signal) {
   });
 
   if (res.status >= 400 || !res.data?.ok) {
-    throw new Error(res.data?.detail || res.data?.error?.message || res.data?.message || `HTTP ${res.status}`);
+    throw new Error(
+      res.data?.detail ||
+        res.data?.error?.message ||
+        res.data?.message ||
+        `HTTP ${res.status}`
+    );
   }
 
   const data = res.data;
+
   const remoteUrl =
     data.direct_url ||
     data.provider_direct_url ||
@@ -281,7 +372,9 @@ async function apiRequest(videoUrl, q, fast, signal) {
     data.download_url_full ||
     data.url;
 
-  if (!remoteUrl) throw new Error("La API no devolvió URL de descarga.");
+  if (!remoteUrl) {
+    throw new Error("La API no devolvió URL de descarga.");
+  }
 
   return {
     remoteUrl,
@@ -294,14 +387,17 @@ async function apiRequest(videoUrl, q, fast, signal) {
 
 async function apiWithFallback(videoUrl, preferred, fast, signal) {
   let lastError = null;
+
   for (const q of uniqQualities(preferred)) {
     throwIfAborted(signal);
+
     try {
       return await apiRequest(videoUrl, q, fast, signal);
     } catch (e) {
       lastError = e;
     }
   }
+
   throw lastError || new Error("No se pudo obtener el MP4.");
 }
 
@@ -310,11 +406,15 @@ async function downloadFile(url, name, signal) {
   throwIfAborted(signal);
 
   const tempPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}.mp4`);
+
   const res = await axios.get(url, {
     responseType: "stream",
     timeout: FILE_TIMEOUT,
     signal,
-    headers: { "User-Agent": UA, Accept: "*/*" },
+    headers: {
+      "User-Agent": UA,
+      Accept: "*/*",
+    },
     httpAgent: HTTP_AGENT,
     httpsAgent: HTTPS_AGENT,
     maxRedirects: 5,
@@ -323,21 +423,36 @@ async function downloadFile(url, name, signal) {
     validateStatus: () => true,
   });
 
-  if (res.status >= 400) throw new Error(`No pude descargar el MP4 remoto. HTTP ${res.status}`);
+  if (res.status >= 400) {
+    throw new Error(`No pude descargar el MP4 remoto. HTTP ${res.status}`);
+  }
 
   const total = Number(res.headers?.["content-length"] || 0);
-  if (total > MAX_VIDEO_BYTES) throw new Error(`El video pesa ${bytes(total)} y supera el límite.`);
+
+  if (total > MAX_VIDEO_BYTES) {
+    throw new Error(`El video pesa ${bytes(total)} y supera el límite.`);
+  }
 
   const writer = fs.createWriteStream(tempPath);
+
   const unbind = bindAbort(signal, () => {
-    try { res.data?.destroy?.(new Error("Descarga cancelada.")); } catch {}
-    try { writer.destroy?.(new Error("Descarga cancelada.")); } catch {}
+    try {
+      res.data?.destroy?.(new Error("Descarga cancelada."));
+    } catch {}
+
+    try {
+      writer.destroy?.(new Error("Descarga cancelada."));
+    } catch {}
   });
 
   let downloaded = 0;
+
   res.data.on("data", (chunk) => {
     downloaded += chunk.length;
-    if (downloaded > MAX_VIDEO_BYTES) res.data.destroy(new Error("Video demasiado grande."));
+
+    if (downloaded > MAX_VIDEO_BYTES) {
+      res.data.destroy(new Error("Video demasiado grande."));
+    }
   });
 
   try {
@@ -351,12 +466,17 @@ async function downloadFile(url, name, signal) {
   unbind();
 
   const stat = await fsp.stat(tempPath).catch(() => null);
+
   if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
     await deleteSafe(tempPath);
     throw new Error("El archivo MP4 descargado es inválido.");
   }
 
-  return { tempPath, fileName: safeName(name), size: stat.size };
+  return {
+    tempPath,
+    fileName: safeName(name),
+    size: stat.size,
+  };
 }
 
 function usage(prefix = ".") {
@@ -384,20 +504,6 @@ function limitMessage(retryMs) {
     "┃",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
-}
-
-function loading(data = {}) {
-  return [
-    "╭━━━〔 🎬 *FSOCIETY MP4* 〕━━━⬣",
-    "┃",
-    `┃ 🎞️ *${clip(data.title || "YouTube Video", 65)}*`,
-    data.duration ? `┃ ⏱️ Duración: *${data.duration}*` : null,
-    data.author ? `┃ 👤 Canal: *${clip(data.author, 45)}*` : null,
-    `┃ 📺 Calidad: *${data.quality || DEFAULT_QUALITY}*`,
-    "┃",
-    "┃ ✦ Preparando video...",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ].filter(Boolean).join("\n");
 }
 
 function caption(data = {}) {
@@ -434,7 +540,9 @@ async function sendMp4(sock, from, quoted, data) {
       await sock.sendMessage(
         from,
         {
-          video: { url: data.tempPath || data.remoteUrl },
+          video: {
+            url: data.tempPath || data.remoteUrl,
+          },
           mimetype: "video/mp4",
           fileName: data.fileName,
           caption: cap,
@@ -443,6 +551,7 @@ async function sendMp4(sock, from, quoted, data) {
         },
         quoted
       );
+
       return "video";
     } catch {}
   }
@@ -450,13 +559,16 @@ async function sendMp4(sock, from, quoted, data) {
   await sock.sendMessage(
     from,
     {
-      document: { url: data.tempPath || data.remoteUrl },
+      document: {
+        url: data.tempPath || data.remoteUrl,
+      },
       mimetype: "video/mp4",
       fileName: data.fileName,
       caption: cap,
     },
     quoted
   );
+
   return "document";
 }
 
@@ -485,11 +597,22 @@ export default {
       const parsed = parseInput(input);
 
       if (!clean(parsed.query || input)) {
-        return sock.sendMessage(from, { text: usage(prefix), ...global.channelInfo }, quoted);
+        return sock.sendMessage(
+          from,
+          {
+            text: usage(prefix),
+            ...global.channelInfo,
+          },
+          quoted
+        );
       }
 
       const identity = buildRateIdentity(
-        { senderPhone: msg?.senderPhone || ctx.senderPhone, sender: msg?.sender || ctx.sender, from },
+        {
+          senderPhone: msg?.senderPhone || ctx.senderPhone,
+          sender: msg?.sender || ctx.sender,
+          from,
+        },
         from
       );
 
@@ -500,20 +623,35 @@ export default {
       });
 
       if (!limit.ok) {
-        return sock.sendMessage(from, { text: limitMessage(limit.retryAfterMs), ...global.channelInfo }, quoted);
+        return sock.sendMessage(
+          from,
+          {
+            text: limitMessage(limit.retryAfterMs),
+            ...global.channelInfo,
+          },
+          quoted
+        );
       }
 
       const video = await resolveVideo(parsed.query || input);
-      if (!video?.url) return sock.sendMessage(from, { text: usage(prefix), ...global.channelInfo }, quoted);
 
-      charge = await chargeDownloadRequest(ctx, { feature: "ytmp4", videoUrl: video.url });
+      if (!video?.url) {
+        return sock.sendMessage(
+          from,
+          {
+            text: usage(prefix),
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+
+      charge = await chargeDownloadRequest(ctx, {
+        feature: "ytmp4",
+        videoUrl: video.url,
+      });
+
       if (!charge?.ok) return;
-
-      await sock.sendMessage(
-        from,
-        { text: loading({ ...video, quality: parsed.quality }), ...global.channelInfo },
-        quoted
-      );
 
       const apiData = await runWithProviderCircuit(
         PROVIDER_NAME,
@@ -523,6 +661,7 @@ export default {
           cooldownMs: 90_000,
           shouldCountFailure: (e) => {
             const t = String(e?.message || e || "").toLowerCase();
+
             return !t.includes("no encontré resultados") && !t.includes("supera el límite");
           },
         }
@@ -547,7 +686,11 @@ export default {
       const file = await downloadFile(apiData.remoteUrl, apiData.fileName, signal);
       tempPath = file.tempPath;
 
-      await sendMp4(sock, from, quoted, { ...meta, ...file });
+      await sendMp4(sock, from, quoted, {
+        ...meta,
+        ...file,
+      });
+
       sent = true;
       await react(sock, msg, "✅");
     } catch (error) {
@@ -565,7 +708,15 @@ export default {
             ? String(error?.message || "Servicio temporalmente inestable.")
             : error;
 
-        await sock.sendMessage(from, { text: errorMessage(shown), ...global.channelInfo }, quoted);
+        await sock.sendMessage(
+          from,
+          {
+            text: errorMessage(shown),
+            ...global.channelInfo,
+          },
+          quoted
+        );
+
         await react(sock, msg, "❌");
       }
     } finally {
