@@ -1,4 +1,4 @@
-const VERSION = "1.3.3";
+const VERSION = "1.3.4";
 const MAX_LISTED_PER_SECTION = 160;
 
 function cleanText(value = "") {
@@ -34,7 +34,7 @@ function isAdmin(participant = {}) {
 }
 
 function adminIcon(participant = {}) {
-  return cleanText(participant?.admin).toLowerCase() === "superadmin" ? "👑" : "⭐";
+  return cleanText(participant?.admin).toLowerCase() === "superadmin" ? "♛" : "◆";
 }
 
 function resolveName(participant = {}, getContactName = null) {
@@ -56,17 +56,18 @@ function formatPerson(participant = {}, index = 0, getContactName = null) {
   const mention = mentionToken(id);
   const name = resolveName(participant, getContactName);
   const label = name && name !== mention ? `${name} ${mention}` : mention;
-  const icon = isAdmin(participant) ? adminIcon(participant) : "•";
+  const icon = isAdmin(participant) ? adminIcon(participant) : "◇";
 
-  return `┃ ${String(index + 1).padStart(2, "0")} ${icon} ${label}`;
+  return `│ ${String(index + 1).padStart(2, "0")} ${icon} ${label}`;
 }
 
 function buildSection(title = "", participants = [], getContactName = null) {
-  const lines = [`┣━━〔 ${title} 〕`];
+  const lines = [`╭─ ${title}`];
   const visible = participants.slice(0, MAX_LISTED_PER_SECTION);
 
   if (!visible.length) {
-    lines.push("┃ Ninguno detectado");
+    lines.push("│ Ninguno detectado");
+    lines.push("╰────────────");
     return lines.join("\n");
   }
 
@@ -75,10 +76,26 @@ function buildSection(title = "", participants = [], getContactName = null) {
   });
 
   if (participants.length > visible.length) {
-    lines.push(`┃ ... y ${participants.length - visible.length} mas`);
+    lines.push(`│ ... y ${participants.length - visible.length} mas`);
   }
 
+  lines.push("╰────────────");
   return lines.join("\n");
+}
+
+function nowLabel() {
+  try {
+    return new Date().toLocaleString("es-PE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return new Date().toISOString();
+  }
 }
 
 function buildCaption(metadata = {}, participants = [], text = "", getContactName = null) {
@@ -87,21 +104,23 @@ function buildCaption(metadata = {}, participants = [], text = "", getContactNam
   const extra = cleanText(text);
 
   return [
-    "┏━━━━━━━━━━━━━━━━━━━┓",
-    "⚔️ *Invocación General* ⚔️",
-    "┗━━━━━━━━━━━━━━━━━━━┛",
+    "╔══════════════════════╗",
+    "║     *LLAMADO GENERAL*     ║",
+    "╚══════════════════════╝",
     "",
-    `✐ Grupo: *${cleanText(metadata?.subject) || "Grupo"}*`,
-    `ⴵ Miembros: *${participants.length}*`,
-    `✦ Administradores: *${admins.length}*`,
-    `✦ Miembros normales: *${members.length}*`,
-    extra ? `✰ Mensaje: *${extra}*` : "",
+    `▸ Grupo: *${cleanText(metadata?.subject) || "Grupo"}*`,
+    `▸ Etiquetados: *${participants.length}*`,
+    `▸ Admins: *${admins.length}*`,
+    `▸ Miembros: *${members.length}*`,
+    `▸ Hora: *${nowLabel()}*`,
+    extra ? `▸ Aviso: *${extra}*` : "▸ Aviso: *Atención al grupo*",
     "",
     buildSection("ADMINISTRADORES", admins, getContactName),
+    "",
     buildSection("MIEMBROS", members, getContactName),
     "",
-    `🌌 Versión: *${VERSION}*`,
-    "『☽』 Todos responden al llamado.",
+    `⌁ FsOCIETY TagAll v${VERSION}`,
+    "⌁ Menciones enviadas al grupo.",
   ].filter(Boolean).join("\n");
 }
 
@@ -125,14 +144,14 @@ export default {
   adminOnly: true,
 
   run: async ({ sock, msg, from, args = [], groupMetadata, getContactName }) => {
-    await react(sock, msg, "🌑");
+    await react(sock, msg, "📣");
 
     const metadata = groupMetadata || (await sock.groupMetadata(from));
     const participants = uniqueById(Array.isArray(metadata?.participants) ? metadata.participants : []);
     const mentionIds = participants.map((participant) => participant.id).filter(Boolean);
     const text = buildCaption(metadata, participants, args.join(" "), getContactName);
 
-    return sock.sendMessage(
+    const result = await sock.sendMessage(
       from,
       {
         text,
@@ -143,5 +162,8 @@ export default {
       },
       { quoted: msg }
     );
+
+    await react(sock, msg, "✅");
+    return result;
   },
 };
