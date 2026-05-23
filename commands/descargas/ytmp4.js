@@ -1,7 +1,7 @@
-import path from "path";
-import os from "os";
 import fs from "fs";
 import fsp from "fs/promises";
+import path from "path";
+import os from "os";
 import http from "http";
 import https from "https";
 import axios from "axios";
@@ -19,239 +19,137 @@ import {
 } from "../../lib/provider-guard.js";
 
 const API_YTMP4_URL = buildDvyerUrl("/ytmp4");
-const DVYER_API_BASE_URL = getDvyerBaseUrl();
+const API_BASE = getDvyerBaseUrl();
 const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp4");
 
-/**
- * Antes estaba en 20_000 y por eso salía:
- * ❌ timeout of 20000ms exceeded
- */
-const API_REQUEST_TIMEOUT_MS = 90_000;
-const REMOTE_DOWNLOAD_TIMEOUT_MS = 120_000;
-const THUMB_TIMEOUT_MS = 15_000;
+const API_TIMEOUT = 90_000;
+const FILE_TIMEOUT = 150_000;
+const THUMB_TIMEOUT = 15_000;
+const COMMAND_TIMEOUT_MS = 240_000;
 
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
-const VIDEO_AS_DOCUMENT_THRESHOLD = 35 * 1024 * 1024;
+const AS_DOCUMENT_BYTES = 35 * 1024 * 1024;
 const MIN_VIDEO_BYTES = 64 * 1024;
-
-const HTTP_AGENT = new http.Agent({
-  keepAlive: true,
-  maxSockets: 20,
-  maxFreeSockets: 10,
-});
-
-const HTTPS_AGENT = new https.Agent({
-  keepAlive: true,
-  maxSockets: 20,
-  maxFreeSockets: 10,
-});
-
-const QUALITY_PATTERN = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
 
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const PROVIDER_NAME = "dvyer_ytmp4";
-const TMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
-
 const DEFAULT_QUALITY = "360p";
 const FALLBACK_QUALITIES = ["360p", "240p", "144p"];
+const QUALITY_RE = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
 
-/**
- * Antes estaba en 165_000.
- * Lo subimos para que el comando no se corte antes de que la API responda.
- */
-const COMMAND_TIMEOUT_MS = 240_000;
+const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
+const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 
-async function ensureTmpDir() {
-  await fsp.mkdir(TMP_DIR, { recursive: true });
-}
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36";
 
-function cleanText(value = "") {
+const sleepCleanupMs = 15 * 60 * 1000;
+
+function clean(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function clipText(value = "", max = 90) {
-  const text = cleanText(value);
-  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3))}...`;
+function clip(value = "", max = 80) {
+  const text = clean(value);
+  return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
 }
 
-function humanBytes(bytes = 0) {
-  const size = Number(bytes || 0);
-  if (!Number.isFinite(size) || size <= 0) return "N/D";
-
+function bytes(size = 0) {
+  const n = Number(size || 0);
+  if (!Number.isFinite(n) || n <= 0) return "N/D";
   const units = ["B", "KB", "MB", "GB"];
-  let value = size;
+  let value = n;
   let index = 0;
-
   while (value >= 1024 && index < units.length - 1) {
     value /= 1024;
     index++;
   }
-
   return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 }
 
-function safeFileName(name) {
-  return (
-    String(name || "youtube-video")
-      .replace(/[\\/:*?"<>|]/g, "")
-      .replace(/[^\w .()[\]-]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120) || "youtube-video"
-  );
-}
-
-function normalizeMp4Name(name) {
-  const parsed = path.parse(String(name || "").trim());
-  const base = safeFileName(parsed.name || name || "youtube-video");
+function safeName(name = "youtube-video") {
+  const parsed = path.parse(String(name || "youtube-video"));
+  const base = clean(parsed.name || name)
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/[^\w .()[\]-]/g, "")
+    .slice(0, 120)
+    .trim();
   return `${base || "youtube-video"}.mp4`;
 }
 
-function formatDuration(value = "") {
-  const text = cleanText(value);
-  return text || "Desconocida";
-}
-
-function normalizeQuality(value) {
-  const text = String(value || "").trim().toLowerCase();
-  if (!text) return DEFAULT_QUALITY;
-
+function quality(value = "") {
+  const text = clean(value).toLowerCase();
+  if (!text || text === "best" || text === "sd") return DEFAULT_QUALITY;
   if (text === "hd") return "720p";
-  if (text === "sd") return DEFAULT_QUALITY;
-  if (text === "best") return DEFAULT_QUALITY;
-
   const match = text.match(/(\d{3,4})/);
-  const normalized = match ? `${match[1]}p` : DEFAULT_QUALITY;
-
-  return FALLBACK_QUALITIES.includes(normalized) ? normalized : DEFAULT_QUALITY;
+  const q = match ? `${match[1]}p` : DEFAULT_QUALITY;
+  return ["1080p", "720p", "480p", "360p", "240p", "144p"].includes(q) ? q : DEFAULT_QUALITY;
 }
 
-function cleanVideoErrorText(error, fallback = "No se pudo preparar el MP4.") {
-  let text = String(error?.message || error || fallback);
+function uniqQualities(preferred) {
+  return [...new Set([quality(preferred), ...FALLBACK_QUALITIES])];
+}
 
+function sanitizeError(error, fallback = "No se pudo preparar el MP4.") {
+  let text = clean(error?.message || error || fallback);
   try {
     const parsed = JSON.parse(text);
-    text = parsed?.detail || parsed?.message || text;
+    text = clean(parsed?.detail || parsed?.message || text);
   } catch {}
 
-  const normalized = text.toLowerCase();
+  text = text
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[IP OCULTA]")
+    .replace(/https?:\/\/\S+/gi, "[URL OCULTA]");
 
-  if (
-    normalized.includes("rate-overlimit") ||
-    normalized.includes("rate overlimit") ||
-    normalized.includes("too many requests") ||
-    normalized.includes("http 429") ||
-    normalized.includes("429")
-  ) {
-    return "No pude procesar el video en este intento. Reintenta en un momento.";
+  const low = text.toLowerCase();
+  if (low.includes("429") || low.includes("too many requests") || low.includes("rate-overlimit")) {
+    return "El servidor recibió muchas solicitudes. Reintenta en un momento.";
   }
-
-  if (normalized.includes("timeout")) {
-    return "La API de video tardó demasiado en responder. Intenta otra vez o usa una calidad menor.";
+  if (low.includes("timeout") || low.includes("econnaborted")) {
+    return "La API tardó demasiado. Intenta otra vez o usa calidad 240p.";
   }
-
-  if (
-    normalized.includes("socket hang up") ||
-    normalized.includes("econnreset") ||
-    normalized.includes("service unavailable") ||
-    normalized.includes("temporarily unavailable")
-  ) {
-    return "El proveedor de video esta temporalmente inestable. Reintenta en un momento.";
+  if (low.includes("403")) return "El enlace expiró o fue bloqueado. Intenta nuevamente.";
+  if (low.includes("404")) return "No encontré el video o el enlace ya no está disponible.";
+  if (low.includes("socket hang up") || low.includes("econnreset")) {
+    return "El proveedor de video está inestable. Reintenta en un momento.";
   }
-
-  if (normalized.includes("403")) {
-    return "El enlace de video expiró o fue bloqueado. Intenta otra vez.";
-  }
-
-  if (normalized.includes("404")) {
-    return "No se encontró el video o el enlace ya no está disponible.";
-  }
-
-  return text;
+  return text || fallback;
 }
 
-function uniqueQualities(preferred) {
-  const list = [normalizeQuality(preferred), ...FALLBACK_QUALITIES];
-  return [...new Set(list)].filter(Boolean);
-}
-
-async function reactSafe(sock, msg, emoji = "") {
+async function react(sock, msg, emoji) {
   try {
-    if (!sock || !msg?.key || !emoji) return;
-
+    if (!emoji || !sock || !msg?.key) return;
     const jid = msg.key.remoteJid || msg.chat || msg.from;
-    if (!jid) return;
-
-    await sock.sendMessage(jid, {
-      react: {
-        text: emoji,
-        key: msg.key,
-      },
-    });
+    if (jid) await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
   } catch {}
 }
 
-async function getBuffer(url) {
-  const target = cleanText(url);
-  if (!target) return null;
+async function ensureTmp() {
+  await fsp.mkdir(TMP_DIR, { recursive: true });
+}
 
+async function deleteSafe(file) {
   try {
-    const response = await axios.get(target, {
-      responseType: "arraybuffer",
-      timeout: THUMB_TIMEOUT_MS,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      },
-      httpAgent: HTTP_AGENT,
-      httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400 || !response.data) return null;
-
-    const buffer = Buffer.from(response.data);
-    return buffer.length ? buffer : null;
-  } catch {
-    return null;
-  }
+    if (file) await fsp.unlink(file);
+  } catch {}
 }
 
-async function deleteFileSafe(filePath) {
-  const target = String(filePath || "").trim();
-  if (!target) return true;
-
+async function cleanupOldFiles() {
   try {
-    await fsp.unlink(target);
-    return true;
-  } catch (e) {
-    if (String(e?.code || "").toUpperCase() === "ENOENT") return true;
-    return false;
-  }
+    await ensureTmp();
+    const now = Date.now();
+    const files = await fsp.readdir(TMP_DIR, { withFileTypes: true });
+    for (const file of files) {
+      if (!file.isFile()) continue;
+      const full = path.join(TMP_DIR, file.name);
+      const stat = await fsp.stat(full).catch(() => null);
+      if (stat?.mtimeMs && now - stat.mtimeMs > sleepCleanupMs) await deleteSafe(full);
+    }
+  } catch {}
 }
 
-async function cleanupOldFiles(maxAgeMs = TMP_FILE_MAX_AGE_MS) {
-  await ensureTmpDir();
-
-  const now = Date.now();
-  const entries = await fsp.readdir(TMP_DIR, { withFileTypes: true }).catch(() => []);
-
-  for (const entry of entries) {
-    if (!entry?.isFile?.()) continue;
-
-    const fullPath = path.join(TMP_DIR, entry.name);
-    const stat = await fsp.stat(fullPath).catch(() => null);
-
-    if (!stat?.mtimeMs) continue;
-    if (now - stat.mtimeMs < maxAgeMs) continue;
-
-    await deleteFileSafe(fullPath);
-  }
-}
-
-function extractTextFromMessage(message) {
+function textFromMessage(message) {
   return (
     message?.text ||
     message?.caption ||
@@ -263,246 +161,160 @@ function extractTextFromMessage(message) {
     message?.message?.documentMessage?.caption ||
     message?.conversation ||
     message?.extendedTextMessage?.text ||
-    message?.imageMessage?.caption ||
-    message?.videoMessage?.caption ||
-    message?.documentMessage?.caption ||
     ""
   );
 }
 
-function getQuotedMessage(ctx, msg) {
-  return (
-    ctx?.quoted ||
-    msg?.quoted ||
-    msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage ||
-    null
-  );
-}
-
-function resolveRawInput(ctx) {
-  const msg = ctx.m || ctx.msg || null;
+function rawInput(ctx) {
+  const msg = ctx.m || ctx.msg || {};
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
-  const quotedText = extractTextFromMessage(getQuotedMessage(ctx, msg));
-
-  return cleanText(argsText || quotedText || "");
+  const quoted = ctx.quoted || msg.quoted || msg?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+  return clean(argsText || textFromMessage(quoted));
 }
 
-function extractYouTubeUrl(text) {
-  const match = String(text || "").match(
-    /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i
-  );
-
-  return match ? match[0].trim() : "";
+function ytUrl(text = "") {
+  return clean(String(text).match(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i)?.[0] || "");
 }
 
-function extractYouTubeVideoId(urlValue = "") {
-  const urlText = String(urlValue || "").trim();
-  if (!urlText) return "";
-
+function ytId(url = "") {
   try {
-    const parsed = new URL(urlText);
-    const host = String(parsed.hostname || "").replace(/^www\./i, "").toLowerCase();
-
-    if (host === "youtu.be") {
-      return String(parsed.pathname || "")
-        .replace(/^\/+/, "")
-        .split("/")[0]
-        .trim();
-    }
-
-    if (host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com")) {
-      const vParam = cleanText(parsed.searchParams.get("v"));
-      if (vParam) return vParam;
-
-      const parts = String(parsed.pathname || "")
-        .split("/")
-        .map((item) => item.trim())
-        .filter(Boolean);
-
-      if (parts.length >= 2 && ["shorts", "embed", "live", "v"].includes(parts[0].toLowerCase())) {
-        return cleanText(parts[1]);
-      }
-    }
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") return clean(parsed.pathname.replace(/^\/+/, "").split("/")[0]);
+    const v = clean(parsed.searchParams.get("v"));
+    if (v) return v;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (["shorts", "embed", "live", "v"].includes(parts[0])) return clean(parts[1]);
   } catch {}
-
-  const fallbackMatch = urlText.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:shorts|embed|live)\/|[?&]v=)([A-Za-z0-9_-]{6,})/i
-  );
-
-  return cleanText(fallbackMatch?.[1] || "");
+  return clean(String(url).match(/(?:youtu\.be\/|[?&]v=|youtube\.com\/(?:shorts|embed|live)\/)([A-Za-z0-9_-]{6,})/i)?.[1] || "");
 }
 
-function extractQualityAndQuery(input) {
-  const tokens = cleanText(input).split(/\s+/).filter(Boolean);
-
-  let quality = DEFAULT_QUALITY;
+function parseInput(input) {
+  const tokens = clean(input).split(/\s+/).filter(Boolean);
+  let q = DEFAULT_QUALITY;
   let fast = true;
-  const remaining = [];
+  const rest = [];
 
   for (const token of tokens) {
     const lower = token.toLowerCase();
-
-    if (QUALITY_PATTERN.test(token) && quality === DEFAULT_QUALITY) {
-      const normalized = normalizeQuality(token);
-      quality = normalized || DEFAULT_QUALITY;
+    if (QUALITY_RE.test(token) && q === DEFAULT_QUALITY) {
+      q = quality(token);
       continue;
     }
-
-    if (lower === "fast" || lower === "-fast" || lower === "--fast") {
+    if (["fast", "-fast", "--fast"].includes(lower)) {
       fast = true;
       continue;
     }
-
-    if (lower === "nofast" || lower === "-nofast" || lower === "--nofast") {
+    if (["nofast", "-nofast", "--nofast"].includes(lower)) {
       fast = false;
       continue;
     }
-
-    remaining.push(token);
+    rest.push(token);
   }
 
-  return {
-    quality: quality || DEFAULT_QUALITY,
-    query: remaining.join(" ").trim(),
-    fast,
-  };
+  return { query: rest.join(" ").trim(), quality: q, fast };
 }
 
-async function resolveInputToUrl(input) {
-  const directUrl = extractYouTubeUrl(input);
-
-  if (directUrl) {
-    return {
-      url: directUrl,
-      title: "YouTube Video",
-      duration: "",
-      author: "",
-      videoId: extractYouTubeVideoId(directUrl),
-      thumbnail: "",
-      searched: false,
-    };
+async function resolveVideo(input) {
+  const url = ytUrl(input);
+  if (url) {
+    return { url, title: "YouTube Video", duration: "", author: "", thumbnail: "", videoId: ytId(url) };
   }
 
-  const query = cleanText(input);
+  const query = clean(input);
   if (!query) return null;
 
   const results = await yts(query);
-  const video = Array.isArray(results?.videos) ? results.videos.find((item) => item?.url) : null;
-
+  const video = results?.videos?.find((v) => v?.url);
   if (!video?.url) throw new Error("No encontré resultados en YouTube.");
 
   return {
     url: video.url,
-    title: cleanText(video.title || "YouTube Video"),
-    duration: cleanText(video.timestamp || ""),
-    author: cleanText(video.author?.name || video.author || ""),
-    thumbnail: cleanText(video.thumbnail || ""),
-    videoId: cleanText(video.videoId || ""),
-    searched: true,
+    title: clean(video.title || "YouTube Video"),
+    duration: clean(video.timestamp || ""),
+    author: clean(video.author?.name || video.author || ""),
+    thumbnail: clean(video.thumbnail || ""),
+    videoId: clean(video.videoId || ""),
   };
 }
 
-async function getYtmp4Data(videoUrl, quality, fast = true, signal = null) {
+async function thumb(url) {
+  if (!url) return null;
   try {
-    const response = await axios.get(API_YTMP4_URL, {
-      timeout: API_REQUEST_TIMEOUT_MS,
-      params: {
-        mode: "link",
-        url: videoUrl,
-        quality,
-        fast,
-        ...withDvyerApiKey(),
-      },
-      signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-        Accept: "application/json",
-      },
+    const res = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: THUMB_TIMEOUT,
+      headers: { "User-Agent": UA },
       httpAgent: HTTP_AGENT,
       httpsAgent: HTTPS_AGENT,
-      maxRedirects: 5,
       validateStatus: () => true,
     });
-
-    if (response.status >= 400 || !response.data?.ok) {
-      throw new Error(
-        response.data?.detail ||
-          response.data?.error?.message ||
-          response.data?.message ||
-          `HTTP ${response.status}`
-      );
-    }
-
-    const data = response.data;
-
-    const remoteUrl =
-      data.direct_url ||
-      data.provider_direct_url ||
-      data.stream_url_full ||
-      data.download_url_full ||
-      data.url;
-
-    if (!remoteUrl) {
-      throw new Error("La API no devolvió una URL de descarga válida.");
-    }
-
-    return {
-      remoteUrl,
-      title: cleanText(data.title || "YouTube Video"),
-      fileName: normalizeMp4Name(data.filename || data.title || "youtube-video.mp4"),
-      quality: cleanText(data.quality || data.quality_requested || quality || DEFAULT_QUALITY),
-      thumbnail: cleanText(data.thumbnail || ""),
-      cached: Boolean(data.cached),
-      availableQualities: Array.isArray(data.available_qualities) ? data.available_qualities : [],
-      expiresIn: Number(data.expires_in_hint_seconds || 0),
-      request: data.request || {},
-    };
-  } catch (error) {
-    const text = String(error?.message || error || "").toLowerCase();
-
-    if (error?.code === "ECONNABORTED" || text.includes("timeout")) {
-      throw new Error(
-        "La API tardó demasiado en responder. Intenta otra vez o usa una calidad menor como 240p."
-      );
-    }
-
-    throw error;
+    if (res.status >= 400 || !res.data) return null;
+    const buffer = Buffer.from(res.data);
+    return buffer.length ? buffer : null;
+  } catch {
+    return null;
   }
 }
 
-async function getYtmp4DataWithFallback(videoUrl, preferredQuality, fast = true, signal = null) {
+async function apiRequest(videoUrl, q, fast, signal) {
+  const res = await axios.get(API_YTMP4_URL, {
+    timeout: API_TIMEOUT,
+    params: { mode: "link", url: videoUrl, quality: q, fast, ...withDvyerApiKey() },
+    signal,
+    headers: { "User-Agent": UA, Accept: "application/json" },
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: 5,
+    validateStatus: () => true,
+  });
+
+  if (res.status >= 400 || !res.data?.ok) {
+    throw new Error(res.data?.detail || res.data?.error?.message || res.data?.message || `HTTP ${res.status}`);
+  }
+
+  const data = res.data;
+  const remoteUrl =
+    data.direct_url ||
+    data.provider_direct_url ||
+    data.stream_url_full ||
+    data.download_url_full ||
+    data.url;
+
+  if (!remoteUrl) throw new Error("La API no devolvió URL de descarga.");
+
+  return {
+    remoteUrl,
+    title: clean(data.title || "YouTube Video"),
+    fileName: safeName(data.filename || data.title || "youtube-video.mp4"),
+    quality: clean(data.quality || data.quality_requested || q || DEFAULT_QUALITY),
+    thumbnail: clean(data.thumbnail || ""),
+  };
+}
+
+async function apiWithFallback(videoUrl, preferred, fast, signal) {
   let lastError = null;
-
-  for (const quality of uniqueQualities(preferredQuality)) {
+  for (const q of uniqQualities(preferred)) {
     throwIfAborted(signal);
-
     try {
-      const data = await getYtmp4Data(videoUrl, quality, fast, signal);
-      return { ...data, qualityUsed: quality };
-    } catch (error) {
-      lastError = error;
+      return await apiRequest(videoUrl, q, fast, signal);
+    } catch (e) {
+      lastError = e;
     }
   }
-
-  throw lastError || new Error("No se pudo obtener el video.");
+  throw lastError || new Error("No se pudo obtener el MP4.");
 }
 
-async function downloadRemoteMp4(remoteUrl, preferredName, signal = null) {
-  await ensureTmpDir();
+async function downloadFile(url, name, signal) {
+  await ensureTmp();
   throwIfAborted(signal);
 
-  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp4.mp4`);
-
-  const response = await axios.get(remoteUrl, {
+  const tempPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}.mp4`);
+  const res = await axios.get(url, {
     responseType: "stream",
-    timeout: REMOTE_DOWNLOAD_TIMEOUT_MS,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36",
-      Accept: "*/*",
-    },
+    timeout: FILE_TIMEOUT,
     signal,
+    headers: { "User-Agent": UA, Accept: "*/*" },
     httpAgent: HTTP_AGENT,
     httpsAgent: HTTPS_AGENT,
     maxRedirects: 5,
@@ -511,129 +323,126 @@ async function downloadRemoteMp4(remoteUrl, preferredName, signal = null) {
     validateStatus: () => true,
   });
 
-  if (response.status >= 400) {
-    throw new Error(`No se pudo descargar el MP4 remoto. HTTP ${response.status}`);
-  }
+  if (res.status >= 400) throw new Error(`No pude descargar el MP4 remoto. HTTP ${res.status}`);
 
-  const contentLength = Number(response.headers?.["content-length"] || 0);
+  const total = Number(res.headers?.["content-length"] || 0);
+  if (total > MAX_VIDEO_BYTES) throw new Error(`El video pesa ${bytes(total)} y supera el límite.`);
 
-  if (contentLength > MAX_VIDEO_BYTES) {
-    throw new Error(`El video pesa ${humanBytes(contentLength)} y supera el limite del bot.`);
-  }
-
-  const writeStream = fs.createWriteStream(outputPath);
-
-  const unbindAbort = bindAbort(signal, () => {
-    try {
-      response.data?.destroy?.(new Error("Descarga cancelada."));
-    } catch {}
-
-    try {
-      writeStream.destroy?.(new Error("Descarga cancelada."));
-    } catch {}
+  const writer = fs.createWriteStream(tempPath);
+  const unbind = bindAbort(signal, () => {
+    try { res.data?.destroy?.(new Error("Descarga cancelada.")); } catch {}
+    try { writer.destroy?.(new Error("Descarga cancelada.")); } catch {}
   });
 
   let downloaded = 0;
-
-  response.data.on("data", (chunk) => {
+  res.data.on("data", (chunk) => {
     downloaded += chunk.length;
-
-    if (downloaded > MAX_VIDEO_BYTES) {
-      response.data.destroy(new Error("El video es demasiado grande para enviarlo por WhatsApp."));
-    }
+    if (downloaded > MAX_VIDEO_BYTES) res.data.destroy(new Error("Video demasiado grande."));
   });
 
   try {
-    await pipeline(response.data, writeStream);
-  } catch (error) {
-    unbindAbort();
-    await deleteFileSafe(outputPath);
-    throw error;
+    await pipeline(res.data, writer);
+  } catch (e) {
+    unbind();
+    await deleteSafe(tempPath);
+    throw e;
   }
 
-  unbindAbort();
+  unbind();
 
-  const stat = await fsp.stat(outputPath).catch(() => null);
-
+  const stat = await fsp.stat(tempPath).catch(() => null);
   if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
-    await deleteFileSafe(outputPath);
+    await deleteSafe(tempPath);
     throw new Error("El archivo MP4 descargado es inválido.");
   }
 
-  return {
-    tempPath: outputPath,
-    fileName: normalizeMp4Name(preferredName || "youtube-video.mp4"),
-    size: stat.size,
-    contentType: "video/mp4",
-  };
+  return { tempPath, fileName: safeName(name), size: stat.size };
 }
 
-function buildShortCaption(data = {}) {
+function usage(prefix = ".") {
   return [
-    "🎬 *DVYER MP4*",
-    `📌 ${clipText(data.title || data.fileName || "YouTube Video", 70)}`,
-    `⏱️ ${formatDuration(data.duration)}`,
-    `📺 ${data.quality || DEFAULT_QUALITY}`,
-    `🌐 ${DVYER_API_BASE_URL}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    "╭━━━〔 🎬 *FSOCIETY MP4* 〕━━━⬣",
+    "┃",
+    "┃ ✘ Falta el link o nombre del video.",
+    "┃",
+    "┣━━━〔 ✦ USO 〕━━━⬣",
+    `┃ ➤ ${prefix}ytmp4 ozuna odisea`,
+    `┃ ➤ ${prefix}ytmp4 240p bad bunny`,
+    `┃ ➤ ${prefix}ytmp4 https://youtu.be/xxxx`,
+    "┃",
+    "┃ Calidad: *360p → 240p → 144p*",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
 }
 
-async function sendRemoteMp4(sock, from, quoted, data) {
-  const thumbBuffer = await getBuffer(data.thumbnail);
-  const caption = buildShortCaption(data);
-
-  try {
-    await sock.sendMessage(
-      from,
-        {
-          video: { url: data.remoteUrl },
-          mimetype: "video/mp4",
-          fileName: data.fileName,
-          caption,
-          gifPlayback: false,
-          jpegThumbnail: thumbBuffer || undefined,
-        },
-        quoted
-      );
-
-    return "video";
-  } catch {}
-
-  await sock.sendMessage(
-    from,
-    {
-      document: { url: data.remoteUrl },
-      mimetype: "video/mp4",
-      fileName: data.fileName,
-      caption,
-    },
-    quoted
-  );
-
-  return "document";
+function limitMessage(retryMs) {
+  return [
+    "╭━━━〔 ⚠️ *LÍMITE MP4* 〕━━━⬣",
+    "┃",
+    "┃ Estás usando mucho este comando.",
+    `┃ Reintenta en *${formatRetrySeconds(retryMs)}s*.`,
+    "┃",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
 }
 
-async function sendLocalMp4(sock, from, quoted, data) {
-  const thumbBuffer = await getBuffer(data.thumbnail);
-  const caption = buildShortCaption(data);
+function loading(data = {}) {
+  return [
+    "╭━━━〔 🎬 *FSOCIETY MP4* 〕━━━⬣",
+    "┃",
+    `┃ 🎞️ *${clip(data.title || "YouTube Video", 65)}*`,
+    data.duration ? `┃ ⏱️ Duración: *${data.duration}*` : null,
+    data.author ? `┃ 👤 Canal: *${clip(data.author, 45)}*` : null,
+    `┃ 📺 Calidad: *${data.quality || DEFAULT_QUALITY}*`,
+    "┃",
+    "┃ ✦ Preparando video...",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].filter(Boolean).join("\n");
+}
 
-  if (Number(data?.size || 0) <= VIDEO_AS_DOCUMENT_THRESHOLD) {
+function caption(data = {}) {
+  return [
+    "╭━━━〔 🎬 *FSOCIETY MP4* 〕━━━⬣",
+    "┃",
+    `┃ 🎞️ *${clip(data.title || data.fileName || "YouTube Video", 75)}*`,
+    data.duration ? `┃ ⏱️ Duración: *${data.duration}*` : null,
+    data.author ? `┃ 👤 Canal: *${clip(data.author, 45)}*` : null,
+    `┃ 📺 Calidad: *${data.quality || DEFAULT_QUALITY}*`,
+    data.size ? `┃ 💾 Peso: *${bytes(data.size)}*` : null,
+    "┃",
+    `┃ ⚡ Powered By *${API_BASE}*`,
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].filter(Boolean).join("\n");
+}
+
+function errorMessage(error) {
+  return [
+    "╭━━━〔 ❌ *YTMP4 ERROR* 〕━━━⬣",
+    "┃",
+    `┃ ${sanitizeError(error)}`,
+    "┃",
+    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+async function sendMp4(sock, from, quoted, data) {
+  const jpegThumbnail = await thumb(data.thumbnail);
+  const cap = caption(data);
+
+  if (!data.size || Number(data.size) <= AS_DOCUMENT_BYTES) {
     try {
       await sock.sendMessage(
         from,
         {
-          video: { url: data.tempPath },
+          video: { url: data.tempPath || data.remoteUrl },
           mimetype: "video/mp4",
           fileName: data.fileName,
-          caption,
+          caption: cap,
           gifPlayback: false,
-          jpegThumbnail: thumbBuffer || undefined,
+          jpegThumbnail: jpegThumbnail || undefined,
         },
         quoted
       );
-
       return "video";
     } catch {}
   }
@@ -641,14 +450,13 @@ async function sendLocalMp4(sock, from, quoted, data) {
   await sock.sendMessage(
     from,
     {
-      document: { url: data.tempPath },
+      document: { url: data.tempPath || data.remoteUrl },
       mimetype: "video/mp4",
       fileName: data.fileName,
-      caption,
+      caption: cap,
     },
     quoted
   );
-
   return "document";
 }
 
@@ -661,166 +469,107 @@ export default {
     const { sock, from } = ctx;
     const msg = ctx.m || ctx.msg || null;
     const quoted = msg?.key ? { quoted: msg } : undefined;
-    const abortSignal = ctx.abortSignal || null;
+    const signal = ctx.abortSignal || null;
+    const prefix = ctx.prefix || global.prefix || ".";
 
     let tempPath = null;
-    let downloadCharge = null;
-    let sentSuccessfully = false;
+    let charge = null;
+    let sent = false;
 
     try {
-      await reactSafe(sock, msg, "🔎");
-
+      await react(sock, msg, "⏳");
       cleanupOldFiles().catch(() => {});
-      throwIfAborted(abortSignal);
+      throwIfAborted(signal);
 
-      const rawInput = resolveRawInput(ctx);
-      const { quality, query, fast } = extractQualityAndQuery(rawInput);
+      const input = rawInput(ctx);
+      const parsed = parseInput(input);
+
+      if (!clean(parsed.query || input)) {
+        return sock.sendMessage(from, { text: usage(prefix), ...global.channelInfo }, quoted);
+      }
 
       const identity = buildRateIdentity(
-        {
-          senderPhone: msg?.senderPhone || ctx?.senderPhone,
-          sender: msg?.sender || ctx?.sender,
-          from,
-        },
+        { senderPhone: msg?.senderPhone || ctx.senderPhone, sender: msg?.sender || ctx.sender, from },
         from
       );
 
-      const limitState = checkRateLimit({
+      const limit = checkRateLimit({
         scope: `ytmp4:${identity}`,
         limit: RATE_LIMIT_MAX,
         windowMs: RATE_LIMIT_WINDOW_MS,
       });
 
-      if (!limitState.ok) {
-        return await sock.sendMessage(
-          from,
-          {
-            text: `⚠️ Mucho uso de ytmp4. Reintenta en ${formatRetrySeconds(limitState.retryAfterMs)}s.`,
-            ...global.channelInfo,
-          },
-          quoted
-        );
+      if (!limit.ok) {
+        return sock.sendMessage(from, { text: limitMessage(limit.retryAfterMs), ...global.channelInfo }, quoted);
       }
 
-      const resolved = await resolveInputToUrl(query || rawInput);
-      throwIfAborted(abortSignal);
+      const video = await resolveVideo(parsed.query || input);
+      if (!video?.url) return sock.sendMessage(from, { text: usage(prefix), ...global.channelInfo }, quoted);
 
-      if (!resolved?.url) {
-        return await sock.sendMessage(
-          from,
-          {
-            text: [
-              "╭━━━〔 🎬 *DVYER PLAYER* 〕━━━⬣",
-              "┃",
-              "┃ ✦ *USO DEL COMANDO*",
-              "┃",
-              "┃ 📌 *.ytmp4 <link o nombre>*",
-              "┃ 📌 *.ytmp4 240p <link o nombre>*",
-              "┃ 📌 *.ytmp4 fast <link o nombre>*",
-              "┃ 📌 *.ytmp4 nofast <link o nombre>*",
-              "┃",
-              "┃ 🎚️ *Calidad automática:* 360p → 240p → 144p",
-              "╰━━━━━━━━━━━━━━━━━━━━⬣",
-            ].join("\n"),
-            ...global.channelInfo,
-          },
-          quoted
-        );
-      }
+      charge = await chargeDownloadRequest(ctx, { feature: "ytmp4", videoUrl: video.url });
+      if (!charge?.ok) return;
 
-      downloadCharge = await chargeDownloadRequest(ctx, {
-        feature: "ytmp4",
-        videoUrl: resolved.url,
-      });
-
-      if (!downloadCharge?.ok) return;
+      await sock.sendMessage(
+        from,
+        { text: loading({ ...video, quality: parsed.quality }), ...global.channelInfo },
+        quoted
+      );
 
       const apiData = await runWithProviderCircuit(
         PROVIDER_NAME,
-        () => getYtmp4DataWithFallback(resolved.url, quality || DEFAULT_QUALITY, fast, abortSignal),
+        () => apiWithFallback(video.url, parsed.quality, parsed.fast, signal),
         {
           failureThreshold: 4,
           cooldownMs: 90_000,
-          shouldCountFailure: (error) => {
-            const text = String(error?.message || error || "").toLowerCase();
-
-            if (!text) return false;
-            if (text.includes("no encontré resultados")) return false;
-            if (text.includes("no encontre resultados")) return false;
-            if (text.includes("uso:")) return false;
-            if (text.includes("supera el limite")) return false;
-            if (text.includes("demasiado grande")) return false;
-
-            return true;
+          shouldCountFailure: (e) => {
+            const t = String(e?.message || e || "").toLowerCase();
+            return !t.includes("no encontré resultados") && !t.includes("supera el límite");
           },
         }
       );
 
+      const meta = {
+        ...apiData,
+        title: apiData.title || video.title,
+        duration: video.duration,
+        author: video.author,
+        thumbnail: apiData.thumbnail || video.thumbnail,
+      };
+
       try {
-        throwIfAborted(abortSignal);
-
-        await sendRemoteMp4(sock, from, quoted, {
-          ...apiData,
-          title: apiData.title || resolved.title,
-          duration: resolved.duration,
-          quality: apiData.quality || apiData.qualityUsed || DEFAULT_QUALITY,
-          thumbnail: apiData.thumbnail || resolved.thumbnail,
-        });
-
-        sentSuccessfully = true;
-        await reactSafe(sock, msg, "✅");
+        throwIfAborted(signal);
+        await sendMp4(sock, from, quoted, meta);
+        sent = true;
+        await react(sock, msg, "✅");
         return;
       } catch {}
 
-      throwIfAborted(abortSignal);
+      const file = await downloadFile(apiData.remoteUrl, apiData.fileName, signal);
+      tempPath = file.tempPath;
 
-      const downloaded = await downloadRemoteMp4(apiData.remoteUrl, apiData.fileName, abortSignal);
-      tempPath = downloaded.tempPath;
-
-      throwIfAborted(abortSignal);
-
-      await sendLocalMp4(sock, from, quoted, {
-        ...downloaded,
-        title: apiData.title || resolved.title,
-        duration: resolved.duration,
-        quality: apiData.quality || apiData.qualityUsed || DEFAULT_QUALITY,
-        thumbnail: apiData.thumbnail || resolved.thumbnail,
-      });
-
-      sentSuccessfully = true;
-      await reactSafe(sock, msg, "✅");
+      await sendMp4(sock, from, quoted, { ...meta, ...file });
+      sent = true;
+      await react(sock, msg, "✅");
     } catch (error) {
       console.error("YTMP4 ERROR:", error?.message || error);
 
-      if (!sentSuccessfully) {
-        refundDownloadCharge(ctx, downloadCharge, {
+      if (!sent) {
+        refundDownloadCharge(ctx, charge, {
           feature: "ytmp4",
           error: String(error?.message || error || "unknown_error"),
         });
-      }
 
-      if (!sentSuccessfully) {
-        const errorText = String(error?.message || error || "").toLowerCase();
-
-        const shownError = abortSignal?.aborted
-          ? "La descarga demoró demasiado y fue cancelada. Intenta con otro video corto o usa otra calidad."
-          : error?.code === "ECONNABORTED" || errorText.includes("timeout")
-          ? "La API tardó demasiado en responder. Intenta otra vez o usa una calidad menor como 240p."
+        const shown = signal?.aborted
+          ? "La descarga demoró demasiado y fue cancelada. Intenta con un video más corto."
           : error?.code === "PROVIDER_CIRCUIT_OPEN"
-          ? String(error?.message || "Servicio temporalmente no autorizado para video.")
-          : cleanVideoErrorText(error, "No se pudo preparar el MP4.");
+            ? String(error?.message || "Servicio temporalmente inestable.")
+            : error;
 
-        await sock.sendMessage(
-          from,
-          {
-            text: `❌ ${shownError}`,
-            ...global.channelInfo,
-          },
-          quoted
-        );
+        await sock.sendMessage(from, { text: errorMessage(shown), ...global.channelInfo }, quoted);
+        await react(sock, msg, "❌");
       }
     } finally {
-      if (tempPath) await deleteFileSafe(tempPath);
+      if (tempPath) await deleteSafe(tempPath);
     }
   },
 };
