@@ -47,6 +47,25 @@ const COMMAND_CONFIG = {
     tooLargeLabel: "app Android",
   },
 
+  apkmod: {
+    key: "apkmod",
+    name: "APK MOD",
+    primaryCommand: "apkmod",
+    aliases: ["apkmod", "modapk", "apkmoddl"],
+    downloadPath: "/apkmod",
+    defaultQuery: "spotify",
+    defaultExtension: "apk",
+    footer: "Descargas Android MOD",
+    subtitle: "Descarga app MOD",
+    sectionTitle: "Resultados APK MOD",
+    pickerTitle: "📦 Elegir MOD",
+    rowLabel: "📦 APK MOD",
+    usage: "Uso: .apkmod <nombre o URL directa de app MOD>\nEjemplo: .apkmod spotify\nOpcional: .apkmod --pick=2 spotify",
+    preparing: "Preparando app MOD...",
+    selectionText: "Selecciona la app MOD que quieres descargar.",
+    tooLargeLabel: "APK MOD",
+  },
+
   windows: {
     key: "windows",
     name: "Windows",
@@ -424,6 +443,10 @@ async function downloadThumbnailBuffer(url) {
 }
 
 async function requestSearchResults(input, config) {
+  if (!config.searchPath) {
+    throw new Error(`La búsqueda previa no está disponible para ${config.name}.`);
+  }
+
   const data = await apiGet(
     buildApiUrl(config.searchPath),
     {
@@ -484,7 +507,7 @@ async function requestDownloadMeta(input, config, options = {}) {
       Number(data?.size_bytes || data?.content_length || data?.filesize_bytes || 0) ||
       null,
     downloadUrl,
-    packageName: String(data?.package_name || "").trim() || null,
+    packageName: String(data?.package_name || data?.selected?.slug || "").trim() || null,
   };
 }
 
@@ -855,7 +878,7 @@ export function buildDvyerAppCommand(kind) {
           );
         }
 
-        if (!parsedInput.explicitPick && !isHttpUrl(userInput)) {
+        if (config.searchPath && !parsedInput.explicitPick && !isHttpUrl(userInput)) {
           const results = await requestSearchResults(userInput, config);
 
           await sendSearchPicker(
