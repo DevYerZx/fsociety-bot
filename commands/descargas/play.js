@@ -92,17 +92,26 @@ async function react(sock, msg, emoji) {
 
 function buildUsageMessage(prefix) {
   return [
-    "╭━━━〔 ✨ *FSOCIETY PLAY* ✨ 〕━━━⬣",
-    "┃",
-    "┃ 🎵 *Búsqueda instantánea de YouTube*",
-    "┃",
-    "┃ Usa:",
-    `┃ • ${prefix}play ozuna odisea`,
-    `┃ • ${prefix}play enlace o nombre`,
-    "┃",
-    "┃ Recibirás portada + botones MP3/MP4",
-    "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣",
-  ].join("\n");
+  "╭━━━〔 ✦ 🎧 *ＦＳＯＣＩＥＴＹ ＰＬＡＹ* 🎧 ✦ 〕━━━⬣",
+  "┃",
+  "┃ ✨ *Búsqueda instantánea de YouTube*",
+  "┃ ⚡ Música • Videos • Descargas rápidas",
+  "┃",
+  "┣━━━〔 🔎 USO DEL COMANDO 🔎 〕━━━⬣",
+  `┃ ➤ ${prefix}play ozuna odisea`,
+  `┃ ➤ ${prefix}play bad bunny`,
+  `┃ ➤ ${prefix}play enlace o nombre`,
+  "┃",
+  "┣━━━〔 📥 OPCIONES DISPONIBLES 📥 〕━━━⬣",
+  "┃ 🎧 Descargar en *MP3*",
+  "┃ 🎬 Descargar en *MP4*",
+  "┃ 🖼️ Portada automática incluida",
+  "┃ ⚡ Resultados rápidos y directos",
+  "┃",
+  "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
+  "┃ 🌙 Powered By *DVYER API*",
+  "╰━━━〔 ⚡ ✦ ⚡ ✦ ⚡ 〕━━━⬣"
+].join("\n");
 }
 
 function buildResultCaption(query, video, currentIndex, total) {
