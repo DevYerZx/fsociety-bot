@@ -4869,6 +4869,7 @@ function createBaseContext(botState, sock, message, extra = {}) {
     botId: botState.config.id,
     botLabel: botState.config.label,
     botName: botState.config.displayName,
+    getContactName: (...ids) => getStoreContactName(botState, ...ids),
     ...extra,
   };
 }

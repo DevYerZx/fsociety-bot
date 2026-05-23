@@ -1,5 +1,6 @@
-const MAX_VISIBLE_MEMBERS = 180;
-const MAX_TEXT_CHARS = 3500;
+const MAX_VISIBLE_MEMBERS = 220;
+const MAX_TEXT_CHARS = 3600;
+const MENTIONS_PER_MESSAGE = 80;
 
 function nowLabel() {
   try {
@@ -47,6 +48,19 @@ function collectParticipantValues(participant = {}) {
   ]);
 }
 
+function displayNameFromParticipant(participant = {}) {
+  return cleanText(
+    participant?.notify ||
+      participant?.name ||
+      participant?.pushName ||
+      participant?.verifiedName ||
+      participant?.verifiedBizName ||
+      participant?.subject ||
+      participant?.displayName ||
+      ""
+  );
+}
+
 function normalizeJid(value = "") {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -61,26 +75,39 @@ function normalizeJid(value = "") {
 
 function resolveMentionJid(metadata = {}, participant = {}) {
   const values = collectParticipantValues(participant);
-  const preferLid = cleanText(metadata?.addressingMode).toLowerCase() === "lid";
   const lids = values.filter((item) => /@lid$/i.test(item));
   const phones = values.filter((item) => /@s\.whatsapp\.net$/i.test(item));
   const anyJids = values.filter((item) => item.includes("@"));
-  const digits = values.map(digitsFrom).find(Boolean);
+  const phoneDigits = values
+    .filter((item) => !/@lid$/i.test(item))
+    .map(digitsFrom)
+    .find(Boolean);
 
-  if (preferLid) {
-    return lids[0] || phones[0] || anyJids[0] || (digits ? `${digits}@s.whatsapp.net` : "");
-  }
-
-  return phones[0] || lids[0] || anyJids[0] || normalizeJid(digits);
+  // Para menciones en texto, WhatsApp suele resolver mejor el JID telefonico.
+  return phones[0] || (phoneDigits ? `${phoneDigits}@s.whatsapp.net` : "") || lids[0] || anyJids[0] || "";
 }
 
-function displayMention(jid = "", participant = {}) {
+function mentionText(jid = "", participant = {}) {
   const digits = digitsFrom(jid) || collectParticipantValues(participant).map(digitsFrom).find(Boolean);
   const user = jidUser(jid) || collectParticipantValues(participant).map(jidUser).find(Boolean);
 
   if (digits) return `@${digits}`;
   if (user) return `@${user}`;
   return "@usuario";
+}
+
+function displayLabel(jid = "", participant = {}, getContactName = null) {
+  const contactName = typeof getContactName === "function"
+    ? cleanText(getContactName(jid, ...collectParticipantValues(participant)))
+    : "";
+  const name = contactName || displayNameFromParticipant(participant);
+  const mention = mentionText(jid, participant);
+
+  if (!name || name === mention || name.startsWith("@")) {
+    return mention;
+  }
+
+  return `${name} (${mention})`;
 }
 
 function participantRank(participant = {}) {
@@ -97,7 +124,7 @@ function roleIcon(participant = {}) {
   return "•";
 }
 
-function normalizeParticipants(metadata = {}) {
+function normalizeParticipants(metadata = {}, getContactName = null) {
   const participants = Array.isArray(metadata?.participants) ? metadata.participants : [];
   const seen = new Set();
 
@@ -111,21 +138,24 @@ function normalizeParticipants(metadata = {}) {
       return {
         participant,
         jid,
-        tag: displayMention(jid, participant),
+        mention: mentionText(jid, participant),
+        label: displayLabel(jid, participant, getContactName),
         rank: participantRank(participant),
       };
     })
     .filter(Boolean)
-    .sort((a, b) => a.rank - b.rank || a.tag.localeCompare(b.tag));
+    .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
 }
 
-function buildMembersBlock(items = []) {
+function buildMembersBlock(items = [], title = "MIEMBROS") {
   const lines = [];
   let used = 0;
 
+  lines.push(`┣━━〔 ${title} 〕`);
+
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
-    const line = `┃ ${String(index + 1).padStart(2, "0")} ${roleIcon(item.participant)} ${item.tag}`;
+    const line = `┃ ${String(index + 1).padStart(2, "0")} ${roleIcon(item.participant)} ${item.label}`;
     const nextSize = used + line.length + 1;
 
     if (index >= MAX_VISIBLE_MEMBERS || nextSize > MAX_TEXT_CHARS) {
@@ -143,20 +173,46 @@ function buildMembersBlock(items = []) {
 function buildMessage(metadata = {}, items = [], notice = "") {
   const groupName = cleanText(metadata?.subject) || "Grupo";
   const bodyNotice = cleanText(notice) || "Convocatoria general del grupo";
-  const admins = items.filter((item) => item.rank < 2).length;
+  const adminItems = items.filter((item) => item.rank < 2);
+  const memberItems = items.filter((item) => item.rank >= 2);
 
   return [
     "╭━━━〔 📢 INVOCACION GENERAL 〕━━━⬣",
     `┃ Grupo: *${groupName}*`,
     `┃ Miembros etiquetados: *${items.length}*`,
-    `┃ Admins: *${admins}*`,
+    `┃ Administradores: *${adminItems.length}*`,
+    `┃ Miembros normales: *${memberItems.length}*`,
     `┃ Fecha: *${nowLabel()}*`,
     "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
     `┃ ${bodyNotice}`,
     "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
     "",
     "╭━━━〔 👥 LLAMADO DEL GRUPO 〕━━━⬣",
-    buildMembersBlock(items) || "┃ No pude resolver miembros para etiquetar.",
+    adminItems.length ? buildMembersBlock(adminItems, "ADMINISTRADORES") : "┣━━〔 ADMINISTRADORES 〕\n┃ Sin administradores detectados",
+    memberItems.length ? buildMembersBlock(memberItems, "MIEMBROS") : "┣━━〔 MIEMBROS 〕\n┃ Sin miembros normales detectados",
+    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+function chunkItems(items = [], size = MENTIONS_PER_MESSAGE) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function buildCompactChunkText(metadata = {}, items = [], chunkIndex = 0, totalChunks = 1, notice = "") {
+  if (chunkIndex === 0) {
+    return buildMessage(metadata, items, notice);
+  }
+
+  return [
+    `╭━━━〔 📢 INVOCACION GENERAL ${chunkIndex + 1}/${totalChunks} 〕━━━⬣`,
+    `┃ Grupo: *${cleanText(metadata?.subject) || "Grupo"}*`,
+    `┃ Continuacion de menciones: *${items.length}*`,
+    "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
+    buildMembersBlock(items, "CONTINUACION"),
     "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
@@ -168,20 +224,25 @@ export default {
   groupOnly: true,
   adminOnly: true,
 
-  run: async ({ sock, msg, from, args = [], groupMetadata }) => {
+  run: async ({ sock, msg, from, args = [], groupMetadata, getContactName }) => {
     const metadata = groupMetadata || (await sock.groupMetadata(from));
-    const items = normalizeParticipants(metadata);
-    const mentions = items.map((item) => item.jid);
-    const text = buildMessage(metadata, items, args.join(" "));
+    const items = normalizeParticipants(metadata, getContactName);
+    const chunks = chunkItems(items);
+    const notice = args.join(" ");
 
-    return sock.sendMessage(
-      from,
-      {
-        text,
-        mentions,
-        ...global.channelInfo,
-      },
-      { quoted: msg }
-    );
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      await sock.sendMessage(
+        from,
+        {
+          text: buildCompactChunkText(metadata, chunk, index, chunks.length, notice),
+          mentions: chunk.map((item) => item.jid),
+          ...global.channelInfo,
+        },
+        index === 0 ? { quoted: msg } : undefined
+      );
+    }
+
+    return null;
   },
 };
