@@ -1,4 +1,3 @@
-const VERSION = "1.3.4";
 const MAX_LISTED_PER_SECTION = 160;
 
 function cleanText(value = "") {
@@ -33,8 +32,24 @@ function isAdmin(participant = {}) {
   return Boolean(participant?.admin);
 }
 
-function adminIcon(participant = {}) {
-  return cleanText(participant?.admin).toLowerCase() === "superadmin" ? "♛" : "◆";
+function isOwner(metadata = {}, participant = {}) {
+  const owner = cleanText(metadata?.owner || metadata?.subjectOwner || metadata?.descOwner).toLowerCase();
+  const id = cleanText(participant?.id).toLowerCase();
+  return Boolean(owner && id && owner === id);
+}
+
+function participantRole(metadata = {}, participant = {}) {
+  if (isOwner(metadata, participant)) return "owner";
+  const admin = cleanText(participant?.admin).toLowerCase();
+  if (admin === "superadmin") return "owner";
+  if (admin) return "admin";
+  return "member";
+}
+
+function roleSymbol(role = "member") {
+  if (role === "owner") return "♛";
+  if (role === "admin") return "✦";
+  return "◈";
 }
 
 function resolveName(participant = {}, getContactName = null) {
@@ -51,35 +66,35 @@ function resolveName(participant = {}, getContactName = null) {
   );
 }
 
-function formatPerson(participant = {}, index = 0, getContactName = null) {
+function formatPerson(participant = {}, index = 0, getContactName = null, metadata = {}) {
   const id = cleanText(participant?.id);
   const mention = mentionToken(id);
   const name = resolveName(participant, getContactName);
   const label = name && name !== mention ? `${name} ${mention}` : mention;
-  const icon = isAdmin(participant) ? adminIcon(participant) : "◇";
+  const icon = roleSymbol(participantRole(metadata, participant));
 
   return `│ ${String(index + 1).padStart(2, "0")} ${icon} ${label}`;
 }
 
-function buildSection(title = "", participants = [], getContactName = null) {
-  const lines = [`╭─ ${title}`];
+function buildSection(title = "", participants = [], getContactName = null, metadata = {}) {
+  const lines = [`╭┈┈⟬ ${title} ⟭┈┈`];
   const visible = participants.slice(0, MAX_LISTED_PER_SECTION);
 
   if (!visible.length) {
-    lines.push("│ Ninguno detectado");
-    lines.push("╰────────────");
+    lines.push("│ ⊘ Ninguno detectado");
+    lines.push("╰┈┈┈┈┈┈┈┈┈┈");
     return lines.join("\n");
   }
 
   visible.forEach((participant, index) => {
-    lines.push(formatPerson(participant, index, getContactName));
+    lines.push(formatPerson(participant, index, getContactName, metadata));
   });
 
   if (participants.length > visible.length) {
-    lines.push(`│ ... y ${participants.length - visible.length} mas`);
+    lines.push(`│ ⋯ y ${participants.length - visible.length} mas`);
   }
 
-  lines.push("╰────────────");
+  lines.push("╰┈┈┈┈┈┈┈┈┈┈");
   return lines.join("\n");
 }
 
@@ -99,28 +114,32 @@ function nowLabel() {
 }
 
 function buildCaption(metadata = {}, participants = [], text = "", getContactName = null) {
-  const admins = participants.filter(isAdmin);
-  const members = participants.filter((participant) => !isAdmin(participant));
+  const owners = participants.filter((participant) => participantRole(metadata, participant) === "owner");
+  const admins = participants.filter((participant) => participantRole(metadata, participant) === "admin");
+  const members = participants.filter((participant) => participantRole(metadata, participant) === "member");
   const extra = cleanText(text);
 
   return [
-    "╔══════════════════════╗",
-    "║     *LLAMADO GENERAL*     ║",
-    "╚══════════════════════╝",
+    "╭━━━〔 ⟁ *LLAMADO DEL GRUPO* ⟁ 〕━━━╮",
+    "┃      𝙏𝘼𝙂 𝘼 𝙏𝙊𝘿𝙊𝙎      ┃",
+    "╰━━━━━━━━━━━━━━━━━━━━━━━━╯",
     "",
-    `▸ Grupo: *${cleanText(metadata?.subject) || "Grupo"}*`,
-    `▸ Etiquetados: *${participants.length}*`,
-    `▸ Admins: *${admins.length}*`,
-    `▸ Miembros: *${members.length}*`,
-    `▸ Hora: *${nowLabel()}*`,
-    extra ? `▸ Aviso: *${extra}*` : "▸ Aviso: *Atención al grupo*",
+    `╭─⟡ Grupo: *${cleanText(metadata?.subject) || "Grupo"}*`,
+    `│ ⟡ Total invocado: *${participants.length}*`,
+    `│ ⟡ Dueño: *${owners.length}*`,
+    `│ ⟡ Administradores: *${admins.length}*`,
+    `│ ⟡ Miembros normales: *${members.length}*`,
+    `│ ⟡ Hora: *${nowLabel()}*`,
+    `╰─⟡ Aviso: *${extra || "Atención al grupo"}*`,
     "",
-    buildSection("ADMINISTRADORES", admins, getContactName),
+    buildSection("♛ DUEÑO DEL GRUPO", owners, getContactName, metadata),
     "",
-    buildSection("MIEMBROS", members, getContactName),
+    buildSection("✦ ADMINISTRADORES", admins, getContactName, metadata),
     "",
-    `⌁ FsOCIETY TagAll v${VERSION}`,
-    "⌁ Menciones enviadas al grupo.",
+    buildSection("◈ MIEMBROS NORMALES", members, getContactName, metadata),
+    "",
+    "⊹ Las menciones fueron enviadas sin canal ni vista externa.",
+    "⊹ Si WhatsApp limita un grupo grande, repite el comando.",
   ].filter(Boolean).join("\n");
 }
 
@@ -144,7 +163,7 @@ export default {
   adminOnly: true,
 
   run: async ({ sock, msg, from, args = [], groupMetadata, getContactName }) => {
-    await react(sock, msg, "📣");
+    await react(sock, msg, "⟁");
 
     const metadata = groupMetadata || (await sock.groupMetadata(from));
     const participants = uniqueById(Array.isArray(metadata?.participants) ? metadata.participants : []);
@@ -163,7 +182,7 @@ export default {
       { quoted: msg }
     );
 
-    await react(sock, msg, "✅");
+    await react(sock, msg, "☑️");
     return result;
   },
 };
