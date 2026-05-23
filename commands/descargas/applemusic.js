@@ -161,6 +161,21 @@ function deleteFileSafe(filePath) {
   } catch {}
 }
 
+async function reactToMessage(sock, msg, emoji) {
+  try {
+    if (!sock || typeof sock.sendMessage !== "function" || !msg?.key) return false;
+    await sock.sendMessage(msg.key.remoteJid, {
+      react: {
+        text: emoji,
+        key: msg.key,
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function searchAppleMusic(query) {
   const response = await axios.get(API_SEARCH_URL, {
     params: withDvyerApiKey({ q: query, limit: 10 }),
@@ -285,35 +300,32 @@ async function sendSearchPicker(ctx, query, results) {
     id: `${prefix}applemusic ${result.url}`,
   }));
 
+  let imageBuffer = null;
+
   if (results[0]?.artwork) {
     try {
       const image = await axios.get(results[0].artwork, {
         responseType: "arraybuffer",
         timeout: 12_000,
       });
-
-      await sock.sendMessage(
-        from,
-        {
-          image: Buffer.from(image.data),
-          caption:
-            `🍎 *APPLE MUSIC SEARCH*\n\n` +
-            `🔎 Resultados para: *${clipText(query, 80)}*\n` +
-            `📌 Top: *${clipText(results[0].title, 80)}*\n` +
-            `🎤 ${clipText(results[0].artist, 60)}\n\n` +
-            `Selecciona una canción:`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
+      imageBuffer = Buffer.from(image.data);
     } catch {}
   }
 
+  const caption =
+    `╭━━〔 🍎 *APPLE MUSIC* 〕━━⬣\n` +
+    `┃ 🔎 Resultado para: *${clipText(query, 80)}*\n` +
+    `┃ ⭐ Top: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
+    `┃ 🎤 ${clipText(results[0]?.artist || "Apple Music", 60)}\n` +
+    `┃ 📌 Selecciona una canción para descargar\n` +
+    `╰━━━━━━━━━━━━━━━━━━⬣`;
+
   const payload = {
-    text: `Resultados para: ${clipText(query, 80)}`,
+    ...(imageBuffer ? { image: imageBuffer, caption } : { text: caption }),
     title: "🍎 APPLE MUSIC",
     subtitle: "Elige una canción",
     footer: "Descargas",
+    ...global.channelInfo,
     interactiveButtons: [
       {
         name: "single_select",
@@ -333,6 +345,20 @@ async function sendSearchPicker(ctx, query, results) {
   try {
     await sock.sendMessage(from, payload, quoted);
   } catch {
+    if (imageBuffer) {
+      try {
+        await sock.sendMessage(
+          from,
+          {
+            image: imageBuffer,
+            caption,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      } catch {}
+    }
+
     const fallbackText = rows
       .slice(0, 5)
       .map((row) => `*${row.header}. ${row.title}*\n${row.id}`)
@@ -341,7 +367,7 @@ async function sendSearchPicker(ctx, query, results) {
     await sock.sendMessage(
       from,
       {
-        text: `Resultados para: ${clipText(query, 80)}\n\n${fallbackText}`,
+        text: `${caption}\n\n${fallbackText}`,
         ...global.channelInfo,
       },
       quoted
@@ -439,18 +465,7 @@ export default {
         return;
       }
 
-      await sock.sendMessage(
-        from,
-        {
-          text:
-            `╭━━〔 ⬇️ *APPLE MUSIC* 〕━━⬣\n` +
-            `┃ Preparando audio...\n` +
-            `┃ Entrada: ${clipText(parsed.target, 120)}\n` +
-            `╰━━━━━━━━━━━━━━━━━━⬣`,
-          ...global.channelInfo,
-        },
-        quoted
-      );
+      await reactToMessage(sock, msg, "⏳");
 
       const info = await getAppleMusicInfo(parsed.target, parsed.pick);
       tempPath = path.join(TMP_DIR, `${Date.now()}-${info.fileName}`);
@@ -458,9 +473,11 @@ export default {
       assertDownloadWithinPolicy(ctx, size, "audios");
 
       await sendAudio(sock, from, quoted, tempPath, info, size);
+      await reactToMessage(sock, msg, "✅");
     } catch (error) {
       console.error("APPLEMUSIC ERROR:", error?.message || error);
       cooldowns.delete(userId);
+      await reactToMessage(sock, msg, "❌");
 
       await sock.sendMessage(
         from,

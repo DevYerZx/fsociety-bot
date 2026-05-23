@@ -318,6 +318,21 @@ async function safeSendMessage(sock, from, payload, quoted, options = {}) {
   }
 }
 
+async function reactToMessage(sock, msg, emoji) {
+  try {
+    if (!sock || typeof sock.sendMessage !== "function" || !msg?.key) return false;
+    await sock.sendMessage(msg.key.remoteJid, {
+      react: {
+        text: emoji,
+        key: msg.key,
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function parseSelectionInput(value) {
   const raw = cleanText(value);
 
@@ -675,40 +690,19 @@ async function sendSearchPicker(ctx, query, results, config) {
     console.error(`${config.key.toUpperCase()} thumb search error:`, error?.message || error);
   }
 
-  const introPayload = thumbBuffer
-    ? {
-        image: thumbBuffer,
-        caption:
-          `╭━━〔 🔎 *FSOCIETY BOT* 〕━━⬣\n` +
-          `┃ Resultado para: *${clipText(query, 80)}*\n` +
-          `┃ Primer resultado: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
-          `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
-          `${config.selectionText}`,
-      }
-    : {
-        text:
-          `╭━━〔 🔎 *FSOCIETY BOT* 〕━━⬣\n` +
-          `┃ Resultado para: *${clipText(query, 80)}*\n` +
-          `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
-          `${config.selectionText}`,
-      };
-
-  await safeSendMessage(
-    sock,
-    from,
-    {
-      ...introPayload,
-      ...global.channelInfo,
-    },
-    quoted,
-    { label: `${config.key}:intro`, throwOnUnavailable: true }
-  );
+  const caption =
+    `╭━━〔 ${config.rowLabel} *FSOCIETY DOWNLOAD* 〕━━⬣\n` +
+    `┃ 🔎 Resultado para: *${clipText(query, 80)}*\n` +
+    `┃ ⭐ Top: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
+    `┃ 📌 ${config.selectionText}\n` +
+    `╰━━━━━━━━━━━━━━━━━━⬣`;
 
   const interactivePayload = {
-    text: `Resultados para: ${clipText(query, 80)}`,
+    ...(thumbBuffer ? { image: thumbBuffer, caption } : { text: caption }),
     title: "FSOCIETY BOT",
     subtitle: config.subtitle,
     footer: config.footer,
+    ...global.channelInfo,
     interactiveButtons: [
       {
         name: "single_select",
@@ -733,6 +727,22 @@ async function sendSearchPicker(ctx, query, results, config) {
   } catch (error) {
     console.error(`${config.key.toUpperCase()} interactive search failed:`, error?.message || error);
 
+    if (thumbBuffer) {
+      try {
+        await safeSendMessage(
+          sock,
+          from,
+          {
+            image: thumbBuffer,
+            caption,
+            ...global.channelInfo,
+          },
+          quoted,
+          { label: `${config.key}:image-fallback` }
+        );
+      } catch {}
+    }
+
     const fallbackText = rows
       .slice(0, 5)
       .map((row) => `${row.header}. ${row.title}\n${row.id}`)
@@ -743,7 +753,7 @@ async function sendSearchPicker(ctx, query, results, config) {
       from,
       {
         text:
-          `Resultados para: ${clipText(query, 80)}\n\n${fallbackText}\n\n` +
+          `${caption}\n\n${fallbackText}\n\n` +
           `Toca o copia uno de los comandos para descargar.`,
         ...global.channelInfo,
       },
@@ -904,29 +914,14 @@ export function buildDvyerAppCommand(kind) {
           return null;
         }
 
-        await safeSendMessage(
-          sock,
-          from,
-          {
-            text:
-              `╭━━〔 ⬇️ *PREPARANDO* 〕━━⬣\n` +
-              `┃ ${config.preparing}\n` +
-              `┃ Entrada: ${clipText(userInput, 120)}\n` +
-              `┃ 🔑 API Key: Activa\n` +
-              `╰━━━━━━━━━━━━━━━━━━⬣`,
-            ...global.channelInfo,
-          },
-          quoted,
-          { label: `${config.key}:preparing`, throwOnUnavailable: true }
-        );
+        await reactToMessage(sock, msg, "⏳");
 
         downloadInfo = await requestDownloadMeta(userInput, config, {
           pick: parsedInput.pick,
         });
 
-        await sendPreviewCard(sock, from, quoted, downloadInfo, config);
-
         if (downloadInfo.sizeBytes && downloadInfo.sizeBytes > MAX_FILE_BYTES) {
+          await reactToMessage(sock, msg, "⚠️");
           await sendLargeFileLink(sock, from, quoted, downloadInfo, config);
           cooldowns.delete(userId);
           return null;
@@ -960,6 +955,7 @@ export function buildDvyerAppCommand(kind) {
           finalFileName,
           downloaded.size
         );
+        await reactToMessage(sock, msg, "✅");
       } catch (error) {
         console.error(`${config.key.toUpperCase()} ERROR:`, error?.message || error);
 
@@ -974,6 +970,8 @@ export function buildDvyerAppCommand(kind) {
           kind: "file",
           fallback: "No se pudo procesar la descarga.",
         });
+
+        await reactToMessage(sock, msg, "❌");
 
         await safeSendMessage(
           sock,
