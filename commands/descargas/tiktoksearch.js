@@ -1,26 +1,56 @@
+import fs from "fs";
+import path from "path";
 import { searchTikTokVideos } from "./_searchFallbacks.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
 
 const RESULT_LIMIT = 5;
+const DEFAULT_COVER = "https://i.ibb.co/5xrnyZhN/fsociety-bot-profile.png";
 const SEARCH_RETRY_ATTEMPTS = 3;
 const SEARCH_RETRY_DELAY_MS = 900;
 
-function getPrefix(settings) {
-  if (Array.isArray(settings?.prefix)) {
-    return settings.prefix.find((value) => String(value || "").trim()) || ".";
-  }
+const BAILEYS_MESSAGES_FILE = path.join(
+  process.cwd(),
+  "node_modules",
+  "@dvyer",
+  "baileys",
+  "lib",
+  "Utils",
+  "messages.js"
+);
 
-  return String(settings?.prefix || ".").trim() || ".";
+function supportsBaileysCards() {
+  try {
+    if (!fs.existsSync(BAILEYS_MESSAGES_FILE)) return false;
+    const source = fs.readFileSync(BAILEYS_MESSAGES_FILE, "utf8");
+
+    return (
+      source.includes("carouselMessage") ||
+      source.includes("'cards' in message") ||
+      source.includes('"cards" in message')
+    );
+  } catch {
+    return false;
+  }
 }
 
-function cleanText(value = "") {
+const SUPPORTS_BAILEYS_CARDS = supportsBaileysCards();
+
+function clean(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function clipText(value = "", max = 80) {
-  const text = cleanText(value);
+function clipText(value = "", max = 72) {
+  const text = clean(value);
   return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
+}
+
+function getPrefix(settings) {
+  if (Array.isArray(settings?.prefix)) {
+    return settings.prefix.find((value) => clean(value)) || ".";
+  }
+
+  return clean(settings?.prefix || ".") || ".";
 }
 
 function compactNumber(value = 0) {
@@ -32,6 +62,18 @@ function compactNumber(value = 0) {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
 
   return String(Math.floor(n));
+}
+
+function formatDurationSeconds(value = 0) {
+  const seconds = Number(value || 0);
+
+  if (!Number.isFinite(seconds) || seconds <= 0) return "N/D";
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+
+  const minutes = Math.floor(seconds / 60);
+  const rem = Math.floor(seconds % 60);
+
+  return rem > 0 ? `${minutes}m ${rem}s` : `${minutes}m`;
 }
 
 function sleep(ms) {
@@ -67,62 +109,63 @@ async function searchTikTokVideosWithRetries(query, limit) {
 }
 
 function buildTikTokPublicUrl(item = {}) {
-  const explicitUrl = String(item?.publicUrl || item?.url || "").trim();
+  const explicitUrl = clean(item?.publicUrl || item?.url);
 
   if (/^https?:\/\/(?:www\.)?(?:m\.)?tiktok\.com\//i.test(explicitUrl)) {
     return explicitUrl;
   }
 
-  const author = String(item?.author || "").replace(/^@/, "").trim();
-  const id = String(item?.id || "").trim();
+  const author = clean(item?.author).replace(/^@/, "");
+  const id = clean(item?.id);
 
   if (!author || !id) return "";
 
   return `https://www.tiktok.com/@${author}/video/${id}`;
 }
 
-function buildUsageMessage(prefix) {
+function buildTikTokCommand(prefix, item = {}) {
+  const publicUrl = buildTikTokPublicUrl(item);
+  const playUrl = clean(item?.play);
+  const target = publicUrl || playUrl;
+
+  return target ? `${prefix}tiktok ${target}` : `${prefix}tiktok`;
+}
+
+function buildUsageMessage(prefix = ".") {
   return [
     "╭━━━〔 🔎 *FSOCIETY TIKTOK* 〕━━━⬣",
     "┃",
     "┃ ✘ Falta el texto para buscar.",
     "┃",
-    "┃ ✦ Uso:",
+    "┣━━━〔 ✦ USO 〕━━━⬣",
     `┃ ➤ ${prefix}ttsearch edit goku`,
     `┃ ➤ ${prefix}tts anime sad`,
+    `┃ ➤ ${prefix}tiktoksearch autos`,
     "┃",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
-function buildNotFoundMessage() {
+function buildNotFoundMessage(query = "") {
   return [
     "╭━━━〔 ⚠️ *TIKTOK SEARCH* 〕━━━⬣",
     "┃",
-    "┃ No encontré resultados de TikTok.",
-    "┃ Intenta con otro nombre o palabra.",
+    `┃ No encontré videos para: *${clipText(query, 45)}*`,
+    "┃ Intenta con otra palabra.",
     "┃",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
   ].join("\n");
 }
 
-function buildVideoCaption(item = {}, query = "") {
-  const title = clipText(item?.title || "Video TikTok", 90);
-  const author = String(item?.author || "usuario").replace(/^@/, "");
-  const views = compactNumber(item?.stats?.views || 0);
-  const url = buildTikTokPublicUrl(item);
-
+function buildSearchingMessage(query = "") {
   return [
-    "╭━━━〔 🎵 *FSOCIETY TIKTOK* 〕━━━⬣",
+    "╭━━━〔 🔎 *FSOCIETY TIKTOK* 〕━━━⬣",
     "┃",
-    `┃ 🔎 *Búsqueda:* ${clipText(query, 45)}`,
-    `┃ 🎬 *Título:* ${title}`,
-    `┃ 👤 *Autor:* @${author}`,
-    `┃ 👁️ *Views:* ${views}`,
-    url ? `┃ 🔗 *Link:* ${url}` : null,
+    `┃ Buscando videos para: *${clipText(query, 45)}*`,
     "┃",
+    "┃ ✦ Preparando carrusel...",
     "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ].filter(Boolean).join("\n");
+  ].join("\n");
 }
 
 function buildErrorMessage(error) {
@@ -138,46 +181,116 @@ function buildErrorMessage(error) {
   ].join("\n");
 }
 
-async function sendBestTikTokVideo(sock, from, quoted, query, results) {
-  const video = results.find((item) => String(item?.play || "").trim()) || results[0];
+function buildCardBody(item = {}, index = 0, query = "") {
+  const title = clipText(item?.title || "Video TikTok", 95);
+  const author = clean(item?.author || "usuario").replace(/^@/, "");
+  const views = compactNumber(item?.stats?.views || 0);
+  const likes = compactNumber(item?.stats?.likes || 0);
+  const duration = formatDurationSeconds(item?.durationSeconds || 0);
 
-  const playUrl = String(video?.play || "").trim();
-  const coverUrl = String(video?.cover || "").trim();
-  const caption = buildVideoCaption(video, query);
+  return (
+    `🔎 ${clipText(query, 40)}\n` +
+    `🎬 ${index + 1}. ${title}\n` +
+    `👤 @${author}\n` +
+    `⏱️ ${duration} | 👁️ ${views} | ❤️ ${likes}`
+  );
+}
 
-  if (playUrl) {
-    await sock.sendMessage(
-      from,
-      {
-        video: { url: playUrl },
-        mimetype: "video/mp4",
-        caption,
-        ...global.channelInfo,
-      },
-      quoted
-    );
+function buildCarouselCards(results = [], prefix = ".", query = "") {
+  return results
+    .slice(0, RESULT_LIMIT)
+    .map((item, index) => {
+      const play = clean(item?.play);
+      const cover = clean(item?.cover) || DEFAULT_COVER;
+      const commandId = buildTikTokCommand(prefix, item);
 
-    return;
+      return {
+        image: { url: cover },
+        title: `TikTok #${index + 1}`,
+        body: buildCardBody(item, index, query),
+        footer: "FSOCIETY BOT",
+        buttons: [
+          {
+            name: "quick_reply",
+            buttonParamsJson: JSON.stringify({
+              display_text: "Descargar",
+              id: commandId,
+            }),
+          },
+          play
+            ? {
+                name: "cta_url",
+                buttonParamsJson: JSON.stringify({
+                  display_text: "Ver video",
+                  url: buildTikTokPublicUrl(item) || play,
+                }),
+              }
+            : null,
+        ].filter(Boolean),
+      };
+    })
+    .filter((card) => card?.image?.url);
+}
+
+async function sendTikTokCarousel(sock, from, quoted, query, results, prefix) {
+  if (!SUPPORTS_BAILEYS_CARDS) {
+    throw new Error("baileys_cards_not_supported");
   }
 
-  if (coverUrl) {
-    await sock.sendMessage(
-      from,
-      {
-        image: { url: coverUrl },
-        caption,
-        ...global.channelInfo,
-      },
-      quoted
-    );
+  const cards = buildCarouselCards(results, prefix, query);
 
-    return;
+  if (!cards.length) {
+    throw new Error("No hay tarjetas válidas.");
   }
 
   await sock.sendMessage(
     from,
     {
-      text: caption,
+      text: "🎵 *TikTok Carrusel*",
+      title: "FSOCIETY TIKTOK",
+      footer: `Resultados para: ${clipText(query, 60)}`,
+      cards,
+      ...global.channelInfo,
+    },
+    quoted
+  );
+}
+
+async function sendFallbackList(sock, from, quoted, query, results, prefix) {
+  const rows = results.slice(0, RESULT_LIMIT).map((item, index) => {
+    const title = clipText(item?.title || "Video TikTok", 60);
+    const author = clean(item?.author || "usuario").replace(/^@/, "");
+    const views = compactNumber(item?.stats?.views || 0);
+
+    return {
+      header: `${index + 1}`,
+      title,
+      description: `@${author} | 👁️ ${views}`,
+      id: buildTikTokCommand(prefix, item),
+    };
+  });
+
+  await sock.sendMessage(
+    from,
+    {
+      text: `Resultados para: *${clipText(query, 60)}*`,
+      title: "FSOCIETY TIKTOK",
+      subtitle: "Selecciona un video para descargar",
+      footer: "FSOCIETY BOT",
+      interactiveButtons: [
+        {
+          name: "single_select",
+          buttonParamsJson: JSON.stringify({
+            title: "Ver resultados",
+            sections: [
+              {
+                title: "Resultados TikTok",
+                rows,
+              },
+            ],
+          }),
+        },
+      ],
       ...global.channelInfo,
     },
     quoted
@@ -188,11 +301,12 @@ export default {
   name: "ttsearch",
   command: ["ttsearch", "ttksearch", "tts", "tiktoksearch"],
   category: "busqueda",
-  description: "Busca videos de TikTok y envía solo el primer video sin botones",
+  description: "Busca videos de TikTok y envía carrusel de resultados",
 
   run: async (ctx) => {
     const { sock, msg, from, args, settings } = ctx;
-    const q = args.join(" ").trim();
+    const quoted = msg?.key ? { quoted: msg } : undefined;
+    const q = clean(args.join(" "));
     const prefix = getPrefix(settings);
 
     if (!q) {
@@ -202,23 +316,32 @@ export default {
           text: buildUsageMessage(prefix),
           ...global.channelInfo,
         },
-        { quoted: msg }
+        quoted
       );
     }
 
     let downloadCharge = null;
 
     try {
+      await sock.sendMessage(
+        from,
+        {
+          text: buildSearchingMessage(q),
+          ...global.channelInfo,
+        },
+        quoted
+      );
+
       const results = await searchTikTokVideosWithRetries(q, RESULT_LIMIT);
 
       if (!results.length) {
         return sock.sendMessage(
           from,
           {
-            text: buildNotFoundMessage(),
+            text: buildNotFoundMessage(q),
             ...global.channelInfo,
           },
-          { quoted: msg }
+          quoted
         );
       }
 
@@ -230,7 +353,12 @@ export default {
 
       if (!downloadCharge?.ok) return null;
 
-      await sendBestTikTokVideo(sock, from, { quoted: msg }, q, results);
+      try {
+        await sendTikTokCarousel(sock, from, quoted, q, results, prefix);
+      } catch (carouselError) {
+        console.error("ttsearch carousel fallback:", carouselError?.message || carouselError);
+        await sendFallbackList(sock, from, quoted, q, results, prefix);
+      }
     } catch (error) {
       console.error("Error ejecutando ttsearch:", error?.message || error);
 
@@ -245,7 +373,7 @@ export default {
           text: buildErrorMessage(error),
           ...global.channelInfo,
         },
-        { quoted: msg }
+        quoted
       );
     }
   },
