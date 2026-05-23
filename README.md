@@ -84,6 +84,10 @@ git clone https://github.com/DevYerZx/fsociety-bot.git
 cd fsociety-bot
 npm install
 npm start
+
+SI FALLA NPM START 
+
+node.index.js
 ```
 
 Si falla `npm install` por red:
