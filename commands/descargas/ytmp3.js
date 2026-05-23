@@ -8,6 +8,7 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
+
 import { withDvyerApiKey } from "../../lib/api-manager.js";
 import {
   chargeDownloadRequest,
@@ -32,15 +33,17 @@ const TMP_DIR = path.join(os.tmpdir(), "dvyer-ytmp3");
 
 const REQUEST_TIMEOUT = 20 * 60 * 1000;
 const API_LINK_TIMEOUT = 90_000;
-
 const MAX_AUDIO_BYTES = 800 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 80 * 1024 * 1024;
 const MIN_AUDIO_BYTES = 20 * 1024;
 
 const RATE_LIMIT_MAX = 6;
 const RATE_LIMIT_WINDOW_MS = 60_000;
-
 const PROVIDER_NAME = "dvyer_ytmp3";
+
+const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
+const DELETE_RETRIES = 4;
+const DELETE_RETRY_DELAY_MS = 120;
 
 const HTTP_AGENT = new http.Agent({
   keepAlive: true,
@@ -54,10 +57,34 @@ const HTTPS_AGENT = new https.Agent({
   maxFreeSockets: 20,
 });
 
-const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
-const DELETE_RETRIES = 4;
-const DELETE_RETRY_DELAY_MS = 120;
-const REMOTE_SEND_TIMEOUT_MS = 25_000;
+function getChannelInfo() {
+  return global.channelInfo && typeof global.channelInfo === "object"
+    ? global.channelInfo
+    : {};
+}
+
+function resolvePrefix(ctx = {}) {
+  const candidates = [
+    ctx.prefix,
+    ctx.usedPrefix,
+    ctx?.settings?.prefix,
+    global.prefix,
+    global?.settings?.prefix,
+  ];
+
+  for (const value of candidates) {
+    if (Array.isArray(value)) {
+      const first = value.find((item) => cleanText(item));
+      if (first) return cleanText(first);
+      continue;
+    }
+
+    const text = cleanText(value);
+    if (text) return text;
+  }
+
+  return ".";
+}
 
 function resolveMaxAudioBytes(ctx) {
   const policy = getDownloadExecutionPolicy(ctx, "ytmp3");
@@ -87,12 +114,9 @@ async function deleteFileSafe(filePath) {
       return true;
     } catch (error) {
       const code = String(error?.code || "").toUpperCase();
-
       if (code === "ENOENT") return true;
 
-      const retryable =
-        code === "EBUSY" || code === "EPERM" || code === "EACCES";
-
+      const retryable = code === "EBUSY" || code === "EPERM" || code === "EACCES";
       if (retryable && attempt < DELETE_RETRIES) {
         await waitMs(DELETE_RETRY_DELAY_MS * (attempt + 1));
         continue;
@@ -118,7 +142,6 @@ async function cleanupOldFiles(maxAgeMs = TMP_FILE_MAX_AGE_MS) {
 
     const filePath = path.join(TMP_DIR, entry.name);
     const stat = await fsp.stat(filePath).catch(() => null);
-
     if (!stat?.mtimeMs) continue;
     if (now - stat.mtimeMs < maxAgeMs) continue;
 
@@ -137,7 +160,6 @@ function clipText(value = "", max = 70) {
 
 function humanBytes(bytes = 0) {
   const size = Number(bytes || 0);
-
   if (!Number.isFinite(size) || size <= 0) return "N/D";
 
   const units = ["B", "KB", "MB", "GB"];
@@ -149,14 +171,11 @@ function humanBytes(bytes = 0) {
     index += 1;
   }
 
-  return `${
-    value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)
-  } ${units[index]}`;
+  return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
 }
 
 function formatDuration(seconds = 0) {
   const total = Math.max(0, Math.floor(Number(seconds || 0)));
-
   if (!total) return "";
 
   const h = Math.floor(total / 3600);
@@ -184,7 +203,6 @@ function safeFileName(name) {
 function normalizeMp3Name(name) {
   const parsed = path.parse(String(name || "").trim());
   const base = safeFileName(parsed.name || name || "youtube-audio");
-
   return `${base || "youtube-audio"}.mp3`;
 }
 
@@ -220,7 +238,6 @@ function resolveUserInput(ctx) {
   const msg = ctx.m || ctx.msg || null;
   const argsText = Array.isArray(ctx.args) ? ctx.args.join(" ").trim() : "";
   const quotedText = extractTextFromMessage(getQuotedMessage(ctx, msg));
-
   return cleanText(argsText || quotedText || "");
 }
 
@@ -228,13 +245,11 @@ function extractYouTubeUrl(text) {
   const match = String(text || "").match(
     /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i
   );
-
   return match ? match[0].trim() : "";
 }
 
 function parseContentDispositionFileName(headerValue) {
   const text = String(headerValue || "");
-
   const utfMatch = text.match(/filename\*=UTF-8''([^;]+)/i);
 
   if (utfMatch?.[1]) {
@@ -244,7 +259,6 @@ function parseContentDispositionFileName(headerValue) {
   }
 
   const normalMatch = text.match(/filename="?([^"]+)"?/i);
-
   return normalMatch?.[1]?.trim() || "";
 }
 
@@ -259,12 +273,10 @@ async function readStreamToText(stream) {
 
   if (typeof stream[Symbol.asyncIterator] === "function") {
     let data = "";
-
     for await (const chunk of stream) {
       data += chunkToText(chunk);
       if (data.length > 20000) data = data.slice(-20000);
     }
-
     return data;
   }
 
@@ -294,10 +306,7 @@ function extractApiError(data, status) {
 
 function getApiCandidates() {
   const envBase = String(process.env.DVYER_API_BASE_URL || "").trim();
-  const envEndpoint = envBase
-    ? `${envBase.replace(/\/+$/, "")}/ytmp3`
-    : "";
-
+  const envEndpoint = envBase ? `${envBase.replace(/\/+$/, "")}/ytmp3` : "";
   const seen = new Set();
 
   return [envEndpoint, ...API_YTMP3_URLS]
@@ -312,7 +321,6 @@ function getApiCandidates() {
 
 function shouldRetryWithNextApi(errorOrText) {
   const text = String(errorOrText?.message || errorOrText || "").toLowerCase();
-
   if (!text) return true;
 
   return (
@@ -391,9 +399,7 @@ async function callYtmp3Api({
         );
 
         const err = new Error(apiError);
-
         if (!shouldRetryWithNextApi(err)) throw err;
-
         errors.push(cleanErrorText(err));
         continue;
       }
@@ -430,7 +436,7 @@ function cleanErrorText(error) {
     normalized.includes("network error") ||
     normalized.includes("connect ")
   ) {
-    return "El servicio de audio está temporalmente inestable. Intenta otra vez.";
+    return "El servicio de audio está temporalmente inestable.\nIntenta otra vez.";
   }
 
   if (
@@ -444,7 +450,7 @@ function cleanErrorText(error) {
     normalized.includes("protected") ||
     normalized.includes("copyright")
   ) {
-    return "Audio no disponible en este momento. Puede estar protegido por YouTube.";
+    return "Audio no disponible en este momento.\nPuede estar protegido por YouTube.";
   }
 
   if (
@@ -458,7 +464,7 @@ function cleanErrorText(error) {
   }
 
   if (normalized.includes("403")) {
-    return "El enlace de audio expiró o fue bloqueado. Intenta otra vez.";
+    return "El enlace de audio expiró o fue bloqueado.\nIntenta otra vez.";
   }
 
   if (normalized.includes("404")) {
@@ -473,19 +479,18 @@ function cleanErrorText(error) {
     normalized.includes("service unavailable") ||
     normalized.includes("temporarily unavailable")
   ) {
-    return "Servicio de audio temporalmente inestable. Reintenta en un momento.";
+    return "Servicio de audio temporalmente inestable.\nReintenta en un momento.";
   }
 
   if (normalized.includes("supera el limite") || normalized.includes("demasiado grande")) {
     return text;
   }
 
-  return "No se pudo preparar el MP3. Intenta nuevamente más tarde.";
+  return "No se pudo preparar el MP3.\nIntenta nuevamente más tarde.";
 }
 
 function resolveAbsoluteUrl(value, baseUrl) {
   const raw = String(value || "").trim();
-
   if (!raw) return "";
 
   if (/^https?:\/\//i.test(raw)) {
@@ -502,13 +507,10 @@ function resolveAbsoluteUrl(value, baseUrl) {
 
 function scoreUrl(url = "") {
   const text = String(url || "").toLowerCase();
-
   if (!text) return 0;
-
   if (text.includes("dv-yer-api.online")) return 100;
   if (text.includes("/download/stream/")) return 90;
   if (text.includes("googlevideo.com")) return 40;
-
   return 60;
 }
 
@@ -544,7 +546,6 @@ async function resolveInputToUrl(input) {
   }
 
   const query = cleanText(input);
-
   if (!query) return null;
 
   const results = await yts(query);
@@ -597,7 +598,7 @@ async function getYtmp3Data(videoUrl) {
     title: cleanText(data.title || "YouTube MP3"),
     fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
     provider: data.provider || "ytmp3",
-    duration: data.duration || 0,
+    duration: Number(data.duration || 0),
     thumbnail: cleanText(data.thumbnail || data.thumb || ""),
     author: cleanText(data.author || data.channel || data.uploader || ""),
     cached: Boolean(data.cached),
@@ -659,9 +660,7 @@ async function saveResponseToFile(response, outputPath, fallbackName, options = 
 
   if (contentLength > maxAudioBytes) {
     throw new Error(
-      `El MP3 pesa ${humanBytes(contentLength)} y supera el límite permitido (${humanBytes(
-        maxAudioBytes
-      )}).`
+      `El MP3 pesa ${humanBytes(contentLength)} y supera el límite permitido (${humanBytes(maxAudioBytes)}).`
     );
   }
 
@@ -707,15 +706,10 @@ async function saveResponseToFile(response, outputPath, fallbackName, options = 
   };
 }
 
-async function downloadYtmp3Fallback(
-  videoUrl,
-  preferredName,
-  knownLinkData = null,
-  options = {}
-) {
+async function downloadYtmp3File(videoUrl, preferredName, knownLinkData = null, options = {}) {
   await ensureTmpDir();
 
-  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`);
+  const errors = [];
 
   const attempts = [
     async () => {
@@ -724,42 +718,43 @@ async function downloadYtmp3Fallback(
       }
 
       const response = await requestRemoteYtmp3Stream(knownLinkData.remoteUrl);
-
       return await saveResponseToFile(
         response,
-        outputPath,
+        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`),
         knownLinkData.fileName || preferredName,
         options
       );
     },
-
     async () => {
       const response = await requestYtmp3Stream(videoUrl);
-
-      return await saveResponseToFile(response, outputPath, preferredName, options);
+      return await saveResponseToFile(
+        response,
+        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`),
+        preferredName,
+        options
+      );
     },
-
     async () => {
       const linkData = await getYtmp3Data(videoUrl);
       const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
-
       return await saveResponseToFile(
         response,
-        outputPath,
+        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`),
         linkData.fileName || preferredName,
         options
       );
     },
   ];
 
-  const errors = [];
-
   for (const attempt of attempts) {
+    let downloaded = null;
+
     try {
-      return await attempt();
+      downloaded = await attempt();
+      return downloaded;
     } catch (error) {
+      if (downloaded?.tempPath) await deleteFileSafe(downloaded.tempPath);
       errors.push(cleanErrorText(error));
-      await deleteFileSafe(outputPath);
     }
   }
 
@@ -768,7 +763,7 @@ async function downloadYtmp3Fallback(
 
 async function react(sock, msg, emoji) {
   try {
-    if (!msg?.key) return;
+    if (!msg?.key || !emoji) return;
 
     await sock.sendMessage(msg.key.remoteJid, {
       react: {
@@ -779,57 +774,59 @@ async function react(sock, msg, emoji) {
   } catch {}
 }
 
-function buildUsageMessage() {
-  return  [
-    "╭━━━〔 🎧 ✦ *ＦＳＯＣＩＥＴＹ ＭＰ３* ✦ 🎧 〕━━━⬣",
+function buildUsageMessage(prefix = ".") {
+  return [
+    "╭━━━〔 ✦ *ＦＳＯＣＩＥＴＹ ＭＰ３* ✦ 〕━━━⬣",
     "┃",
     "┃ ⚠️ No enviaste un link o nombre válido.",
     "┃",
-    "┣━━━〔 📌 USO CORRECTO 📌 〕━━━⬣",
+    "┣━━━〔 USO CORRECTO 〕━━━⬣",
     `┃ ➤ ${prefix}ytmp3 ozuna odisea`,
     `┃ ➤ ${prefix}ytmp3 bad bunny monaco`,
     `┃ ➤ ${prefix}ytmp3 https://youtu.be/xxxx`,
     "┃",
-    "┣━━━〔 🎵 SOPORTADO 🎵 〕━━━⬣",
+    "┣━━━〔 SOPORTADO 〕━━━⬣",
     "┃ ✦ Links de YouTube",
     "┃ ✦ Nombre de canciones",
     "┃ ✦ Búsqueda automática",
     "┃",
     "╰━━━〔 ⚡ DVYER - MUSIC SYSTEM ⚡ 〕━━━⬣",
-  ].join(\"\\n\");
+  ].join("\n");
 }
 
 function buildLimitMessage(retryMs) {
   return [
     "╭━━━〔 ⚠️ ✦ *ＬÍＭＩＴＥ ＤＥ ＵＳＯ* ✦ ⚠️ 〕━━━⬣",
     "┃",
-    "┃ 🚫 Estás usando mucho este comando.",
+    "┃ Estás usando mucho este comando.",
     `┃ ⏳ Espera *${formatRetrySeconds(retryMs)}s*`,
     "┃ para volver a descargar música.",
     "┃",
-    "┣━━━〔 📢 AVISO 📢 〕━━━⬣",
+    "┣━━━〔 AVISO 〕━━━⬣",
     "┃ ✦ Evita spam masivo",
     "┃ ✦ Mantén estable el sistema",
     "┃ ✦ Usa el comando con calma",
     "┃",
-    "╰━━━〔 🌙 FSOCIETY PROTECTION 🌙 〕━━━⬣",
-  ].join(\"\\n\");
+    "╰━━━〔 FSOCIETY PROTECTION 〕━━━⬣",
+  ].join("\n");
 }
 
 function buildErrorMessage(errorText) {
   return [
     "╭━━━〔 ❌ ✦ *ＹＴＭＰ３ ＥＲＲＯＲ* ✦ ❌ 〕━━━⬣",
     "┃",
-    `┃ 🚫 ${String(errorText || "No se pudo preparar el MP3.")}`,
+    ...String(errorText || "No se pudo preparar el MP3.")
+      .split("\n")
+      .map((line) => `┃ ${line}`),
     "┃",
-    "┣━━━〔 🔧 POSIBLES CAUSAS 🔧 〕━━━⬣",
+    "┣━━━〔 POSIBLES CAUSAS 〕━━━⬣",
     "┃ ✦ API fuera de línea",
     "┃ ✦ Video restringido",
     "┃ ✦ Error de conexión",
     "┃ ✦ Archivo demasiado pesado",
     "┃",
     "╰━━━〔 ⚡ DVYER API SYSTEM ⚡ 〕━━━⬣",
-  ].join(\"\\n\");
+  ].join("\n");
 }
 
 async function getBuffer(url = "", timeout = 12_000) {
@@ -845,6 +842,7 @@ async function getBuffer(url = "", timeout = 12_000) {
       maxRedirects: 4,
       validateStatus: () => true,
     });
+
     if (Number(response.status || 0) >= 400) return null;
     return Buffer.from(response.data);
   } catch {
@@ -858,21 +856,21 @@ function buildPreviewCaption(data = {}) {
   const author = clipText(data.author || "", 46);
 
   return [
-  "╭━━━〔 🜲 🎧 *ＦＳＯＣＩＥＴＹ ＡＵＤＩＯ* 🎧 🜲 〕━━━⬣",
-  "┃",
-  `┃ 🎶 *Título:* ${title}`,
-  duration ? `┃ ⌛ *Tiempo:* ${duration}` : null,
-  author ? `┃ 👤 *Artista/Canal:* ${author}` : null,
-  "┃",
-  "┣━━━〔 ⚡ DESCARGA EN PROCESO ⚡ 〕━━━⬣",
-  "┃ ✦ Buscando mejor calidad...",
-  "┃ ✦ Generando archivo MP3...",
-  "┃ ✦ Enviando música...",
-  "┃",
-  "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
-  "┃ 🌙 *DVYER • FSOCIETY SYSTEM*",
-  "╰━━━〔 ✧ 🎵 ✧ 🎵 ✧ 〕━━━⬣",
-]
+    "╭━━━〔 *ＦＳＯＣＩＥＴＹ ＡＵＤＩＯ* 〕━━━⬣",
+    "┃",
+    `┃ *Título:* ${title}`,
+    duration ? `┃ ⌛ *Tiempo:* ${duration}` : null,
+    author ? `┃ *Artista/Canal:* ${author}` : null,
+    "┃",
+    "┣━━━〔 ⚡ DESCARGA EN PROCESO ⚡ 〕━━━⬣",
+    "┃ ✦ Buscando mejor calidad...",
+    "┃ ✦ Generando archivo MP3...",
+    "┃ ✦ Enviando música...",
+    "┃",
+    "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
+    "┃ *DVYER • FSOCIETY SYSTEM*",
+    "╰━━━〔 ✧ ✧ ✧ 〕━━━⬣",
+  ]
     .filter(Boolean)
     .join("\n");
 }
@@ -888,7 +886,7 @@ async function sendAudioPreview(sock, from, quoted, data = {}) {
         {
           image: thumbBuffer,
           caption,
-          ...global.channelInfo,
+          ...getChannelInfo(),
         },
         quoted
       );
@@ -901,26 +899,11 @@ async function sendAudioPreview(sock, from, quoted, data = {}) {
       from,
       {
         text: caption,
-        ...global.channelInfo,
+        ...getChannelInfo(),
       },
       quoted
     );
   } catch {}
-}
-
-async function sendRemoteMp3(sock, from, quoted, data) {
-  await sock.sendMessage(
-    from,
-    {
-      audio: { url: data.remoteUrl },
-      mimetype: "audio/mpeg",
-      fileName: data.fileName,
-      ptt: false,
-    },
-    quoted
-  );
-
-  return "audio";
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
@@ -936,7 +919,6 @@ async function sendLocalMp3(sock, from, quoted, data) {
         },
         quoted
       );
-
       return "audio";
     } catch (error) {
       console.error("SEND LOCAL AUDIO ERROR:", error?.message || error);
@@ -964,9 +946,9 @@ export default {
 
   run: async (ctx) => {
     const { sock, from } = ctx;
-
     const msg = ctx.m || ctx.msg || null;
     const quoted = msg?.key ? { quoted: msg } : undefined;
+    const prefix = resolvePrefix(ctx);
 
     let tempPath = null;
     let downloadCharge = null;
@@ -976,9 +958,22 @@ export default {
 
     try {
       cleanupOldFiles().catch(() => {});
-      await react(sock, msg, "🕓");
 
       const input = resolveUserInput(ctx);
+
+      if (!input) {
+        await react(sock, msg, "❌");
+        return await sock.sendMessage(
+          from,
+          {
+            text: buildUsageMessage(prefix),
+            ...getChannelInfo(),
+          },
+          quoted
+        );
+      }
+
+      await react(sock, msg, "⏳");
 
       const identity = buildRateIdentity(
         {
@@ -997,25 +992,11 @@ export default {
 
       if (!limitState.ok) {
         await react(sock, msg, "⚠️");
-
         return await sock.sendMessage(
           from,
           {
             text: buildLimitMessage(limitState.retryAfterMs),
-            ...global.channelInfo,
-          },
-          quoted
-        );
-      }
-
-      if (!input) {
-        await react(sock, msg, "❌");
-
-        return await sock.sendMessage(
-          from,
-          {
-            text: buildUsageMessage(),
-            ...global.channelInfo,
+            ...getChannelInfo(),
           },
           quoted
         );
@@ -1025,12 +1006,11 @@ export default {
 
       if (!resolved?.url) {
         await react(sock, msg, "❌");
-
         return await sock.sendMessage(
           from,
           {
-            text: buildUsageMessage(),
-            ...global.channelInfo,
+            text: buildUsageMessage(prefix),
+            ...getChannelInfo(),
           },
           quoted
         );
@@ -1054,7 +1034,6 @@ export default {
           cooldownMs: 90_000,
           shouldCountFailure: (error) => {
             const text = String(error?.message || error || "").toLowerCase();
-
             if (!text) return false;
             if (text.includes("no encontré resultados")) return false;
             if (text.includes("no encontre resultados")) return false;
@@ -1062,7 +1041,6 @@ export default {
             if (text.includes("supera el limite")) return false;
             if (text.includes("demasiado grande")) return false;
             if (text.includes("403")) return false;
-
             return true;
           },
         }
@@ -1075,34 +1053,14 @@ export default {
         author: apiData.author || resolved.author || "",
         duration: Number(apiData.duration || resolved.duration || 0),
         sourceUrl:
-          apiData.sourceUrl ||
-          getApiCandidates()[0] ||
-          "https://dv-yer-api.online/ytmp3",
+          apiData.sourceUrl || getApiCandidates()[0] || "https://dv-yer-api.online/ytmp3",
       };
 
       await sendAudioPreview(sock, from, quoted, finalData);
 
-      try {
-        await Promise.race([
-          sendRemoteMp3(sock, from, quoted, finalData),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("remote_send_timeout")),
-              REMOTE_SEND_TIMEOUT_MS
-            )
-          ),
-        ]);
-
-        sentSuccessfully = true;
-        await react(sock, msg, "✅");
-        return;
-      } catch (remoteError) {
-        console.error("REMOTE SEND FINAL ERROR:", remoteError?.message || remoteError);
-      }
-
-      const downloaded = await downloadYtmp3Fallback(
+      const downloaded = await downloadYtmp3File(
         resolved.url,
-        finalData.fileName || resolved.title,
+        finalData.fileName || finalData.title || resolved.title,
         finalData,
         {
           ctx,
@@ -1135,14 +1093,14 @@ export default {
 
       const errorText =
         error?.code === "PROVIDER_CIRCUIT_OPEN"
-          ? "Servicio temporalmente no disponible para audio. Intenta otra vez."
+          ? "Servicio temporalmente no disponible para audio.\nIntenta otra vez."
           : cleanErrorText(error);
 
       await sock.sendMessage(
         from,
         {
           text: buildErrorMessage(errorText),
-          ...global.channelInfo,
+          ...getChannelInfo(),
         },
         quoted
       );
