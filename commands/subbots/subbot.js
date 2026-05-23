@@ -137,10 +137,11 @@ async function sendSubbotRequestMenu({
     await sock.sendMessage(
       from,
       {
-        text:
-          `Menu rapido de subbot.\n` +
-          `Selecciona una opcion para ejecutar el comando.\n` +
-          `En este chat: ${chatStatus}\n` +
+          text:
+            `Menu rapido de subbot.\n` +
+            `Selecciona una opcion para ejecutar el comando.\n` +
+            `Tipo normal: dura *3 horas* y luego se libera.\n` +
+            `En este chat: ${chatStatus}\n` +
           `Modo publico: *${subbotAccess?.publicRequests ? "ENCENDIDO" : "APAGADO"}*`,
         title: "SUBBOT",
         subtitle: slot ? `Slot seleccionado: ${slot}` : "Seleccion rapida",
@@ -599,6 +600,7 @@ export default {
             `*${prefix}subbot liberar 3*\n` +
             `*${prefix}subbot reset 3*\n` +
             `*${prefix}subbot slots 20*\n` +
+            `*${prefix}subbotvip 519xxxxxxxxx* (owner/bot)\n` +
             `*${prefix}subbotoff* / *${prefix}subboton*`,
           ...global.channelInfo,
         },
@@ -635,6 +637,7 @@ export default {
             `Ejemplo:\n` +
             `*${prefix}subbot${slotHint} 51xxxxx*\n\n` +
             `Si no eliges slot, el bot usa el primer espacio libre.\n` +
+            `Subbot normal: dura *3 horas* desde que conecta y luego se libera.\n` +
             (requesterNumber
               ? `Atajo detectado:\n*${prefix}subbot${slotHint} ${requesterNumber}*\n\n`
               : "") +
@@ -681,6 +684,7 @@ export default {
         number: targetNumber,
         requesterNumber: targetNumber,
         requesterJid: String(sender || ""),
+        subbotMode: "normal",
         bypassPublicRequests: Boolean(esOwner),
         useCache: true,
       }
@@ -744,6 +748,7 @@ export default {
           `Bot: *${result.displayName}*\n` +
           `Numero: *${result.number}*\n` +
           `Solicitante: *${targetNumber}*\n` +
+          `Tipo: *NORMAL 3H*\n` +
           `Codigo: *${result.code}*\n` +
           `Expira aprox: *${formatDuration(result.expiresInMs)}*\n` +
           `En este chat: ${chatStatus}\n\n` +

@@ -403,6 +403,13 @@ function normalizeTimestamp(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function normalizeSubbotMode(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["vip", "premium", "permanente", "permanent"].includes(normalized)
+    ? "vip"
+    : "normal";
+}
+
 function normalizeSubbotSlotConfig(
   slotConfig,
   slotNumber,
@@ -478,6 +485,22 @@ function normalizeSubbotSlotConfig(
   const releasedAt = normalizeTimestamp(
     source.releasedAt || fallback.releasedAt || 0
   );
+  const subbotMode = normalizeSubbotMode(
+    source.subbotMode ||
+      source.mode ||
+      fallback.subbotMode ||
+      fallback.mode ||
+      "normal"
+  );
+  const sessionExpiresAt = subbotMode === "vip"
+    ? 0
+    : normalizeTimestamp(
+        source.sessionExpiresAt ||
+          source.expiresAt ||
+          fallback.sessionExpiresAt ||
+          fallback.expiresAt ||
+          0
+      );
 
   return {
     slot: slotNumber,
@@ -491,6 +514,8 @@ function normalizeSubbotSlotConfig(
     requesterJid,
     requestedAt,
     releasedAt,
+    subbotMode,
+    sessionExpiresAt,
   };
 }
 
@@ -535,6 +560,8 @@ function ensureSubbotSettings(currentSettings) {
     requesterJid: slot.requesterJid,
     requestedAt: slot.requestedAt,
     releasedAt: slot.releasedAt,
+    subbotMode: slot.subbotMode,
+    sessionExpiresAt: slot.sessionExpiresAt,
   }));
 }
 
@@ -3203,6 +3230,10 @@ const SUBBOT_RESERVATION_TIMEOUT_MS =
   RAW_SUBBOT_RESERVATION_TIMEOUT_MS <= 0
     ? 0
     : Math.max(30_000, RAW_SUBBOT_RESERVATION_TIMEOUT_MS);
+const SUBBOT_NORMAL_SESSION_MS = Math.max(
+  5 * 60 * 1000,
+  parseNumberEnv("SUBBOT_NORMAL_SESSION_MS", 3 * 60 * 60 * 1000) || 3 * 60 * 60 * 1000
+);
 const GROUP_METADATA_CACHE_TTL_MS = Math.max(
   60_000,
   parseNumberEnv("GROUP_METADATA_CACHE_TTL_MS", 5 * 60 * 1000) || 5 * 60 * 1000
@@ -4527,6 +4558,8 @@ function saveSubbotSlotConfig(slotNumber, updates = {}) {
     requesterJid: nextConfig.requesterJid,
     requestedAt: nextConfig.requestedAt,
     releasedAt: nextConfig.releasedAt,
+    subbotMode: nextConfig.subbotMode,
+    sessionExpiresAt: nextConfig.sessionExpiresAt,
   };
 
   saveSettingsFile();
@@ -4724,6 +4757,8 @@ function releaseSubbotSlot(botState, options = {}) {
       requesterJid: "",
       requestedAt: 0,
       releasedAt: releaseAt,
+      subbotMode: "normal",
+      sessionExpiresAt: 0,
     }) || currentConfig;
 
   botState.sock = null;
@@ -4753,6 +4788,8 @@ function releaseSubbotSlot(botState, options = {}) {
     requesterJid: "",
     requestedAt: 0,
     releasedAt: releaseAt,
+    subbotMode: "normal",
+    sessionExpiresAt: 0,
   };
   botState.groupCache?.clear?.();
   botState.contactNameCache?.clear?.();
@@ -7438,6 +7475,12 @@ function summarizeBotState(botState) {
   const configuredNumber = sanitizePhoneNumber(config?.pairingNumber);
   const requesterNumber = sanitizePhoneNumber(config?.requesterNumber) || configuredNumber;
   const requestedAt = normalizeTimestamp(config?.requestedAt);
+  const subbotMode = config?.id === "main"
+    ? "main"
+    : normalizeSubbotMode(config?.subbotMode);
+  const sessionExpiresAt = subbotMode === "vip"
+    ? 0
+    : normalizeTimestamp(config?.sessionExpiresAt);
   const connectedForMs =
     connected && botState?.connectedAt ? Math.max(0, Date.now() - botState.connectedAt) : 0;
   const activeCommandStartedAt = Number(botState?.activeCommandStartedAt || 0);
@@ -7471,6 +7514,9 @@ function summarizeBotState(botState) {
     requesterJid: String(config?.requesterJid || ""),
     requestedAt,
     releasedAt: normalizeTimestamp(config?.releasedAt),
+    subbotMode,
+    sessionExpiresAt,
+    sessionRemainingMs: sessionExpiresAt ? Math.max(0, sessionExpiresAt - Date.now()) : 0,
     waNumber,
     waName,
     connectedForMs,
@@ -7556,6 +7602,15 @@ function summarizeBotConfig(config) {
       requesterJid: String(config?.requesterJid || persistedState.requesterJid || ""),
       requestedAt: normalizeTimestamp(config?.requestedAt || persistedState.requestedAt),
       releasedAt: normalizeTimestamp(config?.releasedAt || persistedState.releasedAt),
+      subbotMode: normalizeSubbotMode(config?.subbotMode || persistedState.subbotMode),
+      sessionExpiresAt:
+        normalizeSubbotMode(config?.subbotMode || persistedState.subbotMode) === "vip"
+          ? 0
+          : normalizeTimestamp(config?.sessionExpiresAt || persistedState.sessionExpiresAt),
+      sessionRemainingMs:
+        normalizeTimestamp(config?.sessionExpiresAt || persistedState.sessionExpiresAt)
+          ? Math.max(0, normalizeTimestamp(config?.sessionExpiresAt || persistedState.sessionExpiresAt) - Date.now())
+          : 0,
       hasConfiguredNumber: Boolean(
         sanitizePhoneNumber(config?.pairingNumber) || persistedState.configuredNumber
       ),
@@ -7592,6 +7647,12 @@ function summarizeBotConfig(config) {
   const configuredNumber = sanitizePhoneNumber(config?.pairingNumber);
   const requesterNumber = sanitizePhoneNumber(config?.requesterNumber) || configuredNumber;
   const requestedAt = normalizeTimestamp(config?.requestedAt);
+  const subbotMode = config?.id === "main"
+    ? "main"
+    : normalizeSubbotMode(config?.subbotMode);
+  const sessionExpiresAt = subbotMode === "vip"
+    ? 0
+    : normalizeTimestamp(config?.sessionExpiresAt);
 
   return {
     id: String(config?.id || ""),
@@ -7612,6 +7673,9 @@ function summarizeBotConfig(config) {
     requesterJid: String(config?.requesterJid || ""),
     requestedAt,
     releasedAt: normalizeTimestamp(config?.releasedAt),
+    subbotMode,
+    sessionExpiresAt,
+    sessionRemainingMs: sessionExpiresAt ? Math.max(0, sessionExpiresAt - Date.now()) : 0,
     connectedForMs: 0,
     hasConfiguredNumber: Boolean(configuredNumber),
     pairingPending: false,
@@ -7706,6 +7770,102 @@ function isSubbotReservationExpired(summary = {}) {
   return Date.now() - requestedAt >= SUBBOT_RESERVATION_TIMEOUT_MS;
 }
 
+function shouldExpireNormalSubbotSession(summary = {}) {
+  if (!summary || String(summary.id || "") === "main") {
+    return false;
+  }
+
+  if (normalizeSubbotMode(summary.subbotMode) === "vip") {
+    return false;
+  }
+
+  const expiresAt = normalizeTimestamp(summary.sessionExpiresAt);
+  if (!expiresAt) {
+    return false;
+  }
+
+  if (!summary.connected && !summary.registered && !summary.hasSocket) {
+    return false;
+  }
+
+  return Date.now() >= expiresAt;
+}
+
+function ensureNormalSubbotSessionExpiry(config = {}) {
+  if (!config || config.id === "main" || config.enabled === false) {
+    return false;
+  }
+
+  const summary = summarizeBotConfig(config);
+  if (normalizeSubbotMode(summary.subbotMode) === "vip") {
+    return false;
+  }
+
+  if (!summary.connected && !summary.registered && !summary.hasSocket) {
+    return false;
+  }
+
+  if (normalizeTimestamp(summary.sessionExpiresAt)) {
+    return false;
+  }
+
+  const savedConfig = saveSubbotSlotConfig(config.slot, {
+    ...config,
+    subbotMode: "normal",
+    sessionExpiresAt: Date.now() + SUBBOT_NORMAL_SESSION_MS,
+  });
+
+  const botState = botStates.get(config.id);
+  if (savedConfig && botState) {
+    botState.config = {
+      ...botState.config,
+      ...savedConfig,
+    };
+    writePersistedBotRuntimeState(botState);
+  }
+
+  return Boolean(savedConfig);
+}
+
+function runSubbotSessionExpiryCleanup() {
+  if (!shouldRunSubbotReservationCleanup()) {
+    return 0;
+  }
+
+  let releasedCount = 0;
+
+  for (const config of SUBBOT_SLOT_CONFIGS) {
+    if (!config || config.enabled === false) {
+      continue;
+    }
+
+    ensureNormalSubbotSessionExpiry(config);
+
+    const summary = summarizeBotConfig(config);
+    if (!shouldExpireNormalSubbotSession(summary)) {
+      continue;
+    }
+
+    const botState = botStates.get(config.id) || ensureBotState(config);
+    const released = releaseSubbotSlot(botState, {
+      reason: "subbot_normal_3h_expirado",
+      closeSocket: true,
+      resetAuthFolder: true,
+    });
+
+    if (released) {
+      clearPersistedBotRuntimeState(config.id);
+      releasedCount += 1;
+    }
+  }
+
+  if (releasedCount > 0) {
+    console.log(`[SUBBOT] Cerre ${releasedCount} subbot(s) normales por limite de 3 horas.`);
+  }
+
+  return releasedCount;
+}
+
 function runSubbotReservationCleanup() {
   if (!shouldRunSubbotReservationCleanup()) {
     return 0;
@@ -7747,6 +7907,8 @@ function runSubbotReservationCleanup() {
       requesterJid: "",
       requestedAt: 0,
       releasedAt: Date.now(),
+      subbotMode: "normal",
+      sessionExpiresAt: 0,
     });
 
     if (releasedConfig) {
@@ -8735,6 +8897,7 @@ async function applyHotRuntimeRefresh(reason = "manual") {
 async function syncManagedProcessBots() {
   syncSettingsFromDisk();
   runSubbotReservationCleanup();
+  runSubbotSessionExpiryCleanup();
 
   for (const config of getManagedProcessBotConfigs()) {
     try {
@@ -9850,6 +10013,7 @@ global.botRuntime = {
       const requesterNumber =
         sanitizePhoneNumber(options?.requesterNumber) || explicitNumber;
       const requesterJid = String(options?.requesterJid || "").trim();
+      const requestedSubbotMode = normalizeSubbotMode(options?.subbotMode);
       const persistedConfig = getSubbotConfigBySlot(targetConfig.slot) || targetConfig;
       const persistedSummary = summarizeBotConfig(persistedConfig);
       const assignedNumber = getSubbotAssignedNumber(persistedSummary);
@@ -9920,8 +10084,10 @@ global.botRuntime = {
         nextPairingNumber !== sanitizePhoneNumber(persistedConfig.pairingNumber) ||
         nextRequesterNumber !== sanitizePhoneNumber(persistedConfig.requesterNumber) ||
         requesterJid !== String(persistedConfig.requesterJid || "").trim() ||
+        requestedSubbotMode !== normalizeSubbotMode(persistedConfig.subbotMode) ||
         nextRequestedAt !== normalizeTimestamp(persistedConfig.requestedAt) ||
-        normalizeTimestamp(persistedConfig.releasedAt) !== 0
+        normalizeTimestamp(persistedConfig.releasedAt) !== 0 ||
+        (requestedSubbotMode === "vip" && normalizeTimestamp(persistedConfig.sessionExpiresAt) !== 0)
       ) {
         targetConfig =
           saveSubbotSlotConfig(targetConfig.slot, {
@@ -9931,6 +10097,10 @@ global.botRuntime = {
             requesterJid,
             requestedAt: nextRequestedAt,
             releasedAt: 0,
+            subbotMode: requestedSubbotMode,
+            sessionExpiresAt: requestedSubbotMode === "vip"
+              ? 0
+              : normalizeTimestamp(persistedConfig.sessionExpiresAt),
           }) || targetConfig;
       }
     }
@@ -10538,6 +10708,23 @@ async function iniciarInstanciaBot(config) {
           botState.pairingCooldownReason = "";
           botState.pairingQrFallbackUntil = 0;
           botState.pairingCommandHintShown = false;
+          if (botState.config?.id !== "main") {
+            const mode = normalizeSubbotMode(botState.config?.subbotMode);
+            const expiresAt = mode === "vip"
+              ? 0
+              : normalizeTimestamp(botState.config?.sessionExpiresAt) || Date.now() + SUBBOT_NORMAL_SESSION_MS;
+            const savedConfig = saveSubbotSlotConfig(botState.config.slot, {
+              ...botState.config,
+              subbotMode: mode,
+              sessionExpiresAt: expiresAt,
+            });
+            if (savedConfig) {
+              botState.config = {
+                ...botState.config,
+                ...savedConfig,
+              };
+            }
+          }
           scheduleProfileApply(botState, botState.sock);
           const connectedBotName = resolveConfiguredBotName(config);
           const connectedNumber = sanitizePhoneNumber(

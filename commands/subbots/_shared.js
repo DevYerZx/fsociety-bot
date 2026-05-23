@@ -155,12 +155,18 @@ function getAssignedSubbotNumber(bot) {
 
 function getSubbotCompactLines(bot) {
   const assignedNumber = getAssignedSubbotNumber(bot);
+  const isVip = String(bot?.subbotMode || "").toLowerCase() === "vip";
   const lines = [
     `◆ [${bot.slot}] ${bot.label || `SUBBOT${bot.slot}`} | ${getSubbotStatusTone(bot)}`,
+    `Tipo: ${isVip ? "VIP sin limite" : "Normal 3h"}`,
     `Nombre: ${bot.displayName}`,
     `Numero: ${assignedNumber || "Sin numero"}`,
     `Tiempo: ${getSubbotActivityText(bot)}`,
   ];
+
+  if (!isVip && bot.sessionRemainingMs > 0) {
+    lines.push(`Cierre automatico: en ${formatDuration(bot.sessionRemainingMs)}`);
+  }
 
   if (bot.connected) {
     lines.push(`Desde: ${formatMoment(bot.connectedAt, "Sin conexion activa")}`);
@@ -186,6 +192,7 @@ export function buildSubbotCard(bot, options = {}) {
   const assignedNumber = getAssignedSubbotNumber(bot);
   const waNumber = normalizeNumber(bot?.waNumber || "");
   const waName = String(bot?.waName || "").trim();
+  const isVip = String(bot?.subbotMode || "").toLowerCase() === "vip";
 
   if (compact) {
     return getSubbotCompactLines(bot).join("\n");
@@ -194,6 +201,7 @@ export function buildSubbotCard(bot, options = {}) {
   const lines = [
     `╭─ INFO SUBBOT ${bot.slot} ─`,
     `Estado: ${getSubbotStatusTone(bot)}`,
+    `Tipo: ${isVip ? "VIP sin limite" : "Normal 3h"}`,
     `Nombre: ${bot.displayName}`,
     `Label: ${bot.label || `SUBBOT${bot.slot}`}`,
     `Numero actual: ${assignedNumber || "Sin numero"}`,
@@ -201,6 +209,7 @@ export function buildSubbotCard(bot, options = {}) {
       ? [`WhatsApp real: ${waName || "Sin nombre"} | ${waNumber || "Sin numero"}`]
       : []),
     `Tiempo activo: ${bot.connected ? formatDuration(bot.connectedForMs || 0) : "No activo ahora"}`,
+    `Cierre automatico: ${isVip ? "No aplica" : bot.sessionRemainingMs > 0 ? `en ${formatDuration(bot.sessionRemainingMs)}` : "pendiente al conectar"}`,
     `Conectado desde: ${formatMoment(bot.connectedAt, "Sin conexion activa")}`,
     `Solicitud detectada: ${formatMoment(bot.requestedAt, "Sin solicitud reciente")}`,
     `Ultima salida: ${formatMoment(bot.lastDisconnectAt, "Sin desconexion reciente")}`,

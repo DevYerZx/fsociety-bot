@@ -37,6 +37,76 @@ function normalizeNumber(value = "") {
     .trim();
 }
 
+function parseSlotToken(value = "", maxSlots = 15) {
+  const raw = String(value || "").trim().toLowerCase();
+  const direct = Number.parseInt(raw, 10);
+  if (String(direct) === raw && direct >= 1 && direct <= maxSlots) return direct;
+
+  const match = raw.match(/^(?:subbot|slot)(\d{1,2})$/);
+  if (!match) return null;
+
+  const parsed = Number.parseInt(match[1], 10);
+  return parsed >= 1 && parsed <= maxSlots ? parsed : null;
+}
+
+function parseVipPairingArgs(args = [], maxSlots = 15) {
+  const tokens = (Array.isArray(args) ? args : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  const first = tokens[0] || "";
+  const slot = parseSlotToken(first, maxSlots);
+  if (slot) {
+    return {
+      slot,
+      number: normalizeNumber(tokens[1] || ""),
+      valid: Boolean(normalizeNumber(tokens[1] || "")),
+    };
+  }
+
+  const number = normalizeNumber(first);
+  return {
+    slot: null,
+    number,
+    valid: Boolean(number),
+  };
+}
+
+function detectRequesterNumber(msg, sender) {
+  const candidates = [
+    msg?.senderPhone,
+    msg?.key?.participantPn,
+    msg?.sender,
+    sender,
+    msg?.key?.participant,
+    msg?.key?.remoteJid,
+  ];
+
+  for (const candidate of candidates) {
+    const digits = normalizeNumber(candidate);
+    if (digits.length >= 8) return digits;
+  }
+
+  return "";
+}
+
+function canRequestVipPairing({ esOwner, requesterNumber, sock, settings }) {
+  if (esOwner) return true;
+
+  const requester = normalizeNumber(requesterNumber);
+  if (!requester) return false;
+
+  return [
+    settings?.pairingNumber,
+    settings?.ownerNumber,
+    sock?.user?.id,
+    sock?.user?.lid,
+  ]
+    .map((value) => normalizeNumber(value))
+    .filter(Boolean)
+    .some((number) => number === requester);
+}
+
 function parseDurationToMs(value = "") {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw || raw === "inf" || raw === "infinito" || raw === "forever") {
@@ -89,17 +159,119 @@ export default {
   name: "subbotvip",
   command: ["subbotvip"],
   category: "admin",
-  description: "Administra VIP especial para subbots sin limite de descarga",
-  ownerOnly: true,
+  description: "Crea subbot VIP sin limite de tiempo y administra VIP especial",
 
-  run: async ({ sock, msg, from, args = [], settings }) => {
+  run: async ({ sock, msg, from, args = [], settings, esOwner, sender }) => {
     const prefix = getPrefix(settings);
-    const action = String(args[0] || "help").trim().toLowerCase();
+    const runtime = global.botRuntime;
+    const action = String(args[0] || "").trim().toLowerCase();
+    const adminActions = new Set(["help", "add", "del", "delete", "rm", "check", "list"]);
+
+    if (!adminActions.has(action)) {
+      const subbotState = runtime?.getSubbotRequestState?.() || {};
+      const parsed = parseVipPairingArgs(args, Number(subbotState?.maxSlots || 15));
+      const requesterNumber = detectRequesterNumber(msg, sender);
+
+      if (!canRequestVipPairing({ esOwner, requesterNumber, sock, settings })) {
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              `*SUBBOT VIP BLOQUEADO*\n\n` +
+              `Solo el owner o el numero principal del bot pueden pedir subbot VIP.\n` +
+              `Usuarios normales pueden usar: *${prefix}subbot 51912345678*`,
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
+
+      if (!runtime?.requestBotPairingCode || !parsed.valid) {
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              `╭━━〔 💎 *SUBBOT VIP* 〕━━⬣\n` +
+              `┃ ${prefix}subbotvip 519xxxxxxxx\n` +
+              `┃ ${prefix}subbotvip 3 519xxxxxxxx\n` +
+              `┃ Tipo: VIP sin limite de tiempo\n` +
+              `╰━━━━━━━━━━━━━━━━━━━━⬣`,
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
+
+      await sock.sendMessage(
+        from,
+        {
+          text:
+            `Preparando subbot VIP para *${parsed.number}*...\n` +
+            `Tipo: *VIP sin limite de tiempo*`,
+          ...global.channelInfo,
+        },
+        { quoted: msg }
+      );
+
+      const result = await runtime.requestBotPairingCode(
+        parsed.slot ? `subbot${parsed.slot}` : "subbot",
+        {
+          number: parsed.number,
+          requesterNumber: parsed.number,
+          requesterJid: String(sender || ""),
+          subbotMode: "vip",
+          bypassPublicRequests: true,
+          useCache: true,
+        }
+      );
+
+      if (!result?.ok) {
+        return sock.sendMessage(
+          from,
+          {
+            text: result?.message || "No pude obtener el codigo del subbot VIP.",
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
+
+      const slotLabel = result.slot ? ` ${result.slot}` : "";
+      return sock.sendMessage(
+        from,
+        {
+          text:
+            `╭━━〔 💎 *CODIGO SUBBOT VIP${slotLabel}* 〕━━⬣\n` +
+            `┃ Bot: *${result.displayName}*\n` +
+            `┃ Numero: *${result.number}*\n` +
+            `┃ Tipo: *VIP SIN LIMITE*\n` +
+            `┃ Codigo: *${result.code}*\n` +
+            `┃ Expira aprox: *${formatDuration(result.expiresInMs)}*\n` +
+            `╰━━━━━━━━━━━━━━━━━━━━⬣\n\n` +
+            `Abre WhatsApp > Dispositivos vinculados > Vincular con numero de telefono.`,
+          ...global.channelInfo,
+        },
+        { quoted: msg }
+      );
+    }
+
+    if (!esOwner) {
+      return sock.sendMessage(
+        from,
+        {
+          text: "Solo el owner puede administrar la lista VIP.",
+          ...global.channelInfo,
+        },
+        { quoted: msg }
+      );
+    }
+
+    const adminAction = action || "help";
     const data = readVip();
     cleanupSubbotVip(data);
     saveVip(data);
 
-    if (action === "help") {
+    if (adminAction === "help") {
       return sock.sendMessage(
         from,
         {
@@ -117,7 +289,7 @@ export default {
       );
     }
 
-    if (action === "list") {
+    if (adminAction === "list") {
       const now = Date.now();
       const users = Object.entries(data.users || {})
         .filter(([, info]) => info?.subbotVip === true)
@@ -145,7 +317,7 @@ export default {
       );
     }
 
-    if (action === "check") {
+    if (adminAction === "check") {
       const number = normalizeNumber(args[1]);
       const info = data.users[number];
       if (!number || !info || info.subbotVip !== true) {
@@ -175,7 +347,7 @@ export default {
       );
     }
 
-    if (action === "del" || action === "delete" || action === "rm") {
+    if (adminAction === "del" || adminAction === "delete" || adminAction === "rm") {
       const number = normalizeNumber(args[1]);
       if (!number || !data.users[number] || data.users[number]?.subbotVip !== true) {
         return sock.sendMessage(
@@ -197,7 +369,7 @@ export default {
       );
     }
 
-    if (action === "add") {
+    if (adminAction === "add") {
       const number = normalizeNumber(args[1]);
       const durationMs = parseDurationToMs(args[2] || "inf");
 
