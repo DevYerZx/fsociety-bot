@@ -1,3 +1,4 @@
+
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
@@ -907,18 +908,36 @@ async function sendAudioPreview(sock, from, quoted, data = {}) {
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
+  const thumbBuffer = await getBuffer(data.thumbnail, 10_000);
+  const title = clipText(data.title || path.parse(data.fileName || "audio").name, 80);
+  const artist = clipText(data.author || "FSOCIETY MP3", 60);
+
+  const audioPayload = {
+    audio: { url: data.tempPath },
+    mimetype: "audio/mpeg",
+    fileName: data.fileName,
+    ptt: false,
+    title,
+    artist,
+    seconds: Number(data.duration || 0) || undefined,
+    jpegThumbnail: thumbBuffer || undefined,
+    contextInfo: thumbBuffer
+      ? {
+          externalAdReply: {
+            title,
+            body: artist,
+            mediaType: 2,
+            thumbnail: thumbBuffer,
+            sourceUrl: data.videoUrl || data.sourceUrl || "https://dv-yer-api.online/",
+            renderLargerThumbnail: false,
+          },
+        }
+      : undefined,
+  };
+
   if (data.size <= AUDIO_AS_DOCUMENT_THRESHOLD) {
     try {
-      await sock.sendMessage(
-        from,
-        {
-          audio: { url: data.tempPath },
-          mimetype: "audio/mpeg",
-          fileName: data.fileName,
-          ptt: false,
-        },
-        quoted
-      );
+      await sock.sendMessage(from, audioPayload, quoted);
       return "audio";
     } catch (error) {
       console.error("SEND LOCAL AUDIO ERROR:", error?.message || error);
@@ -931,6 +950,20 @@ async function sendLocalMp3(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
+      jpegThumbnail: thumbBuffer || undefined,
+      caption: `🎧 *${title}*${artist ? `\n👤 ${artist}` : ""}`,
+      contextInfo: thumbBuffer
+        ? {
+            externalAdReply: {
+              title,
+              body: artist,
+              mediaType: 2,
+              thumbnail: thumbBuffer,
+              sourceUrl: data.videoUrl || data.sourceUrl || "https://dv-yer-api.online/",
+              renderLargerThumbnail: false,
+            },
+          }
+        : undefined,
     },
     quoted
   );
@@ -1073,8 +1106,11 @@ export default {
       await sendLocalMp3(sock, from, quoted, {
         ...downloaded,
         title: finalData.title || resolved.title,
+        author: finalData.author || resolved.author || "",
+        thumbnail: finalData.thumbnail || resolved.thumbnail || "",
         duration: finalData.duration || 0,
         sourceUrl: finalData.sourceUrl,
+        videoUrl: resolved.url,
       });
 
       sentSuccessfully = true;
