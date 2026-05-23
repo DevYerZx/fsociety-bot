@@ -1,7 +1,3 @@
-import axios from "axios";
-
-const TAGALL_IMAGE = "https://files.catbox.moe/4bvpl0.jpg";
-const CHANNEL_URL = "https://whatsapp.com/channel/120363354701957370";
 const VERSION = "1.3.3";
 const MAX_LISTED_PER_SECTION = 160;
 
@@ -121,21 +117,6 @@ async function react(sock, msg, emoji) {
   } catch {}
 }
 
-async function getThumbnail() {
-  try {
-    const response = await axios.get(TAGALL_IMAGE, {
-      responseType: "arraybuffer",
-      timeout: 12_000,
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400 || !response.data) return undefined;
-    return Buffer.from(response.data);
-  } catch {
-    return undefined;
-  }
-}
-
 export default {
   command: ["tagall", "invocar", "invocartodos", "llamartodos", "mencionartodos", "todos"],
   category: "grupo",
@@ -149,29 +130,18 @@ export default {
     const metadata = groupMetadata || (await sock.groupMetadata(from));
     const participants = uniqueById(Array.isArray(metadata?.participants) ? metadata.participants : []);
     const mentionIds = participants.map((participant) => participant.id).filter(Boolean);
-    const caption = buildCaption(metadata, participants, args.join(" "), getContactName);
-    const thumbnail = await getThumbnail();
+    const text = buildCaption(metadata, participants, args.join(" "), getContactName);
+    const baseContextInfo = global.channelInfo?.contextInfo || {};
 
     return sock.sendMessage(
       from,
       {
-        image: { url: TAGALL_IMAGE },
-        caption,
+        text,
         mentions: mentionIds,
         contextInfo: {
+          ...baseContextInfo,
           mentionedJid: mentionIds,
-          forwardingScore: 999999,
-          isForwarded: true,
-          externalAdReply: {
-            title: "⚔️ Invocación General ⚔️",
-            body: "El llamado fue emitido para todo el grupo.",
-            previewType: "PHOTO",
-            thumbnail,
-            sourceUrl: CHANNEL_URL,
-            showAdAttribution: true,
-          },
         },
-        ...global.channelInfo,
       },
       { quoted: msg }
     );
