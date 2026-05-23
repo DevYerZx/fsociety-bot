@@ -69,6 +69,7 @@ const COMMAND_CONFIG = {
     resolvePickerFromDownloadPicks: true,
     syntheticSearchPicks: 10,
     hidePackageName: true,
+    fetchPageImage: true,
   },
 
   windows: {
@@ -228,6 +229,15 @@ function pickSourcePageUrl(data) {
   );
 }
 
+function improveImageUrlQuality(url = "") {
+  const value = String(url || "").trim();
+  if (!value) return "";
+
+  return value
+    .replace(/-\d+x\d+(?=\.(?:jpe?g|png|webp)(?:[?#]|$))/i, "")
+    .replace(/\/\d+x\d+(bb|cc)?\.(jpg|jpeg|png|webp)(?=([?#]|$))/i, "/1200x1200$1.$2");
+}
+
 function extractMetaImage(html = "", baseUrl = "") {
   const text = String(html || "");
   const patterns = [
@@ -235,6 +245,8 @@ function extractMetaImage(html = "", baseUrl = "") {
     /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i,
     /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
     /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["'][^>]*>/i,
+    /<link[^>]+rel=["'][^"']*preload[^"']*["'][^>]+as=["']image["'][^>]+href=["']([^"']+)["'][^>]*>/i,
+    /<link[^>]+href=["']([^"']+)["'][^>]+rel=["'][^"']*preload[^"']*["'][^>]+as=["']image["'][^>]*>/i,
   ];
 
   for (const pattern of patterns) {
@@ -242,9 +254,9 @@ function extractMetaImage(html = "", baseUrl = "") {
     if (!match?.[1]) continue;
 
     try {
-      return new URL(match[1], baseUrl).toString();
+      return improveImageUrlQuality(new URL(match[1], baseUrl).toString());
     } catch {
-      return String(match[1] || "").trim();
+      return improveImageUrlQuality(String(match[1] || "").trim());
     }
   }
 
@@ -627,8 +639,8 @@ async function requestDownloadMeta(input, config, options = {}) {
       .toLowerCase() || config.defaultExtension;
 
   const sourcePageUrl = pickSourcePageUrl(data);
-  const rawIcon = normalizeApiUrl(pickImageUrl(data));
-  const icon = rawIcon || (config.previewBeforeSend ? await fetchPageImageUrl(sourcePageUrl) : "");
+  const rawIcon = improveImageUrlQuality(normalizeApiUrl(pickImageUrl(data)));
+  const icon = rawIcon || (config.fetchPageImage ? await fetchPageImageUrl(sourcePageUrl) : "");
 
   return {
     title: safeFileName(data?.title || data?.package_name || `${config.name} File`),

@@ -58,6 +58,16 @@ function normalizeAudioFileName(name, fallbackBase = "applemusic") {
   return `${base}.mp3`;
 }
 
+function improveAppleArtworkUrl(url = "") {
+  const value = String(url || "").trim();
+  if (!value) return "";
+
+  return value.replace(
+    /\/\d+x\d+(bb|cc)?\.(jpg|jpeg|png|webp)(?=([?#]|$))/i,
+    "/1200x1200$1.$2"
+  );
+}
+
 function getPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
     return settings.prefix.find((value) => String(value || "").trim()) || ".";
@@ -198,7 +208,7 @@ async function searchAppleMusic(query) {
     artist: cleanText(item.artist || "Apple Music"),
     album: cleanText(item.album || ""),
     duration: durationLabel(item.duration_ms),
-    artwork: item.artwork || item.image_url || null,
+    artwork: improveAppleArtworkUrl(item.artwork || item.image_url || ""),
     url: item.apple_music_url || item.song_url || item.url || "",
   })).filter((item) => item.title && item.url);
 }
@@ -240,7 +250,7 @@ async function getAppleMusicInfo(input, pick = 1) {
   return {
     title,
     artist,
-    artwork: normalizeApiUrl(data.image_url_full || data.image_url || ""),
+    artwork: improveAppleArtworkUrl(normalizeApiUrl(data.image_url_full || data.image_url || "")),
     fileName: normalizeAudioFileName(data.filename || `${title} - ${artist}`, `${title} - ${artist}`),
     downloadUrl,
   };
