@@ -20,6 +20,7 @@ import { sanitizeProviderMessage } from "./_errorMessages.js";
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
 const SEARCH_TIMEOUT = 45_000;
 const MAX_FILE_BYTES = 800 * 1024 * 1024;
+const APKMOD_MAX_FILE_BYTES = 1500 * 1024 * 1024;
 const MIN_FILE_BYTES = 20_000;
 const TMP_ROOT = path.join(os.tmpdir(), "dvyer-app-downloads");
 const COOLDOWN_TIME = 0;
@@ -64,6 +65,11 @@ const COMMAND_CONFIG = {
     preparing: "Preparando app MOD...",
     selectionText: "Selecciona la app MOD que quieres descargar.",
     tooLargeLabel: "APK MOD",
+    maxFileBytes: APKMOD_MAX_FILE_BYTES,
+    resolvePickerFromDownloadPicks: true,
+    syntheticSearchPicks: 10,
+    hidePackageName: true,
+    previewBeforeSend: true,
   },
 
   windows: {
@@ -194,6 +200,78 @@ function normalizeDownloadFileName(name, fallbackBase = "file", fallbackExt = "b
   const base = safeFileName(parsed.name || fallbackBase);
 
   return `${base}.${ext}`;
+}
+
+function pickImageUrl(data) {
+  return (
+    data?.icon ||
+    data?.image ||
+    data?.image_url ||
+    data?.image_url_full ||
+    data?.thumbnail ||
+    data?.thumb ||
+    data?.selected?.icon ||
+    data?.selected?.image ||
+    data?.selected?.image_url ||
+    data?.selected?.thumbnail ||
+    ""
+  );
+}
+
+function pickSourcePageUrl(data) {
+  return (
+    data?.app_url ||
+    data?.download_page_url ||
+    data?.selected?.app_url ||
+    data?.selected?.download_page_url ||
+    data?.page_url ||
+    ""
+  );
+}
+
+function extractMetaImage(html = "", baseUrl = "") {
+  const text = String(html || "");
+  const patterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["'][^>]*>/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+
+    try {
+      return new URL(match[1], baseUrl).toString();
+    } catch {
+      return String(match[1] || "").trim();
+    }
+  }
+
+  return "";
+}
+
+async function fetchPageImageUrl(pageUrl) {
+  const url = String(pageUrl || "").trim();
+  if (!/^https?:\/\//i.test(url)) return "";
+
+  try {
+    const response = await axios.get(url, {
+      timeout: 12_000,
+      headers: {
+        Accept: "text/html,*/*",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
+      },
+      validateStatus: () => true,
+    });
+
+    if (response.status >= 400 || !response.data) return "";
+    return extractMetaImage(response.data, url);
+  } catch {
+    return "";
+  }
 }
 
 function mimeFromFileName(fileName) {
@@ -458,8 +536,12 @@ async function downloadThumbnailBuffer(url) {
 }
 
 async function requestSearchResults(input, config) {
-  if (!config.searchPath) {
+  if (!config.searchPath && !config.resolvePickerFromDownloadPicks) {
     throw new Error(`La búsqueda previa no está disponible para ${config.name}.`);
+  }
+
+  if (config.resolvePickerFromDownloadPicks) {
+    return requestDownloadPickerResults(input, config);
   }
 
   const data = await apiGet(
@@ -473,6 +555,43 @@ async function requestSearchResults(input, config) {
   );
 
   const results = Array.isArray(data?.results) ? data.results.slice(0, 10) : [];
+
+  if (!results.length) {
+    throw new Error(`No encontré resultados de ${config.name}.`);
+  }
+
+  return results;
+}
+
+async function requestDownloadPickerResults(input, config) {
+  const maxPicks = Math.max(1, Math.min(10, Number(config.syntheticSearchPicks || 10)));
+  const requests = Array.from({ length: maxPicks }, (_, index) => {
+    const pick = index + 1;
+    return requestDownloadMeta(input, config, { pick, includeDownloadUrl: false })
+      .then((item) => ({ ...item, pick }))
+      .catch(() => null);
+  });
+
+  const settled = await Promise.all(requests);
+  const seen = new Set();
+  const results = [];
+
+  for (const item of settled) {
+    if (!item?.title) continue;
+
+    const key = cleanText(`${item.title}:${item.sourcePageUrl || ""}`).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    results.push({
+      title: item.title,
+      version: item.version,
+      format: item.format,
+      icon: item.icon,
+      size_bytes: item.sizeBytes,
+      pick: item.pick,
+    });
+  }
 
   if (!results.length) {
     throw new Error(`No encontré resultados de ${config.name}.`);
@@ -496,9 +615,10 @@ async function requestDownloadMeta(input, config, options = {}) {
   }
 
   const data = await apiGet(buildApiUrl(config.downloadPath), params, SEARCH_TIMEOUT);
-  const downloadUrl = normalizeApiUrl(pickApiDownloadUrl(data));
+  const rawDownloadUrl = pickApiDownloadUrl(data);
+  const downloadUrl = normalizeApiUrl(rawDownloadUrl);
 
-  if (!downloadUrl) {
+  if (!downloadUrl && options?.includeDownloadUrl !== false) {
     throw new Error("La API no devolvió enlace interno de descarga.");
   }
 
@@ -506,6 +626,10 @@ async function requestDownloadMeta(input, config, options = {}) {
     String(data?.format || data?.download_type || config.defaultExtension)
       .trim()
       .toLowerCase() || config.defaultExtension;
+
+  const sourcePageUrl = pickSourcePageUrl(data);
+  const rawIcon = normalizeApiUrl(pickImageUrl(data));
+  const icon = rawIcon || (config.previewBeforeSend ? await fetchPageImageUrl(sourcePageUrl) : "");
 
   return {
     title: safeFileName(data?.title || data?.package_name || `${config.name} File`),
@@ -516,17 +640,20 @@ async function requestDownloadMeta(input, config, options = {}) {
     ),
     version: String(data?.version || "").trim() || null,
     format: inferredExt,
-    icon: data?.icon || null,
+    icon: icon || null,
     description: cleanText(data?.description || "") || null,
     sizeBytes:
       Number(data?.size_bytes || data?.content_length || data?.filesize_bytes || 0) ||
       null,
     downloadUrl,
-    packageName: String(data?.package_name || data?.selected?.slug || "").trim() || null,
+    packageName: config.hidePackageName
+      ? null
+      : String(data?.package_name || data?.selected?.slug || "").trim() || null,
+    sourcePageUrl,
   };
 }
 
-async function downloadAbsoluteFile(downloadUrl, outputPath) {
+async function downloadAbsoluteFile(downloadUrl, outputPath, maxFileBytes = MAX_FILE_BYTES) {
   const finalUrl = appendDvyerApiKeyToUrl(downloadUrl);
 
   const response = await axios.get(finalUrl, {
@@ -560,7 +687,7 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
 
   const contentLength = Number(response.headers?.["content-length"] || 0);
 
-  if (contentLength && contentLength > MAX_FILE_BYTES) {
+  if (contentLength && contentLength > maxFileBytes) {
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
 
@@ -569,7 +696,7 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
   response.data.on("data", (chunk) => {
     downloaded += chunk.length;
 
-    if (downloaded > MAX_FILE_BYTES) {
+    if (downloaded > maxFileBytes) {
       response.data.destroy(
         new Error("El archivo es demasiado grande para enviarlo por WhatsApp.")
       );
@@ -594,7 +721,7 @@ async function downloadAbsoluteFile(downloadUrl, outputPath) {
     throw new Error("El archivo descargado es inválido.");
   }
 
-  if (size > MAX_FILE_BYTES) {
+  if (size > maxFileBytes) {
     deleteFileSafe(outputPath);
     throw new Error("El archivo es demasiado grande para enviarlo por WhatsApp.");
   }
@@ -615,7 +742,7 @@ function buildPreviewCaption(info, config) {
   ];
 
   if (info.version) lines.push(`┃ 🧩 Versión: *${info.version}*`);
-  if (info.packageName) lines.push(`┃ 📛 Paquete: *${info.packageName}*`);
+  if (!config.hidePackageName && info.packageName) lines.push(`┃ 📛 Paquete: *${info.packageName}*`);
   if (info.format) lines.push(`┃ 📁 Formato: *${String(info.format).toUpperCase()}*`);
 
   const sizeText = humanBytes(info.sizeBytes);
@@ -679,7 +806,7 @@ async function sendSearchPicker(ctx, query, results, config) {
       }`,
       72
     ),
-    id: `${prefix}${config.primaryCommand} --pick=${index + 1} ${query}`,
+    id: `${prefix}${config.primaryCommand} --pick=${Number(result.pick || index + 1)} ${query}`,
   }));
 
   let thumbBuffer = null;
@@ -763,11 +890,11 @@ async function sendSearchPicker(ctx, query, results, config) {
   }
 }
 
-async function sendFileDocument(sock, from, quoted, info, filePath, fileName, size) {
+async function sendFileDocument(sock, from, quoted, info, filePath, fileName, size, config = {}) {
   const extra = [];
 
   if (info.version) extra.push(`┃ 🧩 Versión: ${info.version}`);
-  if (info.packageName) extra.push(`┃ 📛 Paquete: ${info.packageName}`);
+  if (!config.hidePackageName && info.packageName) extra.push(`┃ 📛 Paquete: ${info.packageName}`);
   if (info.format) extra.push(`┃ 📁 Formato: ${String(info.format).toUpperCase()}`);
 
   const sizeText = humanBytes(size);
@@ -840,6 +967,7 @@ export function buildDvyerAppCommand(kind) {
         sock,
         from,
       };
+      const maxFileBytes = Number(config.maxFileBytes || MAX_FILE_BYTES) || MAX_FILE_BYTES;
 
       let tempPath = null;
       let downloadCharge = null;
@@ -888,7 +1016,11 @@ export function buildDvyerAppCommand(kind) {
           );
         }
 
-        if (config.searchPath && !parsedInput.explicitPick && !isHttpUrl(userInput)) {
+        if (
+          (config.searchPath || config.resolvePickerFromDownloadPicks) &&
+          !parsedInput.explicitPick &&
+          !isHttpUrl(userInput)
+        ) {
           const results = await requestSearchResults(userInput, config);
 
           await sendSearchPicker(
@@ -920,11 +1052,15 @@ export function buildDvyerAppCommand(kind) {
           pick: parsedInput.pick,
         });
 
-        if (downloadInfo.sizeBytes && downloadInfo.sizeBytes > MAX_FILE_BYTES) {
+        if (downloadInfo.sizeBytes && downloadInfo.sizeBytes > maxFileBytes) {
           await reactToMessage(sock, msg, "⚠️");
           await sendLargeFileLink(sock, from, quoted, downloadInfo, config);
           cooldowns.delete(userId);
           return null;
+        }
+
+        if (config.previewBeforeSend) {
+          await sendPreviewCard(sock, from, quoted, downloadInfo, config);
         }
 
         const tmpDir = path.join(TMP_ROOT, config.key);
@@ -937,7 +1073,8 @@ export function buildDvyerAppCommand(kind) {
 
         const downloaded = await downloadAbsoluteFile(
           downloadInfo.downloadUrl,
-          tempPath
+          tempPath,
+          maxFileBytes
         );
 
         const finalFileName = normalizeDownloadFileName(
@@ -953,7 +1090,8 @@ export function buildDvyerAppCommand(kind) {
           downloadInfo,
           downloaded.tempPath,
           finalFileName,
-          downloaded.size
+          downloaded.size,
+          config
         );
         await reactToMessage(sock, msg, "✅");
       } catch (error) {
