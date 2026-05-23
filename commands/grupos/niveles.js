@@ -236,22 +236,6 @@ export default {
       ? addGroupCommandXp(from, sender, 12, 8_000)
       : addGroupMessageXp(from, sender, 6, 25_000);
 
-    if (!result?.ok || !result?.leveledUp) return;
-
-    const roleText = result.roleChanged
-      ? `\nNuevo rol: *${result.newRole}*`
-      : "";
-
-    const waName = cleanText(msg?.pushName || msg?.notifyName || "");
-    const senderDisplay = formatUser(sender) || "Sin numero";
-    const numberLine = `${waName ? `${waName} · ` : ""}${senderDisplay}`;
-
-    await sock.sendMessage(from, {
-      text:
-        `🎉 *SUBISTE DE NIVEL*\n` +
-        `${numberLine}\n` +
-        `${senderDisplay} pasó de *${result.previousLevel}* a *${result.newLevel}*${roleText}`,
-      ...global.channelInfo,
-    });
+    return;
   },
 };
