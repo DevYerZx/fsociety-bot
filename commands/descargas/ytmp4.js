@@ -8,6 +8,8 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { buildDvyerUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { bindAbort, throwIfAborted } from "../../lib/command-abort.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
@@ -49,6 +51,8 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/145 Safari/537.36";
 
 const sleepCleanupMs = 15 * 60 * 1000;
+const execFileAsync = promisify(execFile);
+const FFPROBE_TIMEOUT_MS = 20_000;
 
 function clean(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -389,20 +393,82 @@ async function apiRequest(videoUrl, q, fast, signal) {
   };
 }
 
-async function apiWithFallback(videoUrl, preferred, fast, signal) {
+// ---------------------------------------------------------------------------
+// Validación real de integridad: comprueba con ffprobe que el archivo
+// descargado tiene un stream de video decodificable y duración > 0.
+// Esto es lo que detecta archivos "corruptos" que pasan las validaciones de
+// tamaño/content-type pero que WhatsApp luego marca como
+// "este video no está disponible".
+//
+// Si ffprobe no está instalado en el servidor, se omite esta validación
+// (no se bloquea el envío) pero se deja un aviso en consola.
+// ---------------------------------------------------------------------------
+async function probeVideo(filePath) {
+  try {
+    const { stdout } = await execFileAsync(
+      "ffprobe",
+      [
+        "-v", "error",
+        "-show_entries", "stream=codec_type",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        filePath,
+      ],
+      { timeout: FFPROBE_TIMEOUT_MS }
+    );
+
+    const data = JSON.parse(stdout || "{}");
+    const hasVideoStream = Array.isArray(data.streams) &&
+      data.streams.some((s) => s.codec_type === "video");
+    const duration = Number(data.format?.duration || 0);
+
+    return hasVideoStream && duration > 0;
+  } catch (e) {
+    if (e?.code === "ENOENT") {
+      console.warn(
+        "YTMP4: ffprobe no está instalado, se omite la validación de integridad del video."
+      );
+      return true;
+    }
+
+    // ffprobe corrió pero no pudo leer el archivo: está corrupto.
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Combina API + descarga + validación de integridad, reintentando con cada
+// calidad de FALLBACK_QUALITIES hasta conseguir un archivo realmente
+// reproducible. Antes el fallback de calidades solo cubría errores de la
+// API; ahora también cubre archivos corruptos o truncados detectados
+// después de la descarga.
+// ---------------------------------------------------------------------------
+async function obtainPlayableFile(videoUrl, preferredQuality, fast, signal) {
   let lastError = null;
 
-  for (const q of uniqQualities(preferred)) {
+  for (const q of uniqQualities(preferredQuality)) {
     throwIfAborted(signal);
 
+    let file = null;
+
     try {
-      return await apiRequest(videoUrl, q, fast, signal);
+      const apiData = await apiRequest(videoUrl, q, fast, signal);
+      file = await downloadFile(apiData.remoteUrl, apiData.fileName, signal);
+
+      const valid = await probeVideo(file.tempPath);
+
+      if (!valid) {
+        throw new Error("El archivo descargado está corrupto o incompleto.");
+      }
+
+      return { apiData, file };
     } catch (e) {
       lastError = e;
+      if (file?.tempPath) await deleteSafe(file.tempPath);
     }
   }
 
-  throw lastError || new Error("No se pudo obtener el MP4.");
+  throw lastError || new Error("No se pudo obtener un MP4 reproducible.");
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +497,7 @@ async function downloadFile(url, name, signal) {
     headers: {
       "User-Agent": UA,
       Accept: "*/*",
+      Referer: `${API_BASE}/`,
     },
     httpAgent: HTTP_AGENT,
     httpsAgent: HTTPS_AGENT,
@@ -496,6 +563,11 @@ async function downloadFile(url, name, signal) {
   if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
     await deleteSafe(tempPath);
     throw new Error("El archivo MP4 descargado es inválido.");
+  }
+
+  if (total > 0 && stat.size !== total) {
+    await deleteSafe(tempPath);
+    throw new Error("La descarga quedó incompleta (tamaño no coincide).");
   }
 
   return {
@@ -657,9 +729,9 @@ export default {
 
       if (!charge?.ok) return;
 
-      const apiData = await runWithProviderCircuit(
+      const { apiData, file } = await runWithProviderCircuit(
         PROVIDER_NAME,
-        () => apiWithFallback(video.url, parsed.quality, parsed.fast, signal),
+        () => obtainPlayableFile(video.url, parsed.quality, parsed.fast, signal),
         {
           failureThreshold: 4,
           cooldownMs: 90_000,
@@ -671,6 +743,8 @@ export default {
         }
       );
 
+      tempPath = file.tempPath;
+
       const meta = {
         ...apiData,
         title: apiData.title || video.title,
@@ -680,11 +754,6 @@ export default {
       };
 
       throwIfAborted(signal);
-
-      // Siempre se descarga y valida el archivo antes de enviarlo:
-      // esto es lo que elimina el bug de "video no disponible".
-      const file = await downloadFile(apiData.remoteUrl, apiData.fileName, signal);
-      tempPath = file.tempPath;
 
       await sendMp4(sock, from, quoted, { ...meta, ...file });
 
