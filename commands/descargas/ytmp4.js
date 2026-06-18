@@ -38,6 +38,10 @@ const DEFAULT_QUALITY = "360p";
 const FALLBACK_QUALITIES = ["360p", "240p", "144p"];
 const QUALITY_RE = /^(1080p|720p|480p|360p|240p|144p|best|hd|sd|\d{3,4}p?)$/i;
 
+// Tipos de contenido que indican que el proveedor devolvió un error
+// (página HTML, JSON, etc.) en lugar del archivo de video real.
+const INVALID_CONTENT_TYPES = ["text/html", "application/json", "text/plain"];
+
 const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 20, maxFreeSockets: 10 });
 
@@ -401,6 +405,19 @@ async function apiWithFallback(videoUrl, preferred, fast, signal) {
   throw lastError || new Error("No se pudo obtener el MP4.");
 }
 
+// ---------------------------------------------------------------------------
+// FIX: antes el comando intentaba enviar el video directo desde la URL remota
+// del proveedor (sin descargarlo). sock.sendMessage() no valida ese contenido
+// de forma síncrona, así que el mensaje "se enviaba" aunque la URL remota
+// devolviera una página de error o un archivo corrupto, resultando en el
+// típico "este video no está disponible" dentro de WhatsApp.
+//
+// Ahora SIEMPRE se descarga el archivo a disco primero, validando:
+//  1) código de estado HTTP
+//  2) content-type (para detectar páginas de error disfrazadas de archivo)
+//  3) tamaño mínimo/máximo
+// y solo se envía a WhatsApp una vez confirmado que el archivo es válido.
+// ---------------------------------------------------------------------------
 async function downloadFile(url, name, signal) {
   await ensureTmp();
   throwIfAborted(signal);
@@ -424,12 +441,21 @@ async function downloadFile(url, name, signal) {
   });
 
   if (res.status >= 400) {
+    res.data?.destroy?.();
     throw new Error(`No pude descargar el MP4 remoto. HTTP ${res.status}`);
+  }
+
+  const contentType = String(res.headers?.["content-type"] || "").toLowerCase();
+
+  if (contentType && INVALID_CONTENT_TYPES.some((t) => contentType.includes(t))) {
+    res.data?.destroy?.();
+    throw new Error("El proveedor devolvió un error en lugar del video.");
   }
 
   const total = Number(res.headers?.["content-length"] || 0);
 
   if (total > MAX_VIDEO_BYTES) {
+    res.data?.destroy?.();
     throw new Error(`El video pesa ${bytes(total)} y supera el límite.`);
   }
 
@@ -479,97 +505,75 @@ async function downloadFile(url, name, signal) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Mensajes rediseñados: se quitan las cajas con caracteres de dibujo (━ ┃ ╭ ╰)
+// porque en WhatsApp se desalinean según la fuente del dispositivo. El nuevo
+// formato usa solo negritas/emoji, que se ve consistente en cualquier celular.
+// ---------------------------------------------------------------------------
+
 function usage(prefix = ".") {
   return [
-    "╭━━━〔 🎬 *FSOCIETY MP4* 〕━━━⬣",
-    "┃",
-    "┃ ✘ Falta el link o nombre del video.",
-    "┃",
-    "┣━━━〔 ✦ USO 〕━━━⬣",
-    `┃ ➤ ${prefix}ytmp4 ozuna odisea`,
-    `┃ ➤ ${prefix}ytmp4 240p bad bunny`,
-    `┃ ➤ ${prefix}ytmp4 https://youtu.be/xxxx`,
-    "┃",
-    "┃ Calidad: *360p → 240p → 144p*",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    "🎬 *YTMP4 — Descarga videos de YouTube*",
+    "",
+    "Escribe el nombre del video o pega el link:",
+    `• ${prefix}ytmp4 ozuna odisea`,
+    `• ${prefix}ytmp4 240p bad bunny`,
+    `• ${prefix}ytmp4 https://youtu.be/xxxx`,
+    "",
+    "Calidades disponibles: 360p → 240p → 144p",
   ].join("\n");
 }
 
 function limitMessage(retryMs) {
   return [
-    "╭━━━〔 ⚠️ *LÍMITE MP4* 〕━━━⬣",
-    "┃",
-    "┃ Estás usando mucho este comando.",
-    `┃ Reintenta en *${formatRetrySeconds(retryMs)}s*.`,
-    "┃",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
+    "⚠️ *Límite alcanzado*",
+    "",
+    "Estás usando este comando muy seguido.",
+    `Intenta de nuevo en *${formatRetrySeconds(retryMs)}s*.`,
   ].join("\n");
 }
 
 function caption(data = {}) {
-  return [
-    "╭━━━〔 🎬 *FSOCIETY MP4* 〕━━━⬣",
-    "┃",
-    `┃ 🎞️ *${clip(data.title || data.fileName || "YouTube Video", 75)}*`,
-    data.duration ? `┃ ⏱️ Duración: *${data.duration}*` : null,
-    data.author ? `┃ 👤 Canal: *${clip(data.author, 45)}*` : null,
-    `┃ 📺 Calidad: *${data.quality || DEFAULT_QUALITY}*`,
-    data.size ? `┃ 💾 Peso: *${bytes(data.size)}*` : null,
-    "┃",
-    `┃ ⚡ Powered By *${API_BASE}*`,
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ].filter(Boolean).join("\n");
+  const lines = [`🎬 *${clip(data.title || data.fileName || "YouTube Video", 70)}*`, ""];
+
+  if (data.author) lines.push(`👤 *Canal:* ${clip(data.author, 45)}`);
+  if (data.duration) lines.push(`⏱️ *Duración:* ${data.duration}`);
+  lines.push(`📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`);
+  if (data.size) lines.push(`💾 *Peso:* ${bytes(data.size)}`);
+
+  lines.push("", `_vía ${API_BASE}_`);
+
+  return lines.join("\n");
 }
 
 function errorMessage(error) {
-  return [
-    "╭━━━〔 ❌ *YTMP4 ERROR* 〕━━━⬣",
-    "┃",
-    `┃ ${sanitizeError(error)}`,
-    "┃",
-    "╰━━━━━━━━━━━━━━━━━━━━⬣",
-  ].join("\n");
+  return ["❌ *No se pudo descargar el video*", "", sanitizeError(error)].join("\n");
 }
 
 async function sendMp4(sock, from, quoted, data) {
   const jpegThumbnail = await thumb(data.thumbnail);
   const cap = caption(data);
+  const asDocument = Number(data.size || 0) > AS_DOCUMENT_BYTES;
 
-  if (!data.size || Number(data.size) <= AS_DOCUMENT_BYTES) {
-    try {
-      await sock.sendMessage(
-        from,
-        {
-          video: {
-            url: data.tempPath || data.remoteUrl,
-          },
-          mimetype: "video/mp4",
-          fileName: data.fileName,
-          caption: cap,
-          gifPlayback: false,
-          jpegThumbnail: jpegThumbnail || undefined,
-        },
-        quoted
-      );
+  const payload = asDocument
+    ? {
+        document: { url: data.tempPath },
+        mimetype: "video/mp4",
+        fileName: data.fileName,
+        caption: cap,
+      }
+    : {
+        video: { url: data.tempPath },
+        mimetype: "video/mp4",
+        fileName: data.fileName,
+        caption: cap,
+        gifPlayback: false,
+        jpegThumbnail: jpegThumbnail || undefined,
+      };
 
-      return "video";
-    } catch {}
-  }
+  await sock.sendMessage(from, payload, quoted);
 
-  await sock.sendMessage(
-    from,
-    {
-      document: {
-        url: data.tempPath || data.remoteUrl,
-      },
-      mimetype: "video/mp4",
-      fileName: data.fileName,
-      caption: cap,
-    },
-    quoted
-  );
-
-  return "document";
+  return asDocument ? "document" : "video";
 }
 
 export default {
@@ -675,21 +679,14 @@ export default {
         thumbnail: apiData.thumbnail || video.thumbnail,
       };
 
-      try {
-        throwIfAborted(signal);
-        await sendMp4(sock, from, quoted, meta);
-        sent = true;
-        await react(sock, msg, "✅");
-        return;
-      } catch {}
+      throwIfAborted(signal);
 
+      // Siempre se descarga y valida el archivo antes de enviarlo:
+      // esto es lo que elimina el bug de "video no disponible".
       const file = await downloadFile(apiData.remoteUrl, apiData.fileName, signal);
       tempPath = file.tempPath;
 
-      await sendMp4(sock, from, quoted, {
-        ...meta,
-        ...file,
-      });
+      await sendMp4(sock, from, quoted, { ...meta, ...file });
 
       sent = true;
       await react(sock, msg, "✅");
