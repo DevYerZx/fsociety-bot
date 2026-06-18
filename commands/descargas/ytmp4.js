@@ -52,7 +52,7 @@ const UA =
 
 const sleepCleanupMs = 15 * 60 * 1000;
 const execFileAsync = promisify(execFile);
-const FFPROBE_TIMEOUT_MS = 20_000;
+const REMUX_TIMEOUT_MS = 45_000;
 
 function clean(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -394,54 +394,54 @@ async function apiRequest(videoUrl, q, fast, signal) {
 }
 
 // ---------------------------------------------------------------------------
-// Validación real de integridad: comprueba con ffprobe que el archivo
-// descargado tiene un stream de video decodificable y duración > 0.
-// Esto es lo que detecta archivos "corruptos" que pasan las validaciones de
-// tamaño/content-type pero que WhatsApp luego marca como
-// "este video no está disponible".
+// En vez de solo "verificar" el archivo —cosa que no sirve de mucho aquí,
+// porque el archivo dañado ya tenía el nombre y el tamaño correctos—, se usa
+// ffmpeg para arreglarlo: hace un remux rápido (-c copy, sin recodificar)
+// que reescribe el contenedor MP4 con +faststart. Esto es casi instantáneo
+// (no se procesa video/audio, solo se reordenan los metadatos) y corrige la
+// causa más común de "este video no está disponible" en WhatsApp: el átomo
+// moov mal ubicado o un contenedor mal cerrado.
 //
-// Si ffprobe no está instalado en el servidor, se omite esta validación
-// (no se bloquea el envío) pero se deja un aviso en consola.
+// Si ffmpeg no está instalado en el servidor, se omite este paso (se manda
+// el archivo tal cual se descargó) y se deja un aviso en consola.
 // ---------------------------------------------------------------------------
-async function probeVideo(filePath) {
+async function remuxForWhatsapp(inputPath, signal) {
+  const fixedPath = inputPath.replace(/\.mp4$/i, "") + "-fix.mp4";
+
   try {
-    const { stdout } = await execFileAsync(
-      "ffprobe",
-      [
-        "-v", "error",
-        "-show_entries", "stream=codec_type",
-        "-show_entries", "format=duration",
-        "-of", "json",
-        filePath,
-      ],
-      { timeout: FFPROBE_TIMEOUT_MS }
+    await execFileAsync(
+      "ffmpeg",
+      ["-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", fixedPath],
+      { timeout: REMUX_TIMEOUT_MS, signal }
     );
 
-    const data = JSON.parse(stdout || "{}");
-    const hasVideoStream = Array.isArray(data.streams) &&
-      data.streams.some((s) => s.codec_type === "video");
-    const duration = Number(data.format?.duration || 0);
+    const stat = await fsp.stat(fixedPath).catch(() => null);
 
-    return hasVideoStream && duration > 0;
-  } catch (e) {
-    if (e?.code === "ENOENT") {
-      console.warn(
-        "YTMP4: ffprobe no está instalado, se omite la validación de integridad del video."
-      );
-      return true;
+    if (!stat?.size || stat.size < MIN_VIDEO_BYTES) {
+      throw new Error("El remux generó un archivo inválido.");
     }
 
-    // ffprobe corrió pero no pudo leer el archivo: está corrupto.
-    return false;
+    await deleteSafe(inputPath);
+
+    return { tempPath: fixedPath, size: stat.size };
+  } catch (e) {
+    await deleteSafe(fixedPath);
+
+    if (e?.code === "ENOENT") {
+      console.warn("YTMP4: ffmpeg no está instalado, se envía el video sin optimizar.");
+    }
+
+    // Si falla (o no está instalado), se sigue con el archivo original tal
+    // cual: nombre y tamaño ya quedaron validados en downloadFile().
+    return null;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Combina API + descarga + validación de integridad, reintentando con cada
-// calidad de FALLBACK_QUALITIES hasta conseguir un archivo realmente
-// reproducible. Antes el fallback de calidades solo cubría errores de la
-// API; ahora también cubre archivos corruptos o truncados detectados
-// después de la descarga.
+// Combina API + descarga + remux, reintentando con cada calidad de
+// FALLBACK_QUALITIES si alguno de esos pasos falla. El fallback de
+// calidades ahora también cubre descargas truncadas o con content-type
+// inválido, no solo errores directos de la API.
 // ---------------------------------------------------------------------------
 async function obtainPlayableFile(videoUrl, preferredQuality, fast, signal) {
   let lastError = null;
@@ -455,10 +455,11 @@ async function obtainPlayableFile(videoUrl, preferredQuality, fast, signal) {
       const apiData = await apiRequest(videoUrl, q, fast, signal);
       file = await downloadFile(apiData.remoteUrl, apiData.fileName, signal);
 
-      const valid = await probeVideo(file.tempPath);
+      const fixed = await remuxForWhatsapp(file.tempPath, signal);
 
-      if (!valid) {
-        throw new Error("El archivo descargado está corrupto o incompleto.");
+      if (fixed) {
+        file.tempPath = fixed.tempPath;
+        file.size = fixed.size;
       }
 
       return { apiData, file };
@@ -578,48 +579,54 @@ async function downloadFile(url, name, signal) {
 }
 
 // ---------------------------------------------------------------------------
-// Mensajes rediseñados: se quitan las cajas con caracteres de dibujo (━ ┃ ╭ ╰)
-// porque en WhatsApp se desalinean según la fuente del dispositivo. El nuevo
-// formato usa solo negritas/emoji, que se ve consistente en cualquier celular.
+// Diseño: caracteres especiales cortos (「 」➤ ✦ ✧) en vez de líneas largas
+// de caracteres de dibujo (━┃╭╰), que en WhatsApp se desalinean según la
+// fuente del teléfono. Estos símbolos no dependen de alineación porque van
+// en una sola línea cada uno, así que se ven igual en cualquier dispositivo.
 // ---------------------------------------------------------------------------
 
 function usage(prefix = ".") {
   return [
-    "🎬 *YTMP4 — Descarga videos de YouTube*",
+    "「✦ YTMP4 ✦」",
     "",
-    "Escribe el nombre del video o pega el link:",
-    `• ${prefix}ytmp4 ozuna odisea`,
-    `• ${prefix}ytmp4 240p bad bunny`,
-    `• ${prefix}ytmp4 https://youtu.be/xxxx`,
+    "➤ Escribe el nombre del video o pega el link:",
+    `✎ ${prefix}ytmp4 ozuna odisea`,
+    `✎ ${prefix}ytmp4 240p bad bunny`,
+    `✎ ${prefix}ytmp4 https://youtu.be/xxxx`,
     "",
-    "Calidades disponibles: 360p → 240p → 144p",
+    "✧ Calidades: 360p → 240p → 144p",
   ].join("\n");
 }
 
 function limitMessage(retryMs) {
   return [
-    "⚠️ *Límite alcanzado*",
+    "「⚠ LÍMITE 」",
     "",
-    "Estás usando este comando muy seguido.",
-    `Intenta de nuevo en *${formatRetrySeconds(retryMs)}s*.`,
+    "➤ Estás usando este comando muy seguido.",
+    `✧ Intenta de nuevo en *${formatRetrySeconds(retryMs)}s*.`,
   ].join("\n");
 }
 
 function caption(data = {}) {
-  const lines = [`🎬 *${clip(data.title || data.fileName || "YouTube Video", 70)}*`, ""];
+  const lines = [
+    "「🎬 YTMP4 」",
+    "",
+    `✦ *${clip(data.title || data.fileName || "YouTube Video", 65)}*`,
+    "",
+  ];
 
-  if (data.author) lines.push(`👤 *Canal:* ${clip(data.author, 45)}`);
-  if (data.duration) lines.push(`⏱️ *Duración:* ${data.duration}`);
-  lines.push(`📺 *Calidad:* ${data.quality || DEFAULT_QUALITY}`);
-  if (data.size) lines.push(`💾 *Peso:* ${bytes(data.size)}`);
+  if (data.author) lines.push(`➤ Canal: ${clip(data.author, 40)}`);
+  if (data.duration) lines.push(`➤ Duración: ${data.duration}`);
+  lines.push(`➤ Calidad: ${data.quality || DEFAULT_QUALITY}`);
+  if (data.size) lines.push(`➤ Peso: ${bytes(data.size)}`);
 
-  lines.push("", `_vía ${API_BASE}_`);
+  lines.push("", `✧ vía ${API_BASE}`);
 
   return lines.join("\n");
 }
 
 function errorMessage(error) {
-  return ["❌ *No se pudo descargar el video*", "", sanitizeError(error)].join("\n");
+  return ["「❌ ERROR 」", "", `✦ ${sanitizeError(error)}`].join("\n");
 }
 
 async function sendMp4(sock, from, quoted, data) {
