@@ -850,80 +850,25 @@ async function getBuffer(url = "", timeout = 12_000) {
   }
 }
 
-function buildPreviewCaption(data = {}) {
+function buildAudioFileCaption(data = {}) {
   const title = clipText(data.title || data.fileName || "YouTube MP3", 78);
   const duration = formatDuration(data.duration);
   const author = clipText(data.author || "", 46);
 
   return [
-    "╭━━━〔 *ＦＳＯＣＩＥＴＹ ＡＵＤＩＯ* 〕━━━⬣",
-    "┃",
+    "╭━━━〔 *ＦＳＯＣＩＥＴＹ ＭＵＳＩＣ* 〕━━━⬣",
     `┃ *Título:* ${title}`,
     duration ? `┃ ⌛ *Tiempo:* ${duration}` : null,
-    author ? `┃ *Artista/Canal:* ${author}` : null,
-    "┃",
-    "┣━━━〔 ⚡ DESCARGA EN PROCESO ⚡ 〕━━━⬣",
-    "┃ ✦ Buscando mejor calidad...",
-    "┃ ✦ Generando archivo MP3...",
-    "┃ ✦ Enviando música...",
-    "┃",
-    "┣━━━━━━━━━━━━━━━━━━━━━━⬣",
-    "┃ *DVYER • FSOCIETY SYSTEM*",
-    "╰━━━〔 ✧ ✧ ✧ 〕━━━⬣",
+    author ? `┃ 🎤 *Artista/Canal:* ${author}` : null,
+    "╰━━━〔 *MP3* 〕━━━⬣",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-async function sendAudioPreview(sock, from, quoted, data = {}) {
-  const caption = buildPreviewCaption(data);
-  const thumbBuffer = await getBuffer(data.thumbnail);
-
-  if (thumbBuffer) {
-    try {
-      await sock.sendMessage(
-        from,
-        {
-          image: thumbBuffer,
-          caption,
-          ...getChannelInfo(),
-        },
-        quoted
-      );
-      return;
-    } catch {}
-  }
-
-  try {
-    await sock.sendMessage(
-      from,
-      {
-        text: caption,
-        ...getChannelInfo(),
-      },
-      quoted
-    );
-  } catch {}
-}
-
 async function sendLocalMp3(sock, from, quoted, data) {
-  if (data.size <= AUDIO_AS_DOCUMENT_THRESHOLD) {
-    try {
-      await sock.sendMessage(
-        from,
-        {
-          audio: { url: data.tempPath },
-          mimetype: "audio/mpeg",
-          fileName: data.fileName,
-          ptt: false,
-        },
-        quoted
-      );
-      return "audio";
-    } catch (error) {
-      console.error("SEND LOCAL AUDIO ERROR:", error?.message || error);
-    }
-  }
+  const thumbBuffer = await getBuffer(data.thumbnail);
+  const caption = buildAudioFileCaption(data);
 
   await sock.sendMessage(
     from,
@@ -931,6 +876,9 @@ async function sendLocalMp3(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: "audio/mpeg",
       fileName: data.fileName,
+      caption,
+      jpegThumbnail: thumbBuffer || undefined,
+      ...getChannelInfo(),
     },
     quoted
   );
@@ -1055,8 +1003,6 @@ export default {
         sourceUrl:
           apiData.sourceUrl || getApiCandidates()[0] || "https://dv-yer-api.online/ytmp3",
       };
-
-      await sendAudioPreview(sock, from, quoted, finalData);
 
       const downloaded = await downloadYtmp3File(
         resolved.url,
