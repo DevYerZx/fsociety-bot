@@ -46,7 +46,7 @@ const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
 const DELETE_RETRIES = 4;
 const DELETE_RETRY_DELAY_MS = 120;
 const ALBUM_COVER_SIZE = 600;
-const DOCUMENT_THUMBNAIL_SIZE = 96;
+const DOCUMENT_THUMBNAIL_SIZE = 320;
 const FFMPEG_TIMEOUT_MS = 60_000;
 
 const HTTP_AGENT = new http.Agent({
@@ -965,7 +965,7 @@ async function attachThumbnailToMp3(filePath, data = {}) {
       "-frames:v",
       "1",
       "-q:v",
-      "5",
+      "2",
       "-loglevel",
       "error",
       thumbnailPath,
