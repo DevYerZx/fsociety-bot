@@ -21,9 +21,11 @@ const API_DOWNLOAD_URL = buildDvyerUrl("/applemusicdl");
 const TMP_DIR = path.join(os.tmpdir(), "applemusic-downloads");
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
 const SEARCH_TIMEOUT = 30_000;
+const ARTWORK_TIMEOUT = 15_000;
 const MAX_AUDIO_BYTES = 120 * 1024 * 1024;
 const AUDIO_AS_DOCUMENT_THRESHOLD = 16 * 1024 * 1024;
 const PICK_TOKEN_PATTERN = /^--pick=(\d{1,2})$/i;
+const ARTWORK_SIZE_CANDIDATES = [2000, 1600, 1200, 800, 600];
 
 const cooldowns = new Map();
 
@@ -42,6 +44,19 @@ function clipText(value = "", max = 72) {
   return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3))}...`;
 }
 
+function normalizeComparableText(value = "") {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function tokenizeText(value = "") {
+  return normalizeComparableText(value)
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 1);
+}
+
 function safeFileName(name) {
   return (
     String(name || "applemusic")
@@ -58,14 +73,35 @@ function normalizeAudioFileName(name, fallbackBase = "applemusic") {
   return `${base}.mp3`;
 }
 
-function improveAppleArtworkUrl(url = "") {
+function replaceAppleArtworkSize(url = "", size = 1200) {
   const value = String(url || "").trim();
   if (!value) return "";
 
-  return value.replace(
-    /\/\d+x\d+(bb|cc)?\.(jpg|jpeg|png|webp)(?=([?#]|$))/i,
-    "/1200x1200$1.$2"
-  );
+  return value
+    .replace(
+      /\/\d+x\d+(bb|cc)?\.(jpg|jpeg|png|webp)(?=([?#]|$))/i,
+      `/${size}x${size}$1.$2`
+    )
+    .replace(
+      /\/\{w\}x\{h\}(bb|cc)?\.(jpg|jpeg|png|webp)(?=([?#]|$))/i,
+      `/${size}x${size}$1.$2`
+    )
+    .replace(/\{w\}/gi, String(size))
+    .replace(/\{h\}/gi, String(size));
+}
+
+function buildAppleArtworkCandidates(url = "") {
+  const value = String(url || "").trim();
+  if (!value) return [];
+
+  return [...new Set([
+    ...ARTWORK_SIZE_CANDIDATES.map((size) => replaceAppleArtworkSize(value, size)),
+    value,
+  ].filter(Boolean))];
+}
+
+function improveAppleArtworkUrl(url = "") {
+  return buildAppleArtworkCandidates(url)[0] || "";
 }
 
 function getPrefix(settings) {
@@ -129,12 +165,22 @@ function parseInput(value) {
 }
 
 function durationLabel(durationMs) {
-  const ms = Number(durationMs || 0);
-  if (!Number.isFinite(ms) || ms <= 0) return "??:??";
+  const raw = String(durationMs ?? "").trim();
+  if (!raw) return "??:??";
+  if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(raw)) return raw;
 
-  const total = Math.max(1, Math.round(ms / 1000));
-  const minutes = Math.floor(total / 60);
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return "??:??";
+
+  const total = Math.max(1, Math.round(value > 10_000 ? value / 1000 : value));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
   const seconds = String(total % 60).padStart(2, "0");
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`;
+  }
+
   return `${minutes}:${seconds}`;
 }
 
@@ -202,15 +248,30 @@ async function searchAppleMusic(query) {
   }
 
   const results = Array.isArray(response.data?.results) ? response.data.results : [];
-  return results.slice(0, 10).map((item, index) => ({
-    index: index + 1,
-    title: cleanText(item.title || "Sin título"),
-    artist: cleanText(item.artist || "Apple Music"),
-    album: cleanText(item.album || ""),
-    duration: durationLabel(item.duration_ms),
-    artwork: improveAppleArtworkUrl(item.artwork || item.image_url || ""),
-    url: item.apple_music_url || item.song_url || item.url || "",
-  })).filter((item) => item.title && item.url);
+  const unique = new Set();
+
+  return results
+    .slice(0, 10)
+    .map((item, index) => {
+      const trackId = cleanText(item.track_id || item.id || "");
+      const url = cleanText(item.song_url || item.apple_music_url || item.url || "");
+      const uniqueKey = trackId || url;
+
+      if (!uniqueKey || unique.has(uniqueKey)) return null;
+      unique.add(uniqueKey);
+
+      return {
+        index: index + 1,
+        title: cleanText(item.track_name || item.title || item.name || "Sin título"),
+        artist: cleanText(item.artist_name || item.artist || "Apple Music"),
+        album: cleanText(item.album_name || item.album || ""),
+        genre: cleanText(item.genre || ""),
+        duration: durationLabel(item.duration_ms || item.duration_seconds || item.duration),
+        artwork: improveAppleArtworkUrl(item.artwork || item.thumbnail || item.image_url || ""),
+        url,
+      };
+    })
+    .filter((item) => item?.title && item?.url);
 }
 
 async function getAppleMusicInfo(input, pick = 1) {
@@ -244,14 +305,17 @@ async function getAppleMusicInfo(input, pick = 1) {
     throw new Error("La API no devolvió enlace de descarga.");
   }
 
-  const title = cleanText(data.title || "Apple Music");
-  const artist = cleanText(data.artist || "Apple Music");
+  const title = cleanText(data.track_name || data.title || "Apple Music");
+  const artist = cleanText(data.artist_name || data.artist || "Apple Music");
 
   return {
     title,
     artist,
-    artwork: improveAppleArtworkUrl(normalizeApiUrl(data.image_url_full || data.image_url || "")),
-    fileName: normalizeAudioFileName(data.filename || `${title} - ${artist}`, `${title} - ${artist}`),
+    album: cleanText(data.album_name || data.album || ""),
+    artwork: improveAppleArtworkUrl(
+      normalizeApiUrl(data.image_url_full || data.image_url || data.thumbnail || "")
+    ),
+    fileName: normalizeAudioFileName(`${artist} - ${title}`, `${title} - ${artist}`),
     downloadUrl,
   };
 }
@@ -299,54 +363,243 @@ async function downloadAudio(downloadUrl, outputPath, maxBytes) {
   return size;
 }
 
-async function sendSearchPicker(ctx, query, results) {
-  const { sock, from, quoted, settings } = ctx;
-  const prefix = getPrefix(settings);
+function splitArtistNames(value = "") {
+  const artist = cleanText(value);
+  if (!artist) return [];
 
-  const rows = results.map((result, index) => ({
-    header: `${index + 1}`,
-    title: clipText(result.title, 72),
-    description: clipText(`🍎 Apple Music | ${result.duration} | ${result.artist}`, 72),
-    id: `${prefix}applemusic ${result.url}`,
-  }));
+  return [...new Set(
+    artist
+      .split(/\s*(?:,|&|feat\.?|ft\.?|with|\bx\b|\by\b)\s*/i)
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+  )];
+}
 
-  let imageBuffer = null;
+function scoreArtistMatch(query = "", artist = "") {
+  const queryNormalized = normalizeComparableText(query);
+  const artistNormalized = normalizeComparableText(artist);
 
-  if (results[0]?.artwork) {
+  if (!queryNormalized || !artistNormalized) return 0;
+
+  let score = 0;
+  if (artistNormalized === queryNormalized) score += 120;
+  if (artistNormalized.includes(queryNormalized)) score += 80;
+  if (queryNormalized.includes(artistNormalized)) score += 55;
+
+  const queryTokens = tokenizeText(query);
+  const artistTokens = tokenizeText(artist);
+  const shared = queryTokens.filter((token) => artistTokens.includes(token));
+  score += shared.length * 20;
+
+  if (shared.length && shared.length === queryTokens.length) {
+    score += 30;
+  }
+
+  return score;
+}
+
+function pickFocusArtist(query, results = []) {
+  const ranking = new Map();
+
+  for (const result of results) {
+    const variants = splitArtistNames(result.artist);
+    const artists = variants.length ? variants : [cleanText(result.artist)];
+
+    for (const artist of artists) {
+      const key = normalizeComparableText(artist);
+      if (!key) continue;
+
+      const current = ranking.get(key) || { label: artist, score: 0, count: 0, rank: result.index || 99 };
+      current.score += scoreArtistMatch(query, artist) + Math.max(0, 14 - ((result.index || 1) - 1) * 2);
+      current.count += 1;
+      current.rank = Math.min(current.rank, result.index || 99);
+
+      if (artist.length < current.label.length) {
+        current.label = artist;
+      }
+
+      ranking.set(key, current);
+    }
+  }
+
+  if (!ranking.size) {
+    const fallback = splitArtistNames(results[0]?.artist || "")[0] || cleanText(results[0]?.artist || "");
+    return {
+      key: normalizeComparableText(fallback),
+      label: fallback || "Apple Music",
+    };
+  }
+
+  const [key, entry] = [...ranking.entries()].sort((a, b) => {
+    return (
+      b[1].score - a[1].score ||
+      b[1].count - a[1].count ||
+      a[1].rank - b[1].rank
+    );
+  })[0];
+
+  return { key, label: entry.label };
+}
+
+function matchesFocusArtist(artist = "", focus = {}) {
+  const focusKey = cleanText(focus?.key);
+  if (!focusKey) return false;
+
+  const variants = splitArtistNames(artist);
+  if (variants.some((value) => normalizeComparableText(value) === focusKey)) {
+    return true;
+  }
+
+  return normalizeComparableText(artist).includes(focusKey);
+}
+
+function buildArtistSections(query, results, prefix) {
+  const focusArtist = pickFocusArtist(query, results);
+  const topTracks = [];
+  const relatedTracks = [];
+
+  for (const result of results) {
+    if (matchesFocusArtist(result.artist, focusArtist)) {
+      topTracks.push(result);
+    } else {
+      relatedTracks.push(result);
+    }
+  }
+
+  const primary = topTracks.length ? topTracks : results;
+  const sections = [];
+
+  if (primary.length) {
+    sections.push({
+      title: focusArtist.label
+        ? `Top canciones de ${clipText(focusArtist.label, 28)}`
+        : "Resultados principales",
+      highlight_label: "TOP",
+      rows: primary.slice(0, 6).map((result) => ({
+        header: `${result.index}`,
+        title: clipText(result.title, 72),
+        description: clipText(
+          [result.duration || "??:??", result.artist, result.album].filter(Boolean).join(" • "),
+          72
+        ),
+        id: `${prefix}applemusic ${result.url}`,
+      })),
+    });
+  }
+
+  if (relatedTracks.length) {
+    sections.push({
+      title: "Mas canciones relacionadas",
+      highlight_label: "EXTRA",
+      rows: relatedTracks.slice(0, 4).map((result) => ({
+        header: `${result.index}`,
+        title: clipText(result.title, 72),
+        description: clipText(
+          [result.duration || "??:??", result.artist, result.album].filter(Boolean).join(" • "),
+          72
+        ),
+        id: `${prefix}applemusic ${result.url}`,
+      })),
+    });
+  }
+
+  return {
+    focusArtist,
+    featured: primary[0] || results[0] || null,
+    topTracks: primary,
+    relatedTracks,
+    sections,
+  };
+}
+
+function buildSearchCaption(query, searchView) {
+  const featured = searchView?.featured || {};
+  const artistLabel = cleanText(searchView?.focusArtist?.label || featured.artist || "Apple Music");
+
+  return [
+    "╭━━〔 🍎 *APPLE MUSIC* 〕━━⬣",
+    `┃ 🔎 *Busqueda:* ${clipText(query, 54)}`,
+    `┃ 🎤 *Top artista:* ${clipText(artistLabel, 42)}`,
+    `┃ 🎼 *Resultados:* ${searchView?.topTracks?.length || 0} top • ${searchView?.relatedTracks?.length || 0} extra`,
+    "┣━━〔 ⭐ DESTACADO 〕━━⬣",
+    `┃ 🎵 *${clipText(featured.title || "Sin título", 58)}*`,
+    `┃ 💿 ${clipText(featured.album || "Apple Music", 54)}`,
+    `┃ ⏱️ ${featured.duration || "??:??"}  •  🖼️ Portada HD`,
+    "┣━━〔 📥 SELECTOR 〕━━⬣",
+    "┃ Elige una canción del top o de los relacionados",
+    "╰━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
+function buildPickerFallbackText(caption, sections = []) {
+  const blocks = sections
+    .map((section) => {
+      const rows = Array.isArray(section?.rows) ? section.rows : [];
+      if (!rows.length) return "";
+
+      return [
+        `*${section.title || "Resultados"}*`,
+        rows
+          .map((row) => `*${row.header}. ${row.title}*\n${row.id}`)
+          .join("\n\n"),
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  return blocks ? `${caption}\n\n${blocks}` : caption;
+}
+
+async function downloadArtworkBuffer(url = "") {
+  for (const candidate of buildAppleArtworkCandidates(url)) {
     try {
-      const image = await axios.get(results[0].artwork, {
+      const response = await axios.get(candidate, {
         responseType: "arraybuffer",
-        timeout: 12_000,
+        timeout: ARTWORK_TIMEOUT,
+        maxRedirects: 4,
+        validateStatus: () => true,
       });
-      imageBuffer = Buffer.from(image.data);
+
+      const contentType = cleanText(response?.headers?.["content-type"]).toLowerCase();
+      const buffer = Buffer.from(response?.data || []);
+
+      if (
+        Number(response?.status || 0) < 400 &&
+        contentType.startsWith("image/") &&
+        buffer.length > 5_000
+      ) {
+        return buffer;
+      }
     } catch {}
   }
 
-  const caption =
-    `╭━━〔 🍎 *APPLE MUSIC* 〕━━⬣\n` +
-    `┃ 🔎 Resultado para: *${clipText(query, 80)}*\n` +
-    `┃ ⭐ Top: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
-    `┃ 🎤 ${clipText(results[0]?.artist || "Apple Music", 60)}\n` +
-    `┃ 📌 Selecciona una canción para descargar\n` +
-    `╰━━━━━━━━━━━━━━━━━━⬣`;
+  return null;
+}
+
+async function sendSearchPicker(ctx, query, results) {
+  const { sock, from, quoted, settings } = ctx;
+  const prefix = getPrefix(settings);
+  const searchView = buildArtistSections(query, results, prefix);
+  const imageBuffer = await downloadArtworkBuffer(searchView?.featured?.artwork || results[0]?.artwork || "");
+  const caption = buildSearchCaption(query, searchView);
 
   const payload = {
     ...(imageBuffer ? { image: imageBuffer, caption } : { text: caption }),
+    media: Boolean(imageBuffer),
     title: "🍎 APPLE MUSIC",
-    subtitle: "Elige una canción",
-    footer: "Descargas",
+    subtitle: searchView?.focusArtist?.label
+      ? `Top de ${clipText(searchView.focusArtist.label, 28)}`
+      : "Elige una canción",
+    footer: "Apple Music • DVYER",
     ...global.channelInfo,
     interactiveButtons: [
       {
         name: "single_select",
         buttonParamsJson: JSON.stringify({
           title: "🍎 Seleccionar canción",
-          sections: [
-            {
-              title: "Resultados de búsqueda",
-              rows,
-            },
-          ],
+          sections: searchView.sections,
         }),
       },
     ],
@@ -354,7 +607,8 @@ async function sendSearchPicker(ctx, query, results) {
 
   try {
     await sock.sendMessage(from, payload, quoted);
-  } catch {
+  } catch (error) {
+    console.warn("APPLE MUSIC selector no disponible:", error?.message || error);
     if (imageBuffer) {
       try {
         await sock.sendMessage(
@@ -369,15 +623,12 @@ async function sendSearchPicker(ctx, query, results) {
       } catch {}
     }
 
-    const fallbackText = rows
-      .slice(0, 5)
-      .map((row) => `*${row.header}. ${row.title}*\n${row.id}`)
-      .join("\n\n");
+    const fallbackText = buildPickerFallbackText(caption, searchView.sections);
 
     await sock.sendMessage(
       from,
       {
-        text: `${caption}\n\n${fallbackText}`,
+        text: fallbackText,
         ...global.channelInfo,
       },
       quoted
@@ -393,7 +644,13 @@ async function sendAudio(sock, from, quoted, filePath, info, size) {
         document: { url: filePath },
         mimetype: "audio/mpeg",
         fileName: info.fileName,
-        caption: `🍎 *${info.title}*\n🎤 ${info.artist}`,
+        caption: [
+          `🍎 *${info.title}*`,
+          `🎤 ${info.artist}`,
+          info.album ? `💿 ${info.album}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
         ...global.channelInfo,
       },
       quoted
@@ -470,6 +727,18 @@ export default {
 
       if (!isAppleMusicUrl(parsed.target) && !parsed.explicitPick) {
         const results = await searchAppleMusic(parsed.target);
+        if (!results.length) {
+          cooldowns.delete(userId);
+          return sock.sendMessage(
+            from,
+            {
+              text: "❌ No encontré canciones de Apple Music para esa búsqueda.",
+              ...global.channelInfo,
+            },
+            quoted
+          );
+        }
+
         await sendSearchPicker({ sock, from, quoted, settings }, parsed.target, results);
         cooldowns.delete(userId);
         return;
