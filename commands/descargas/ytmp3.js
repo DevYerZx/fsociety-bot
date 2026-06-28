@@ -8,6 +8,7 @@ import axios from "axios";
 import yts from "yt-search";
 import { pipeline } from "stream/promises";
 import { randomUUID } from "crypto";
+import { spawn } from "child_process";
 
 import { withDvyerApiKey } from "../../lib/api-manager.js";
 import {
@@ -850,6 +851,100 @@ async function getBuffer(url = "", timeout = 12_000) {
   }
 }
 
+async function attachThumbnailToMp3(filePath, data = {}) {
+  const targetPath = String(filePath || "").trim();
+  if (!targetPath) return null;
+
+  const thumbBuffer = await getBuffer(data.thumbnail);
+  if (!thumbBuffer?.length) return null;
+
+  const coverPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-cover.jpg`);
+  const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-tagged.mp3`);
+  const title = cleanText(data.title || data.fileName || "YouTube MP3") || "YouTube MP3";
+  const author = cleanText(data.author || "") || "Unknown Artist";
+
+  try {
+    await fsp.writeFile(coverPath, thumbBuffer);
+
+    await new Promise((resolve, reject) => {
+      const ffmpeg = spawn("ffmpeg", [
+        "-y",
+        "-i",
+        targetPath,
+        "-i",
+        coverPath,
+        "-map",
+        "0:a",
+        "-map",
+        "1:v",
+        "-c:a",
+        "copy",
+        "-c:v",
+        "mjpeg",
+        "-id3v2_version",
+        "3",
+        "-metadata",
+        `title=${title}`,
+        "-metadata",
+        `artist=${author}`,
+        "-metadata",
+        "album=YouTube Audio",
+        "-metadata:s:v",
+        "title=Album cover",
+        "-metadata:s:v",
+        "comment=Cover (front)",
+        "-disposition:v",
+        "attached_pic",
+        "-loglevel",
+        "error",
+        outputPath,
+      ]);
+
+      let errorText = "";
+      let settled = false;
+
+      ffmpeg.stderr.on("data", (chunk) => {
+        errorText += chunk.toString();
+      });
+
+      ffmpeg.on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      });
+
+      ffmpeg.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(errorText.trim() || `ffmpeg error ${code}`));
+        }
+      });
+    });
+
+    const taggedStat = await fsp.stat(outputPath).catch(() => null);
+    if (!taggedStat?.size || taggedStat.size < MIN_AUDIO_BYTES) {
+      throw new Error("El MP3 con portada quedó inválido.");
+    }
+
+    await fsp.rename(outputPath, targetPath);
+    return thumbBuffer;
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    if (message.toLowerCase().includes("enoent")) {
+      console.warn("YTMP3: ffmpeg no está instalado; se enviará el audio sin portada incrustada.");
+    } else {
+      console.warn("YTMP3: no pude incrustar la portada en el MP3:", message);
+    }
+    return thumbBuffer;
+  } finally {
+    await deleteFileSafe(coverPath);
+    await deleteFileSafe(outputPath);
+  }
+}
+
 function buildAudioFileCaption(data = {}) {
   const title = clipText(data.title || data.fileName || "YouTube MP3", 78);
   const duration = formatDuration(data.duration);
@@ -867,7 +962,7 @@ function buildAudioFileCaption(data = {}) {
 }
 
 async function sendLocalMp3(sock, from, quoted, data) {
-  const thumbBuffer = await getBuffer(data.thumbnail);
+  const thumbBuffer = data.thumbBuffer || (await getBuffer(data.thumbnail));
   const fileLength = Number(data.size || 0);
   const seconds = Math.max(0, Number(data.duration || 0));
   const title = clipText(data.title || data.fileName || "YouTube MP3", 80);
@@ -1037,12 +1132,18 @@ export default {
       );
 
       tempPath = downloaded.tempPath;
+      const thumbBuffer = await attachThumbnailToMp3(tempPath, {
+        ...finalData,
+        fileName: downloaded.fileName,
+      });
 
       await sendLocalMp3(sock, from, quoted, {
         ...downloaded,
         title: finalData.title || resolved.title,
         duration: finalData.duration || 0,
+        author: finalData.author || resolved.author || "",
         sourceUrl: finalData.sourceUrl,
+        thumbBuffer,
       });
 
       sentSuccessfully = true;
