@@ -878,7 +878,6 @@ async function sendLocalMp3(sock, from, quoted, data) {
       fileName: data.fileName,
       caption,
       jpegThumbnail: thumbBuffer || undefined,
-      ...getChannelInfo(),
     },
     quoted
   );
