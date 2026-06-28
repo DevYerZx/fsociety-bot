@@ -869,20 +869,43 @@ function buildAudioFileCaption(data = {}) {
 async function sendLocalMp3(sock, from, quoted, data) {
   const thumbBuffer = await getBuffer(data.thumbnail);
   const fileLength = Number(data.size || 0);
+  const seconds = Math.max(0, Number(data.duration || 0));
+  const title = clipText(data.title || data.fileName || "YouTube MP3", 80);
+  const author = clipText(data.author || "", 80);
+  let audioBuffer = null;
+
+  try {
+    audioBuffer = await fsp.readFile(data.tempPath);
+  } catch {}
 
   await sock.sendMessage(
     from,
     {
-      document: { url: data.tempPath },
-      mimetype: "audio/mpeg",
+      audio: audioBuffer || { url: data.tempPath },
+      mimetype: data.contentType || "audio/mpeg",
       fileName: data.fileName,
+      ptt: false,
       jpegThumbnail: thumbBuffer || undefined,
       fileLength: fileLength > 0 ? fileLength : undefined,
+      seconds: seconds > 0 ? seconds : undefined,
+      contextInfo: thumbBuffer
+        ? {
+            externalAdReply: {
+              title,
+              body: author || "MP3",
+              mediaType: 2,
+              renderLargerThumbnail: true,
+              showAdAttribution: false,
+              thumbnail: thumbBuffer,
+              sourceUrl: data.sourceUrl || undefined,
+            },
+          }
+        : undefined,
     },
     quoted
   );
 
-  return "document";
+  return "audio";
 }
 
 export default {
