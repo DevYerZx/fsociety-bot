@@ -161,20 +161,16 @@ function buildSections(results, prefix) {
   ];
 }
 
-function buildCardButtons(item, prefix) {
-  return buildCardButtonsWithMode(item, prefix, "copy");
-}
-
-function buildCardButtonsWithMode(item, prefix, mode = "copy") {
+function buildCardButtons(item, prefix, mode = "quick_reply") {
   const commandId = buildTikTokCommandId(prefix, item);
 
-  if (mode === "quick_reply") {
+  if (mode === "copy") {
     return [
       {
-        name: "quick_reply",
+        name: "cta_copy",
         buttonParamsJson: JSON.stringify({
-          display_text: "Descargar",
-          id: commandId,
+          display_text: "Copy",
+          copy_code: commandId,
         }),
       },
     ];
@@ -182,10 +178,10 @@ function buildCardButtonsWithMode(item, prefix, mode = "copy") {
 
   return [
     {
-      name: "cta_copy",
+      name: "quick_reply",
       buttonParamsJson: JSON.stringify({
-        display_text: "Copy",
-        copy_code: commandId,
+        display_text: "Descargar",
+        id: commandId,
       }),
     },
   ];
@@ -223,7 +219,7 @@ function buildDetailedCardBody(item, index, query, mode = "detailed") {
       `➠ Likes: ${likes} | Comentarios: ${comments}\n` +
       `➠ Reproducciones: ${views}\n` +
       `➠ URL: ${safeUrl}\n\n` +
-      `Usa el boton para descargar/ver`
+      `Toca descargar para enviarlo`
     );
   }
 
@@ -240,11 +236,11 @@ function buildDetailedCardBody(item, index, query, mode = "detailed") {
     `➠ Shares: ${shares}\n` +
     `➠ Reproducciones: ${views}\n` +
     `➠ URL: ${safeUrl}\n\n` +
-    `Usa el boton para descargar/ver`
+    `Toca descargar para enviarlo`
   );
 }
 
-function buildCarouselCards(results, prefix, query, mode = "video", bodyMode = "detailed", buttonMode = "copy") {
+function buildCarouselCards(results, prefix, query, mode = "video", bodyMode = "detailed", buttonMode = "quick_reply") {
   return results.map((item, index) => {
     const play = String(item?.play || "").trim();
     const cover = String(item?.cover || "").trim() || DEFAULT_CAROUSEL_COVER;
@@ -258,7 +254,7 @@ function buildCarouselCards(results, prefix, query, mode = "video", bodyMode = "
       title: "TikTok - Resultado",
       body: buildDetailedCardBody(item, index, query, bodyMode),
       footer: "FSOCIETY BOT",
-      buttons: buildCardButtonsWithMode(item, prefix, buttonMode),
+      buttons: buildCardButtons(item, prefix, buttonMode),
     };
   });
 }
@@ -277,20 +273,20 @@ async function sendCarouselResults(sock, from, quoted, query, results, prefix) {
 
   const attempts = [
     {
-      label: "video-detailed-copy",
-      cards: buildCarouselCards(results, prefix, query, "video", "detailed", "copy"),
+      label: "video-detailed-download",
+      cards: buildCarouselCards(results, prefix, query, "video", "detailed", "quick_reply"),
     },
     {
-      label: "image-detailed-copy",
-      cards: buildCarouselCards(results, prefix, query, "image", "detailed", "copy"),
+      label: "image-detailed-download",
+      cards: buildCarouselCards(results, prefix, query, "image", "detailed", "quick_reply"),
     },
     {
-      label: "image-compact-copy",
-      cards: buildCarouselCards(results, prefix, query, "image", "compact", "copy"),
+      label: "image-compact-download",
+      cards: buildCarouselCards(results, prefix, query, "image", "compact", "quick_reply"),
     },
     {
-      label: "image-minimal-quick",
-      cards: buildCarouselCards(results, prefix, query, "image", "minimal", "quick_reply"),
+      label: "image-minimal-copy",
+      cards: buildCarouselCards(results, prefix, query, "image", "minimal", "copy"),
     },
   ];
 
