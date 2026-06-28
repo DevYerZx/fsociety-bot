@@ -1,6 +1,5 @@
 const TEST_HOST = "https://speed.cloudflare.com";
 const TRACE_HOST = "https://1.1.1.1/cdn-cgi/trace";
-const IPAPI_HOST = "https://ipapi.co/json/";
 const IPWHO_HOST = "https://ipwho.is/";
 
 const PING_SAMPLES = 3;
@@ -320,20 +319,6 @@ async function fetchCloudflareTrace() {
   }
 }
 
-async function fetchIpApiProfile() {
-  try {
-    return await fetchJson(withCacheBust(IPAPI_HOST), NETWORK_TIMEOUT_MS, {
-      method: "GET",
-      headers: {
-        ...DEFAULT_HEADERS,
-        accept: "application/json",
-      },
-    });
-  } catch {
-    return null;
-  }
-}
-
 async function fetchIpWhoProfile() {
   try {
     return await fetchJson(withCacheBust(IPWHO_HOST), NETWORK_TIMEOUT_MS, {
@@ -348,28 +333,15 @@ async function fetchIpWhoProfile() {
   }
 }
 
-function buildNetworkProfile({ trace = null, ipapi = null, ipwho = null } = {}) {
-  const ip = pickText(trace?.ip, ipwho?.ip, ipapi?.ip);
-  const countryCode = pickText(trace?.loc, ipwho?.country_code, ipapi?.country_code);
-  const country = pickText(ipwho?.country, ipapi?.country_name, countryCode);
-  const city = pickText(ipwho?.city, ipapi?.city);
-  const region = pickText(ipwho?.region, ipapi?.region);
-  const timezone = pickText(ipwho?.timezone?.id, ipapi?.timezone);
-  const isp = pickText(
-    ipwho?.connection?.isp,
-    ipwho?.connection?.org,
-    ipapi?.org,
-    trace?.org
-  );
-  const organization = pickText(ipwho?.connection?.org, ipapi?.org, trace?.org, isp);
-  const asn = pickText(
-    formatAsn(ipwho?.connection?.asn),
-    formatAsn(ipapi?.asn),
-    formatAsn(trace?.asn)
-  );
+function buildNetworkProfile({ trace = null, ipwho = null } = {}) {
+  const countryCode = pickText(trace?.loc, ipwho?.country_code);
+  const country = pickText(ipwho?.country, countryCode);
+  const city = pickText(ipwho?.city);
+  const region = pickText(ipwho?.region);
+  const timezone = pickText(ipwho?.timezone?.id);
+  const asn = pickText(formatAsn(ipwho?.connection?.asn), formatAsn(trace?.asn));
   const connectionType = pickText(
     ipwho?.connection?.type,
-    ipapi?.connection?.type,
     ipwho?.type,
     trace?.connection
   );
@@ -377,17 +349,13 @@ function buildNetworkProfile({ trace = null, ipapi = null, ipwho = null } = {}) 
   const location = joinParts([city, region, country || countryCode].filter(Boolean), ", ");
 
   return {
-    available: Boolean(ip || isp || location || colo),
-    ip,
-    maskedIp: maskIp(ip),
+    available: Boolean(location || colo || asn),
     countryCode,
     country,
     city,
     region,
     location,
     timezone,
-    isp,
-    organization,
     asn,
     colo,
     connectionType,
@@ -395,17 +363,15 @@ function buildNetworkProfile({ trace = null, ipapi = null, ipwho = null } = {}) 
 }
 
 async function fetchNetworkIdentity() {
-  const [traceResult, ipapiResult, ipwhoResult] = await Promise.allSettled([
+  const [traceResult, ipwhoResult] = await Promise.allSettled([
     fetchCloudflareTrace(),
-    fetchIpApiProfile(),
     fetchIpWhoProfile(),
   ]);
 
   const trace = traceResult.status === "fulfilled" ? traceResult.value : null;
-  const ipapi = ipapiResult.status === "fulfilled" ? ipapiResult.value : null;
   const ipwho = ipwhoResult.status === "fulfilled" ? ipwhoResult.value : null;
 
-  return buildNetworkProfile({ trace, ipapi, ipwho });
+  return buildNetworkProfile({ trace, ipwho });
 }
 
 async function measurePing() {
@@ -634,12 +600,9 @@ function buildResultMessage(result, modeLabel = "NORMAL", contactText = "") {
     latencyNote ? `┃ ${latencyNote}` : null,
     "┃",
     "┣━━〔 RED DETECTADA 〕━━⬣",
-    `┃ 🌐 *ISP:* ${network.isp || "No detectado"}`,
-    `┃ 🏢 *Organización:* ${network.organization || network.isp || "No detectada"}`,
     `┃ 🛰️ *ASN:* ${network.asn || "No detectado"}`,
     `┃ 📍 *Ubicación:* ${location || "No detectada"}`,
     `┃ 🕒 *Zona horaria:* ${network.timezone || "No detectada"}`,
-    `┃ 🧷 *IP pública:* ${network.maskedIp || "No detectada"}`,
     `┃ 🌍 *Nodo Cloudflare:* ${network.colo || "No detectado"}`,
     `┃ 🧭 *Tipo de conexión:* ${network.connectionType || "No detectado"}`,
     "┃",
@@ -735,7 +698,7 @@ export default {
             "╭━━━〔 ⚡ *INICIANDO SPEEDTEST* 〕━━━⬣",
             "┃",
             `┃ 🧪 *Modo:* ${modeLabel}`,
-            "┃ 🛰️ *Paso 1:* Detectando proveedor e IP",
+            "┃ 🛰️ *Paso 1:* Detectando red y nodo",
             "┃ 📶 *Paso 2:* Midiendo ping",
             "┃ 📥 *Paso 3:* Descargando datos",
             "┃ 📤 *Paso 4:* Subiendo datos",
