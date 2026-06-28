@@ -207,6 +207,37 @@ function normalizeMp3Name(name) {
   return `${base || "youtube-audio"}.mp3`;
 }
 
+function normalizeTrackTitle(value = "") {
+  return cleanText(
+    String(value || "")
+      .replace(/\.mp3$/i, "")
+      .replace(/\((official|video|lyric|lyrics|audio|4k remaster|remaster)[^)]*\)/gi, "")
+      .replace(/\[(official|video|lyric|lyrics|audio|4k remaster|remaster)[^\]]*\]/gi, "")
+  );
+}
+
+function resolveAudioCardMetadata(data = {}) {
+  const rawTitle = normalizeTrackTitle(data.title || data.fileName || "YouTube MP3") || "YouTube MP3";
+  const parts = rawTitle.split(/\s[-\u2013\u2014]\s/).map((item) => cleanText(item)).filter(Boolean);
+
+  let artist = cleanText(data.author || "");
+  let trackTitle = rawTitle;
+
+  if (parts.length >= 2) {
+    artist = parts.shift() || artist;
+    trackTitle = parts.join(" - ");
+  }
+
+  artist = clipText(artist || cleanText(data.author || "") || "Unknown Artist", 80);
+  trackTitle = clipText(trackTitle || rawTitle, 120);
+
+  return {
+    artist,
+    title: trackTitle,
+    fileName: normalizeMp3Name(trackTitle || rawTitle),
+  };
+}
+
 function extractTextFromMessage(message) {
   return (
     message?.text ||
@@ -860,8 +891,9 @@ async function attachThumbnailToMp3(filePath, data = {}) {
 
   const coverPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-cover.jpg`);
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-tagged.mp3`);
-  const title = cleanText(data.title || data.fileName || "YouTube MP3") || "YouTube MP3";
-  const author = cleanText(data.author || "") || "Unknown Artist";
+  const meta = resolveAudioCardMetadata(data);
+  const title = cleanText(meta.title || "YouTube MP3") || "YouTube MP3";
+  const author = cleanText(meta.artist || data.author || "") || "Unknown Artist";
 
   try {
     await fsp.writeFile(coverPath, thumbBuffer);
@@ -964,43 +996,22 @@ function buildAudioFileCaption(data = {}) {
 async function sendLocalMp3(sock, from, quoted, data) {
   const thumbBuffer = data.thumbBuffer || (await getBuffer(data.thumbnail));
   const fileLength = Number(data.size || 0);
-  const seconds = Math.max(0, Number(data.duration || 0));
-  const title = clipText(data.title || data.fileName || "YouTube MP3", 80);
-  const author = clipText(data.author || "", 80);
-  let audioBuffer = null;
-
-  try {
-    audioBuffer = await fsp.readFile(data.tempPath);
-  } catch {}
+  const meta = resolveAudioCardMetadata(data);
 
   await sock.sendMessage(
     from,
     {
-      audio: audioBuffer || { url: data.tempPath },
+      document: { url: data.tempPath },
       mimetype: data.contentType || "audio/mpeg",
-      fileName: data.fileName,
-      ptt: false,
+      fileName: meta.fileName,
+      title: meta.artist || meta.title,
       jpegThumbnail: thumbBuffer || undefined,
       fileLength: fileLength > 0 ? fileLength : undefined,
-      seconds: seconds > 0 ? seconds : undefined,
-      contextInfo: thumbBuffer
-        ? {
-            externalAdReply: {
-              title,
-              body: author || "MP3",
-              mediaType: 2,
-              renderLargerThumbnail: true,
-              showAdAttribution: false,
-              thumbnail: thumbBuffer,
-              sourceUrl: data.sourceUrl || undefined,
-            },
-          }
-        : undefined,
     },
     quoted
   );
 
-  return "audio";
+  return "document";
 }
 
 export default {
