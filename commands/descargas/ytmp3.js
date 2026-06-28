@@ -45,6 +45,9 @@ const PROVIDER_NAME = "dvyer_ytmp3";
 const TMP_FILE_MAX_AGE_MS = 20 * 60 * 1000;
 const DELETE_RETRIES = 4;
 const DELETE_RETRY_DELAY_MS = 120;
+const ALBUM_COVER_SIZE = 600;
+const DOCUMENT_THUMBNAIL_SIZE = 96;
+const FFMPEG_TIMEOUT_MS = 60_000;
 
 const HTTP_AGENT = new http.Agent({
   keepAlive: true,
@@ -882,87 +885,133 @@ async function getBuffer(url = "", timeout = 12_000) {
   }
 }
 
+function runFfmpeg(args = []) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", args);
+    let errorText = "";
+    let settled = false;
+
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      ffmpeg.kill("SIGKILL");
+      finish(new Error("ffmpeg excedió el tiempo máximo."));
+    }, FFMPEG_TIMEOUT_MS);
+
+    ffmpeg.stderr.on("data", (chunk) => {
+      errorText += chunk.toString();
+    });
+
+    ffmpeg.on("error", finish);
+    ffmpeg.on("close", (code) => {
+      if (code === 0) {
+        finish();
+      } else {
+        finish(new Error(errorText.trim() || `ffmpeg error ${code}`));
+      }
+    });
+  });
+}
+
 async function attachThumbnailToMp3(filePath, data = {}) {
   const targetPath = String(filePath || "").trim();
   if (!targetPath) return null;
 
-  const thumbBuffer = await getBuffer(data.thumbnail);
-  if (!thumbBuffer?.length) return null;
+  const sourceCover = await getBuffer(data.thumbnail);
+  if (!sourceCover?.length) return null;
 
-  const coverPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-cover.jpg`);
+  const sourceCoverPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-source-cover`);
+  const coverPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-album-cover.jpg`);
+  const thumbnailPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-thumbnail.jpg`);
   const outputPath = path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-tagged.mp3`);
   const meta = resolveAudioCardMetadata(data);
   const title = cleanText(meta.title || "YouTube MP3") || "YouTube MP3";
   const author = cleanText(meta.artist || data.author || "") || "Unknown Artist";
 
   try {
-    await fsp.writeFile(coverPath, thumbBuffer);
+    await fsp.writeFile(sourceCoverPath, sourceCover);
 
-    await new Promise((resolve, reject) => {
-      const ffmpeg = spawn("ffmpeg", [
-        "-y",
-        "-i",
-        targetPath,
-        "-i",
-        coverPath,
-        "-map",
-        "0:a",
-        "-map",
-        "1:v",
-        "-c:a",
-        "copy",
-        "-c:v",
-        "mjpeg",
-        "-id3v2_version",
-        "3",
-        "-metadata",
-        `title=${title}`,
-        "-metadata",
-        `artist=${author}`,
-        "-metadata",
-        "album=YouTube Audio",
-        "-metadata:s:v",
-        "title=Album cover",
-        "-metadata:s:v",
-        "comment=Cover (front)",
-        "-disposition:v",
-        "attached_pic",
-        "-loglevel",
-        "error",
-        outputPath,
-      ]);
+    await runFfmpeg([
+      "-y",
+      "-i",
+      sourceCoverPath,
+      "-vf",
+      `scale=${ALBUM_COVER_SIZE}:${ALBUM_COVER_SIZE}:force_original_aspect_ratio=increase,crop=${ALBUM_COVER_SIZE}:${ALBUM_COVER_SIZE},setsar=1`,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "3",
+      "-loglevel",
+      "error",
+      coverPath,
+    ]);
 
-      let errorText = "";
-      let settled = false;
+    await runFfmpeg([
+      "-y",
+      "-i",
+      coverPath,
+      "-vf",
+      `scale=${DOCUMENT_THUMBNAIL_SIZE}:${DOCUMENT_THUMBNAIL_SIZE}`,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "5",
+      "-loglevel",
+      "error",
+      thumbnailPath,
+    ]);
 
-      ffmpeg.stderr.on("data", (chunk) => {
-        errorText += chunk.toString();
-      });
-
-      ffmpeg.on("error", (error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      });
-
-      ffmpeg.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(errorText.trim() || `ffmpeg error ${code}`));
-        }
-      });
-    });
+    await runFfmpeg([
+      "-y",
+      "-i",
+      targetPath,
+      "-i",
+      coverPath,
+      "-map",
+      "0:a",
+      "-map",
+      "1:v",
+      "-c:a",
+      "copy",
+      "-c:v",
+      "mjpeg",
+      "-id3v2_version",
+      "3",
+      "-metadata",
+      `title=${title}`,
+      "-metadata",
+      `artist=${author}`,
+      "-metadata",
+      "album=YouTube Audio",
+      "-metadata:s:v",
+      "title=Album cover",
+      "-metadata:s:v",
+      "comment=Cover (front)",
+      "-disposition:v",
+      "attached_pic",
+      "-loglevel",
+      "error",
+      outputPath,
+    ]);
 
     const taggedStat = await fsp.stat(outputPath).catch(() => null);
     if (!taggedStat?.size || taggedStat.size < MIN_AUDIO_BYTES) {
       throw new Error("El MP3 con portada quedó inválido.");
     }
 
+    const thumbnail = await fsp.readFile(thumbnailPath);
     await fsp.rename(outputPath, targetPath);
-    return thumbBuffer;
+    return thumbnail;
   } catch (error) {
     const message = String(error?.message || error || "");
     if (message.toLowerCase().includes("enoent")) {
@@ -970,9 +1019,11 @@ async function attachThumbnailToMp3(filePath, data = {}) {
     } else {
       console.warn("YTMP3: no pude incrustar la portada en el MP3:", message);
     }
-    return thumbBuffer;
+    return null;
   } finally {
+    await deleteFileSafe(sourceCoverPath);
     await deleteFileSafe(coverPath);
+    await deleteFileSafe(thumbnailPath);
     await deleteFileSafe(outputPath);
   }
 }
@@ -995,8 +1046,14 @@ function buildAudioFileCaption(data = {}) {
 
 async function sendLocalMp3(sock, from, quoted, data) {
   const thumbBuffer = data.thumbBuffer || (await getBuffer(data.thumbnail));
-  const fileLength = Number(data.size || 0);
   const meta = resolveAudioCardMetadata(data);
+  const thumbnailFields = thumbBuffer?.length
+    ? {
+        jpegThumbnail: thumbBuffer.toString("base64"),
+        thumbnailWidth: DOCUMENT_THUMBNAIL_SIZE,
+        thumbnailHeight: DOCUMENT_THUMBNAIL_SIZE,
+      }
+    : {};
 
   await sock.sendMessage(
     from,
@@ -1004,9 +1061,8 @@ async function sendLocalMp3(sock, from, quoted, data) {
       document: { url: data.tempPath },
       mimetype: data.contentType || "audio/mpeg",
       fileName: meta.fileName,
-      title: meta.artist || meta.title,
-      jpegThumbnail: thumbBuffer || undefined,
-      fileLength: fileLength > 0 ? fileLength : undefined,
+      title: meta.title,
+      ...thumbnailFields,
     },
     quoted
   );
