@@ -10,6 +10,14 @@ import {
   getDownloadExecutionPolicy,
 } from "../../lib/subbot-download-policy.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import {
+  buildDownloadCard,
+  buildSectionFallbackText,
+  buildSelectorCaption,
+  buildSelectorPayload,
+  buildUsageCard,
+  downloadFirstValidImageBuffer,
+} from "./_downloadUi.js";
 
 // Configuración
 const API_SPOTIFY_URL = buildDvyerUrl("/spotify");
@@ -53,6 +61,15 @@ function clipText(value = "", max = 72) {
   const normalized = cleanText(value);
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, Math.max(1, max - 3))}...`;
+}
+
+function improveSpotifyThumbnail(url = "") {
+  const value = cleanText(url);
+  if (!value) return "";
+
+  return value
+    .replace(/\/ab67616d00001e02\//i, "/ab67616d0000b273/")
+    .replace(/\/\d+x\d+(?=\.(jpg|jpeg|png|webp)([?#]|$))/i, "/640x640");
 }
 
 function parseDurationSeconds(value) {
@@ -276,7 +293,7 @@ function parseSpotifyResults(data) {
     title: cleanText(track.title || "Sin título"),
     artist: cleanText(track.artist || "Spotify"),
     duration: track.duration || "??:??",
-    thumbnail: track.thumbnail || null,
+    thumbnail: improveSpotifyThumbnail(track.thumbnail || ""),
     spotifyUrl: track.spotify_url || "",
     downloadUrl: track.download_url_full || track.download_url || track.download_path || "",
     fileName: track.filename || `${track.title} - ${track.artist}.mp3`,
@@ -336,7 +353,7 @@ async function getSpotifyDownloadInfo(input) {
       title: title,
       artist: artist,
       duration: selected.duration || data.duration || null,
-      thumbnail: selected.thumbnail || data.thumbnail || null,
+      thumbnail: improveSpotifyThumbnail(selected.thumbnail || data.thumbnail || ""),
       spotifyUrl: selected.spotify_url || data.spotify_url || "",
       fileName: normalizeAudioFileName(
         selected.filename || data.filename || `${title} - ${artist}`,
@@ -503,7 +520,15 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, mimety
           document: { url: filePath },
           mimetype: "audio/mpeg",
           fileName,
-          caption: `🎵 *${title}*\n🎤 ${artistLabel}\n\n📦 Documento`,
+          caption: buildDownloadCard("🎵 *SPOTIFY*", [
+            {
+              lines: [
+                `🎵 *${title}*`,
+                `🎤 ${artistLabel}`,
+                "📦 Enviado como documento",
+              ],
+            },
+          ]),
         },
         quoted
       );
@@ -535,7 +560,15 @@ async function sendSpotifyAudio(sock, from, quoted, { filePath, fileName, mimety
         document: { url: filePath },
         mimetype: "audio/mpeg",
         fileName,
-        caption: `🎵 *${title}*\n🎤 ${artistLabel}\n\n📦 Documento`,
+        caption: buildDownloadCard("🎵 *SPOTIFY*", [
+          {
+            lines: [
+              `🎵 *${title}*`,
+              `🎤 ${artistLabel}`,
+              "📦 Enviado como documento",
+            ],
+          },
+        ]),
       },
       quoted
     );
@@ -560,66 +593,51 @@ async function sendSpotifySearchPicker(ctx, query, results) {
   }));
 
   try {
-    if (results[0]?.thumbnail) {
-      try {
-        const imgResponse = await axios.get(results[0].thumbnail, { responseType: "arraybuffer" });
-        if (imgResponse.status === 200) {
-          await sock.sendMessage(
-            from,
-            {
-              image: Buffer.from(imgResponse.data),
-              caption:
-                `🟢 *SPOTIFY SEARCH*\n\n` +
-                `🔎 Resultados para: *${clipText(query, 80)}*\n` +
-                `📌 Top: *${clipText(results[0].title, 80)}*\n` +
-                `🎤 ${clipText(results[0].artist, 60)}\n\n` +
-                `Selecciona una canción:`,
-              ...global.channelInfo,
-            },
-            quoted
-          );
-        }
-      } catch (imgError) {
-        console.warn("Error cargando imagen:", imgError.message);
-      }
-    }
-
-    const interactivePayload = {
-      text: `Resultados para: ${clipText(query, 80)}`,
-      title: "🎵 SPOTIFY",
-      subtitle: "Elige una canción",
-      footer: "Descargas",
-      interactiveButtons: [
-        {
-          name: "single_select",
-          buttonParamsJson: JSON.stringify({
-            title: "🎵 Seleccionar canción",
-            sections: [
-              {
-                title: "Resultados de búsqueda",
-                rows,
-              },
-            ],
-          }),
-        },
+    const imageBuffer = await downloadFirstValidImageBuffer([results[0]?.thumbnail], {
+      timeout: 12_000,
+      minBytes: 4_000,
+    });
+    const sections = [
+      {
+        title: "Top canciones encontradas",
+        rows,
+      },
+    ];
+    const caption = buildSelectorCaption({
+      title: "🟢 *SPOTIFY*",
+      query,
+      lead: `🎤 Artista top: ${clipText(results[0]?.artist || "Spotify", 44)}`,
+      featuredTitle: results[0]?.title || "Sin título",
+      featuredLines: [
+        `⏱️ ${results[0]?.duration || "??:??"}`,
+        "🖼️ Portada HD incluida",
       ],
-    };
+      actionLines: [
+        "Selecciona una canción para descargar en MP3.",
+      ],
+    });
 
     try {
-      await sock.sendMessage(from, interactivePayload, quoted);
+      await sock.sendMessage(
+        from,
+        buildSelectorPayload({
+          imageBuffer,
+          caption,
+          title: "🎵 SPOTIFY",
+          subtitle: "Selector musical",
+          footer: "Spotify • DVYER",
+          selectorTitle: "🎵 Seleccionar canción",
+          sections,
+        }),
+        quoted
+      );
     } catch (buttonError) {
       console.warn("Botones no soportados, enviando lista de texto");
-      const fallbackText = rows
-        .slice(0, 5)
-        .map((row) => `*${row.header}. ${row.title}*\n${row.id}`)
-        .join("\n\n");
 
       await sock.sendMessage(
         from,
         {
-          text:
-            `Resultados para: ${clipText(query, 80)}\n\n${fallbackText}\n\n` +
-            `Copia uno de los comandos para descargar.`,
+          text: buildSectionFallbackText(caption, sections),
           ...global.channelInfo,
         },
         quoted
@@ -677,7 +695,20 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: `🎵 *Uso:*\n\n.spotify canción\n.spotify https://open.spotify.com/track/...\n\nEjemplos:\n.spotify bohemian rhapsody\n.spotify imagine john lennon`,
+            text: buildUsageCard({
+              title: "🎵 *SPOTIFY*",
+              summary: [
+                "Busca canciones o pega un track directo de Spotify.",
+                "Te mostraré un selector con portada y resultados listos para descargar.",
+              ],
+              examples: [
+                ".spotify canción artista",
+                ".spotify https://open.spotify.com/track/...",
+                ".spotify bohemian rhapsody",
+                ".spotify imagine john lennon",
+              ],
+              footer: "Solo tracks individuales o búsqueda por texto.",
+            }),
             ...global.channelInfo,
           },
           quoted
@@ -690,7 +721,9 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: "❌ Solo se admiten tracks individuales o búsqueda por texto",
+            text: buildDownloadCard("❌ *SPOTIFY*", [
+              { lines: ["Solo se admiten tracks individuales o búsqueda por texto."] },
+            ]),
             ...global.channelInfo,
           },
           quoted
@@ -702,7 +735,9 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: "❌ Solo URLs de Spotify o búsqueda por texto",
+            text: buildDownloadCard("❌ *SPOTIFY*", [
+              { lines: ["Solo URLs de Spotify o búsqueda por texto."] },
+            ]),
             ...global.channelInfo,
           },
           quoted
@@ -763,7 +798,16 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `❌ ${sanitizeProviderMessage(error, { kind: "audio", fallback: "No se pudo procesar Spotify." })}`,
+          text: buildDownloadCard("❌ *SPOTIFY*", [
+            {
+              lines: [
+                sanitizeProviderMessage(error, {
+                  kind: "audio",
+                  fallback: "No se pudo procesar Spotify.",
+                }),
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted

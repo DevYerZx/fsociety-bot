@@ -11,6 +11,7 @@ import {
   getDownloadExecutionPolicy,
 } from "../../lib/subbot-download-policy.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import { buildDownloadCard, buildUsageCard } from "./_downloadUi.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_INSTAGRAM_URL = `${API_BASE}/instagram`;
@@ -519,7 +520,9 @@ export default {
       const until = cooldowns.get(userId);
       if (until && until > Date.now()) {
         return sock.sendMessage(from, {
-          text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+          text: buildDownloadCard("⏳ *INSTAGRAM*", [
+            { lines: [`Espera ${getCooldownRemaining(until)}s antes de volver a intentarlo.`] },
+          ]),
           ...global.channelInfo,
         });
       }
@@ -535,7 +538,17 @@ export default {
       if (!postUrl) {
         cooldowns.delete(userId);
         return sock.sendMessage(from, {
-          text: "❌ Uso: .instagram <link>\n❌ O: .instagram 2 <link>",
+          text: buildUsageCard({
+            title: "📸 *INSTAGRAM*",
+            summary: [
+              "Descarga publicaciones, reels o fotos de Instagram.",
+              "Puedes elegir un item específico cuando el enlace trae varias piezas.",
+            ],
+            examples: [
+              ".instagram <link>",
+              ".instagram 2 <link>",
+            ],
+          }),
           ...global.channelInfo,
         });
       }
@@ -616,7 +629,16 @@ export default {
       }
 
       await sock.sendMessage(from, {
-        text: `❌ ${sanitizeProviderMessage(err, { kind: "video", fallback: "No se pudo procesar la publicacion de Instagram." })}`,
+        text: buildDownloadCard("❌ *INSTAGRAM*", [
+          {
+            lines: [
+              sanitizeProviderMessage(err, {
+                kind: "video",
+                fallback: "No se pudo procesar la publicacion de Instagram.",
+              }),
+            ],
+          },
+        ]),
         ...global.channelInfo,
       });
     } finally {

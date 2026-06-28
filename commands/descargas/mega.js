@@ -6,6 +6,7 @@ import { pipeline } from "stream/promises";
 import { buildDvyerUrl, getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import { buildDownloadCard, buildUsageCard } from "./_downloadUi.js";
 
 const API_MEGA_URL = buildDvyerUrl("/mega");
 const COOLDOWN_TIME = 0;
@@ -326,7 +327,9 @@ export default {
       const until = cooldowns.get(userId);
       if (until && until > Date.now()) {
         return sock.sendMessage(from, {
-          text: `Espera ${getCooldownRemaining(until)}s`,
+          text: buildDownloadCard("⏳ *MEGA*", [
+            { lines: [`Espera ${getCooldownRemaining(until)}s para volver a usar este comando.`] },
+          ]),
           ...global.channelInfo,
         });
       }
@@ -343,9 +346,17 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text:
-              "Uso: .mega <link publico de MEGA> o responde a un mensaje con el link\n" +
-              "Nota: por ahora solo sirve para enlaces de archivo, no carpetas.",
+            text: buildUsageCard({
+              title: "☁️ *MEGA*",
+              summary: [
+                "Descarga archivos públicos de MEGA.",
+                "Por ahora solo sirve para enlaces de archivo, no carpetas.",
+              ],
+              examples: [
+                ".mega <link público de MEGA>",
+                "También puedes responder a un mensaje que tenga el link.",
+              ],
+            }),
             ...global.channelInfo,
           },
           quoted
@@ -364,7 +375,14 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `Preparando MEGA...\n\nAPI: ${getDvyerBaseUrl()}`,
+          text: buildDownloadCard("☁️ *MEGA*", [
+            {
+              lines: [
+                "Preparando archivo para descarga...",
+                `API: ${getDvyerBaseUrl()}`,
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted
@@ -394,7 +412,16 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: sanitizeProviderMessage(error, { kind: "file", fallback: "No se pudo procesar el archivo de MEGA." }),
+          text: buildDownloadCard("❌ *MEGA*", [
+            {
+              lines: [
+                sanitizeProviderMessage(error, {
+                  kind: "file",
+                  fallback: "No se pudo procesar el archivo de MEGA.",
+                }),
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted

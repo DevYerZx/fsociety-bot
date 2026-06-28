@@ -16,6 +16,14 @@ import {
   refundDownloadCharge,
 } from "../economia/download-access.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import {
+  buildDownloadCard,
+  buildSectionFallbackText,
+  buildSelectorCaption,
+  buildSelectorPayload,
+  buildUsageCard,
+  downloadFirstValidImageBuffer,
+} from "./_downloadUi.js";
 
 const REQUEST_TIMEOUT = 15 * 60 * 1000;
 const SEARCH_TIMEOUT = 45_000;
@@ -531,19 +539,10 @@ async function apiGet(url, params, timeout = SEARCH_TIMEOUT) {
 }
 
 async function downloadThumbnailBuffer(url) {
-  if (!String(url || "").trim()) return null;
-
-  const response = await axios.get(url, {
-    responseType: "arraybuffer",
+  return downloadFirstValidImageBuffer([url], {
     timeout: 15_000,
-    validateStatus: () => true,
+    minBytes: 2_000,
   });
-
-  if (response.status >= 400 || !response.data) {
-    return null;
-  }
-
-  return Buffer.from(response.data);
 }
 
 async function requestSearchResults(input, config) {
@@ -747,26 +746,24 @@ async function downloadAbsoluteFile(downloadUrl, outputPath, maxFileBytes = MAX_
 }
 
 function buildPreviewCaption(info, config) {
-  const lines = [
-    "╭━━〔 📦 *FSOCIETY DOWNLOAD* 〕━━⬣",
-    `┃ ${config.rowLabel} *${info.title || `${config.name} File`}*`,
-  ];
+  const summaryLines = [`${config.rowLabel} *${info.title || `${config.name} File`}*`];
 
-  if (info.version) lines.push(`┃ 🧩 Versión: *${info.version}*`);
-  if (!config.hidePackageName && info.packageName) lines.push(`┃ 📛 Paquete: *${info.packageName}*`);
-  if (info.format) lines.push(`┃ 📁 Formato: *${String(info.format).toUpperCase()}*`);
+  if (info.version) summaryLines.push(`🧩 Version: *${info.version}*`);
+  if (!config.hidePackageName && info.packageName) summaryLines.push(`📛 Paquete: *${info.packageName}*`);
+  if (info.format) summaryLines.push(`📁 Formato: *${String(info.format).toUpperCase()}*`);
 
   const sizeText = humanBytes(info.sizeBytes);
-  if (sizeText) lines.push(`┃ 📦 Tamaño: *${sizeText}*`);
+  if (sizeText) summaryLines.push(`📦 Tamaño: *${sizeText}*`);
 
-  lines.push("╰━━━━━━━━━━━━━━━━━━⬣");
-
-  if (info.description) {
-    lines.push("");
-    lines.push(clipText(info.description, 260));
-  }
-
-  return lines.join("\n");
+  return buildDownloadCard("📦 *FSOCIETY DOWNLOAD*", [
+    { lines: summaryLines },
+    info.description
+      ? {
+          title: "DETALLE",
+          lines: [clipText(info.description, 260)],
+        }
+      : null,
+  ]);
 }
 
 async function sendPreviewCard(sock, from, quoted, info, config) {
@@ -829,33 +826,36 @@ async function sendSearchPicker(ctx, query, results, config) {
   }
 
   const caption =
-    `╭━━〔 ${config.rowLabel} *FSOCIETY DOWNLOAD* 〕━━⬣\n` +
-    `┃ 🔎 Resultado para: *${clipText(query, 80)}*\n` +
-    `┃ ⭐ Top: *${clipText(results[0]?.title || "Sin título", 80)}*\n` +
-    `┃ 📌 ${config.selectionText}\n` +
-    `╰━━━━━━━━━━━━━━━━━━⬣`;
+    buildSelectorCaption({
+      title: `${config.rowLabel} *FSOCIETY DOWNLOAD*`,
+      query,
+      lead: `📱 ${config.name} con resultados listos para descargar`,
+      featuredTitle: results[0]?.title || "Sin título",
+      featuredLines: [
+        results[0]?.version ? `🧩 ${clipText(results[0].version, 40)}` : null,
+        humanBytes(results[0]?.filesize_bytes || results[0]?.size_bytes)
+          ? `📦 ${humanBytes(results[0]?.filesize_bytes || results[0]?.size_bytes)}`
+          : `📁 ${String(results[0]?.format || config.defaultExtension).toUpperCase()}`,
+      ].filter(Boolean),
+      actionLines: [config.selectionText],
+    });
 
-  const interactivePayload = {
-    ...(thumbBuffer ? { image: thumbBuffer, caption } : { text: caption }),
-    title: "FSOCIETY BOT",
+  const sections = [
+    {
+      title: config.sectionTitle,
+      rows,
+    },
+  ];
+
+  const interactivePayload = buildSelectorPayload({
+    imageBuffer: thumbBuffer,
+    caption,
+    title: "📦 FSOCIETY DOWNLOAD",
     subtitle: config.subtitle,
     footer: config.footer,
-    ...global.channelInfo,
-    interactiveButtons: [
-      {
-        name: "single_select",
-        buttonParamsJson: JSON.stringify({
-          title: config.pickerTitle,
-          sections: [
-            {
-              title: config.sectionTitle,
-              rows,
-            },
-          ],
-        }),
-      },
-    ],
-  };
+    selectorTitle: config.pickerTitle,
+    sections,
+  });
 
   try {
     await safeSendMessage(sock, from, interactivePayload, quoted, {
@@ -881,18 +881,11 @@ async function sendSearchPicker(ctx, query, results, config) {
       } catch {}
     }
 
-    const fallbackText = rows
-      .slice(0, 5)
-      .map((row) => `${row.header}. ${row.title}\n${row.id}`)
-      .join("\n\n");
-
     await safeSendMessage(
       sock,
       from,
       {
-        text:
-          `${caption}\n\n${fallbackText}\n\n` +
-          `Toca o copia uno de los comandos para descargar.`,
+        text: buildSectionFallbackText(caption, sections),
         ...global.channelInfo,
       },
       quoted,
@@ -904,18 +897,22 @@ async function sendSearchPicker(ctx, query, results, config) {
 async function sendFileDocument(sock, from, quoted, info, filePath, fileName, size, config = {}) {
   const extra = [];
 
-  if (info.version) extra.push(`┃ 🧩 Versión: ${info.version}`);
-  if (!config.hidePackageName && info.packageName) extra.push(`┃ 📛 Paquete: ${info.packageName}`);
-  if (info.format) extra.push(`┃ 📁 Formato: ${String(info.format).toUpperCase()}`);
+  if (info.version) extra.push(`🧩 Versión: ${info.version}`);
+  if (!config.hidePackageName && info.packageName) extra.push(`📛 Paquete: ${info.packageName}`);
+  if (info.format) extra.push(`📁 Formato: ${String(info.format).toUpperCase()}`);
 
   const sizeText = humanBytes(size);
-  if (sizeText) extra.push(`┃ 📦 Tamaño: ${sizeText}`);
+  if (sizeText) extra.push(`📦 Tamaño: ${sizeText}`);
 
   const caption =
-    `╭━━〔 ✅ *DESCARGA LISTA* 〕━━⬣\n` +
-    `┃ 📌 ${info.title}\n` +
-    `${extra.length ? `${extra.join("\n")}\n` : ""}` +
-    `╰━━━━━━━━━━━━━━━━━━⬣`;
+    buildDownloadCard("✅ *DESCARGA LISTA*", [
+      {
+        lines: [
+          `📌 ${info.title}`,
+          ...extra,
+        ],
+      },
+    ]);
 
   await safeSendMessage(
     sock,
@@ -939,12 +936,18 @@ async function sendLargeFileLink(sock, from, quoted, info, config) {
     sock,
     from,
     {
-      text:
-        `╭━━〔 ⚠️ *ARCHIVO GRANDE* 〕━━⬣\n` +
-        `┃ El ${config.tooLargeLabel} supera el límite de envío directo.\n` +
-        `${sizeText ? `┃ Tamaño: *${sizeText}*\n` : ""}` +
-        `╰━━━━━━━━━━━━━━━━━━⬣\n\n` +
-        `No envío el enlace con API key por seguridad.`,
+      text: buildDownloadCard("⚠️ *ARCHIVO GRANDE*", [
+        {
+          lines: [
+            `El ${config.tooLargeLabel} supera el límite de envío directo.`,
+            sizeText ? `Tamaño: *${sizeText}*` : null,
+          ].filter(Boolean),
+        },
+        {
+          title: "SEGURIDAD",
+          lines: ["No envío el enlace con API key por seguridad."],
+        },
+      ]),
       ...global.channelInfo,
     },
     quoted,
@@ -1019,7 +1022,15 @@ export function buildDvyerAppCommand(kind) {
             sock,
             from,
             {
-              text: config.usage,
+              text: buildUsageCard({
+                title: `${config.rowLabel} *${config.name}*`,
+                summary: [
+                  `Selector visual para ${config.name.toLowerCase()}.`,
+                  "Puedes buscar por nombre o pegar un enlace directo.",
+                ],
+                examples: config.usage.split("\n"),
+                footer: "Si escribes solo el nombre, te mostraré opciones para escoger.",
+              }),
               ...global.channelInfo,
             },
             quoted,
@@ -1126,10 +1137,9 @@ export function buildDvyerAppCommand(kind) {
           sock,
           from,
           {
-            text:
-              `╭━━〔 ❌ *ERROR* 〕━━⬣\n` +
-              `┃ ${detail}\n` +
-              `╰━━━━━━━━━━━━━━━━━━⬣`,
+            text: buildDownloadCard("❌ *ERROR*", [
+              { lines: [detail] },
+            ]),
             ...global.channelInfo,
           },
           quoted,

@@ -21,6 +21,7 @@ import {
   getDownloadExecutionPolicy,
 } from "../../lib/subbot-download-policy.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import { buildDownloadCard, buildUsageCard } from "./_downloadUi.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_TIKTOK_URL = `${API_BASE}/ttdlmp4`;
@@ -541,7 +542,9 @@ export default {
 
       if (until && until > Date.now()) {
         return sock.sendMessage(from, {
-          text: `⏳ Espera ${getCooldownRemaining(until)}s`,
+          text: buildDownloadCard("⏳ *TIKTOK*", [
+            { lines: [`Espera ${getCooldownRemaining(until)}s antes de usar el comando otra vez.`] },
+          ]),
           ...global.channelInfo,
         });
       }
@@ -558,13 +561,18 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text:
-              `╭━━〔 ❌ *USO INCORRECTO* 〕━━⬣\n` +
-              `┃ Usa:\n` +
-              `┃ .tiktok <link de TikTok>\n` +
-              `┃ .tiktok hd <link>\n` +
-              `┃ .tiktok 2 <link>\n` +
-              `╰━━━━━━━━━━━━━━━━━━⬣`,
+            text: buildUsageCard({
+              title: "🎵 *TIKTOK*",
+              summary: [
+                "Descarga videos de TikTok en modo normal o HD.",
+                "También puedes elegir una calidad rápida con número.",
+              ],
+              examples: [
+                ".tiktok <link de TikTok>",
+                ".tiktok hd <link>",
+                ".tiktok 2 <link>",
+              ],
+            }),
             ...global.channelInfo,
           },
           quoted
@@ -615,10 +623,16 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text:
-            `╭━━〔 ❌ *ERROR TIKTOK* 〕━━⬣\n` +
-            `┃ ${sanitizeProviderMessage(err, { kind: "video", fallback: "No se pudo procesar el video." })}\n` +
-            `╰━━━━━━━━━━━━━━━━━━⬣`,
+          text: buildDownloadCard("❌ *TIKTOK*", [
+            {
+              lines: [
+                sanitizeProviderMessage(err, {
+                  kind: "video",
+                  fallback: "No se pudo procesar el video.",
+                }),
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted

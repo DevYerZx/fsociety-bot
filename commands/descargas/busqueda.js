@@ -1,3 +1,9 @@
+import {
+  buildSectionFallbackText,
+  buildSelectorCaption,
+  buildSelectorPayload,
+} from "./_downloadUi.js";
+
 function getPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
     return settings.prefix.find((value) => String(value || "").trim()) || ".";
@@ -6,16 +12,75 @@ function getPrefix(settings) {
 }
 
 function buildFallbackText(prefix) {
-  return (
-    `*MENU BUSQUEDA*\n\n` +
-    `YouTube:\n` +
-    `- ${prefix}ytsearch believer imagine dragons\n\n` +
-    `TikTok:\n` +
-    `- ${prefix}ttsearch style tips\n` +
-    `- ${prefix}tiktokusuario @username\n\n` +
-    `Imagenes:\n` +
-    `- ${prefix}pinterest goku`
-  );
+  const sections = buildSections(prefix);
+  const caption = buildMenuCaption();
+  return buildSectionFallbackText(caption, sections);
+}
+
+function buildSections(prefix) {
+  return [
+    {
+      title: "YouTube",
+      rows: [
+        {
+          header: "1",
+          title: "Buscar en YouTube",
+          description: "MP3, MP4 y resultados rapidos",
+          id: `${prefix}ytsearch believer imagine dragons`,
+        },
+        {
+          header: "2",
+          title: "Selector Play",
+          description: "Musica con portada y formato",
+          id: `${prefix}play bad bunny`,
+        },
+      ],
+    },
+    {
+      title: "TikTok",
+      rows: [
+        {
+          header: "1",
+          title: "Buscar videos TikTok",
+          description: "Resultados por texto con selector",
+          id: `${prefix}ttsearch style tips`,
+        },
+        {
+          header: "2",
+          title: "Buscar por usuario",
+          description: "Videos por username",
+          id: `${prefix}tiktokusuario @username`,
+        },
+      ],
+    },
+    {
+      title: "Imagenes",
+      rows: [
+        {
+          header: "1",
+          title: "Pinterest HD",
+          description: "Busqueda por keyword e imagenes",
+          id: `${prefix}pinterest goku`,
+        },
+      ],
+    },
+  ];
+}
+
+function buildMenuCaption() {
+  return buildSelectorCaption({
+    title: "🔎 *FSOCIETY BUSQUEDA*",
+    query: "Accesos rapidos del bot",
+    lead: "🎯 Buscadores de YouTube, TikTok e imagenes",
+    featuredTitle: "Descargas con selector visual",
+    featuredLines: [
+      "🎧 Play, Apple Music y Spotify con portada",
+      "📱 Apps, videos e imagenes en un solo menu",
+    ],
+    actionLines: [
+      "Abre el selector y entra al buscador que quieras usar",
+    ],
+  });
 }
 
 export default {
@@ -26,68 +91,20 @@ export default {
 
   run: async ({ sock, msg, from, settings }) => {
     const prefix = getPrefix(settings);
-
-    const sections = [
-      {
-        title: "YouTube",
-        rows: [
-          {
-            header: "YT Search",
-            title: "Buscar en YouTube",
-            description: "Resultados para MP3/MP4",
-            id: `${prefix}ytsearch believer imagine dragons`,
-          },
-        ],
-      },
-      {
-        title: "TikTok",
-        rows: [
-          {
-            header: "TT Search",
-            title: "Buscar videos TikTok",
-            description: "Busqueda general por texto",
-            id: `${prefix}ttsearch style tips`,
-          },
-          {
-            header: "TT Usuario",
-            title: "Buscar por usuario",
-            description: "Videos por username",
-            id: `${prefix}tiktokusuario @username`,
-          },
-        ],
-      },
-      {
-        title: "Imagenes",
-        rows: [
-          {
-            header: "Pinterest",
-            title: "Buscar imagenes",
-            description: "Busqueda por keyword",
-            id: `${prefix}pinterest goku`,
-          },
-        ],
-      },
-    ];
+    const sections = buildSections(prefix);
+    const caption = buildMenuCaption();
 
     try {
       return await sock.sendMessage(
         from,
-        {
-          text: "Busqueda del bot",
-          title: "FSOCIETY BOT",
-          subtitle: "Menu Busqueda",
-          footer: "Incluye ytsearch",
-          interactiveButtons: [
-            {
-              name: "single_select",
-              buttonParamsJson: JSON.stringify({
-                title: "Abrir busquedas",
-                sections,
-              }),
-            },
-          ],
-          ...global.channelInfo,
-        },
+        buildSelectorPayload({
+          caption,
+          title: "🔎 FSOCIETY BUSQUEDA",
+          subtitle: "Menu inteligente",
+          footer: "Busquedas y descargas",
+          selectorTitle: "Abrir buscadores",
+          sections,
+        }),
         { quoted: msg }
       );
     } catch {

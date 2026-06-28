@@ -3,6 +3,14 @@ import path from "path";
 import yts from "yt-search";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import {
+  buildDownloadCard,
+  buildSectionFallbackText,
+  buildSelectorCaption,
+  buildSelectorPayload,
+  buildUsageCard,
+  downloadFirstValidImageBuffer,
+} from "./_downloadUi.js";
 
 const RESULT_LIMIT = 5;
 const DEFAULT_CAROUSEL_COVER = "https://i.ibb.co/5xrnyZhN/fsociety-bot-profile.png";
@@ -238,9 +246,9 @@ async function sendCarouselResults(sock, from, quoted, query, results, prefix) {
   }
 
   const basePayload = {
-    text: "YouTube-Buscador ««┐",
-    footer: `Resultados para: ${clipText(query, 80)}`,
-    title: "FSOCIETY BOT",
+    text: "🎬 FSOCIETY YTSEARCH",
+    footer: `YouTube • ${clipText(query, 60)}`,
+    title: "FSOCIETY DOWNLOAD",
     ...global.channelInfo,
   };
 
@@ -288,28 +296,39 @@ async function sendCarouselResults(sock, from, quoted, query, results, prefix) {
 async function sendFallbackResults(sock, from, quoted, query, results, prefix) {
   const mp3Rows = buildResultRows(results, prefix, "mp3");
   const mp4Rows = buildResultRows(results, prefix, "mp4");
+  const sections = [
+    { title: "MP3 - Audio", rows: mp3Rows },
+    { title: "MP4 - Video", rows: mp4Rows },
+  ];
+  const cover = await downloadFirstValidImageBuffer(
+    [results[0]?.thumbnail, DEFAULT_CAROUSEL_COVER],
+    { timeout: 12_000, minBytes: 2_000 }
+  );
+  const caption = buildSelectorCaption({
+    title: "🎬 *YOUTUBE SEARCH*",
+    query,
+    lead: `🎙️ Canal top: ${clipText(results[0]?.author || "Canal", 42)}`,
+    featuredTitle: results[0]?.title || "Sin titulo",
+    featuredLines: [
+      `⏱️ ${results[0]?.duration || "N/D"}  •  👁️ ${compactNumber(results[0]?.views || 0)}`,
+      `📅 ${clipText(results[0]?.ago || "Sin fecha", 26)}`,
+    ],
+    actionLines: [
+      "Elige si quieres descargar en MP3 o MP4.",
+    ],
+  });
 
   await sock.sendMessage(
     from,
-    {
-      text: `Resultados para: ${clipText(query, 80)}`,
-      title: "YouTube Search",
-      subtitle: "MP3 / MP4",
-      footer: "FSOCIETY BOT",
-      interactiveButtons: [
-        {
-          name: "single_select",
-          buttonParamsJson: JSON.stringify({
-            title: "Elegir descarga",
-            sections: [
-              { title: "MP3 - Audio rapido", rows: mp3Rows },
-              { title: "MP4 - Video", rows: mp4Rows },
-            ],
-          }),
-        },
-      ],
-      ...global.channelInfo,
-    },
+    buildSelectorPayload({
+      imageBuffer: cover,
+      caption,
+      title: "🎬 YOUTUBE SEARCH",
+      subtitle: "MP3 y MP4",
+      footer: "YouTube • FSOCIETY",
+      selectorTitle: "Elegir descarga",
+      sections,
+    }),
     quoted
   );
 }
@@ -331,7 +350,19 @@ export default {
       return sock.sendMessage(
         from,
         {
-          text: `Uso:\n${prefix}ytsearch <texto>\nEj: ${prefix}ytsearch ozuna odisea`,
+          text: buildUsageCard({
+            title: "🎬 *YOUTUBE SEARCH*",
+            summary: [
+              "Busca videos de YouTube y muestra resultados para descargar.",
+              "Puedes escoger audio MP3 o video MP4 desde el selector.",
+            ],
+            examples: [
+              `${prefix}ytsearch ozuna odisea`,
+              `${prefix}ytsearch bad bunny monaco`,
+              `${prefix}ytsearch believer imagine dragons`,
+            ],
+            footer: "Si el carrusel no abre, el bot enviará selector normal con portada.",
+          }),
           ...global.channelInfo,
         },
         quoted
@@ -352,7 +383,9 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: "No encontre resultados de YouTube.",
+            text: buildDownloadCard("❌ *YOUTUBE SEARCH*", [
+              { lines: ["No encontré resultados de YouTube."] },
+            ]),
             ...global.channelInfo,
           },
           quoted
@@ -385,7 +418,13 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: `Error al buscar en YouTube: ${clean(sanitizeProviderMessage(error, { kind: "search", fallback: "desconocido" }))}`,
+          text: buildDownloadCard("❌ *YOUTUBE SEARCH*", [
+            {
+              lines: [
+                `Error al buscar en YouTube: ${clean(sanitizeProviderMessage(error, { kind: "search", fallback: "desconocido" }))}`,
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted

@@ -17,6 +17,7 @@ import {
   refundDownloadCharge,
 } from "../economia/download-access.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import { buildDownloadCard, buildUsageCard } from "./_downloadUi.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_FACEBOOK_URL = `${API_BASE}/facebook`;
@@ -419,7 +420,9 @@ export default {
 
       if (until && until > Date.now()) {
         return sock.sendMessage(from, {
-          text: `Espera ${getCooldownRemaining(until)}s`,
+          text: buildDownloadCard("⏳ *FACEBOOK*", [
+            { lines: [`Espera ${getCooldownRemaining(until)}s para volver a usar el comando.`] },
+          ]),
           ...global.channelInfo,
         });
       }
@@ -439,11 +442,16 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text:
-              "╭━━〔 ❌ *USO INCORRECTO* 〕━━⬣\n" +
-              "┃ Uso: .facebook <link público de Facebook>\n" +
-              "┃ También puedes responder a un mensaje con el link.\n" +
-              "╰━━━━━━━━━━━━━━━━━━⬣",
+            text: buildUsageCard({
+              title: "📘 *FACEBOOK*",
+              summary: [
+                "Descarga videos públicos de Facebook.",
+                "También puedes responder a un mensaje que tenga el link.",
+              ],
+              examples: [
+                ".facebook <link público de Facebook>",
+              ],
+            }),
             ...global.channelInfo,
           },
           quoted
@@ -463,11 +471,14 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text:
-            "╭━━〔 ⬇️ *PREPARANDO FACEBOOK* 〕━━⬣\n" +
-            `┃ 🔗 API: ${API_BASE}\n` +
-            "┃ 🔑 API Key: Activa\n" +
-            "╰━━━━━━━━━━━━━━━━━━⬣",
+          text: buildDownloadCard("⬇️ *PREPARANDO FACEBOOK*", [
+            {
+              lines: [
+                "Analizando el video y preparando la descarga.",
+                `API: ${API_BASE}`,
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted
@@ -540,10 +551,16 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text:
-            "╭━━〔 ❌ *ERROR FACEBOOK* 〕━━⬣\n" +
-            `┃ ${sanitizeProviderMessage(error, { kind: "video", fallback: "No se pudo procesar el video de Facebook." })}\n` +
-            "╰━━━━━━━━━━━━━━━━━━⬣",
+          text: buildDownloadCard("❌ *FACEBOOK*", [
+            {
+              lines: [
+                sanitizeProviderMessage(error, {
+                  kind: "video",
+                  fallback: "No se pudo procesar el video de Facebook.",
+                }),
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted

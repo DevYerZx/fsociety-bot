@@ -6,6 +6,7 @@ import { pipeline } from "stream/promises";
 import { getDvyerBaseUrl, withDvyerApiKey } from "../../lib/api-manager.js";
 import { chargeDownloadRequest, refundDownloadCharge } from "../economia/download-access.js";
 import { sanitizeProviderMessage } from "./_errorMessages.js";
+import { buildDownloadCard, buildUsageCard } from "./_downloadUi.js";
 
 const API_BASE = getDvyerBaseUrl();
 const API_MEDIAFIRE_URL = `${API_BASE}/mediafire`;
@@ -366,7 +367,9 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: `⏳ Espera ${getCooldownRemaining(until)}s antes de usar este comando otra vez.`,
+            text: buildDownloadCard("⏳ *MEDIAFIRE*", [
+              { lines: [`Espera ${getCooldownRemaining(until)}s antes de usar este comando otra vez.`] },
+            ]),
             ...global.channelInfo,
           },
           quoted
@@ -388,17 +391,16 @@ export default {
         return sock.sendMessage(
           from,
           {
-            text: [
-              "╭━━〔 *📦 MEDIAFIRE* 〕━━⬣",
-              "┃ ❌ *Falta el enlace.*",
-              "┃",
-              "┃ Usa:",
-              "┃ *.mediafire <link público>*",
-              "┃",
-              "┃ También puedes responder",
-              "┃ a un mensaje que tenga el link.",
-              "╰━━━━━━━━━━━━━━━━━━⬣",
-            ].join("\n"),
+            text: buildUsageCard({
+              title: "📦 *MEDIAFIRE*",
+              summary: [
+                "Falta el enlace del archivo.",
+                "También puedes responder a un mensaje que tenga el link.",
+              ],
+              examples: [
+                ".mediafire <link público>",
+              ],
+            }),
             ...global.channelInfo,
           },
           quoted
@@ -427,16 +429,18 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: [
-            "╭━━〔 *📥 MEDIAFIRE* 〕━━⬣",
-            `┃ 📄 *Archivo:* ${info.title}`,
-            info.fileSize
-              ? `┃ 💾 *Tamaño:* ${info.fileSize}`
-              : "┃ 💾 *Tamaño:* Calculando...",
-            "┃",
-            "┃ 🚀 *Descargando archivo...*",
-            "╰━━━━━━━━━━━━━━━━━━⬣",
-          ].join("\n"),
+          text: buildDownloadCard("📥 *MEDIAFIRE*", [
+            {
+              lines: [
+                `📄 *Archivo:* ${info.title}`,
+                info.fileSize ? `💾 *Tamaño:* ${info.fileSize}` : "💾 *Tamaño:* Calculando...",
+              ],
+            },
+            {
+              title: "ESTADO",
+              lines: ["🚀 Descargando archivo..."],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted
@@ -464,11 +468,16 @@ export default {
       await sock.sendMessage(
         from,
         {
-          text: [
-            "╭━━〔 *❌ MEDIAFIRE ERROR* 〕━━⬣",
-            `┃ ${sanitizeProviderMessage(error, { kind: "file", fallback: "No se pudo procesar el archivo de MediaFire." })}`,
-            "╰━━━━━━━━━━━━━━━━━━⬣",
-          ].join("\n"),
+          text: buildDownloadCard("❌ *MEDIAFIRE*", [
+            {
+              lines: [
+                sanitizeProviderMessage(error, {
+                  kind: "file",
+                  fallback: "No se pudo procesar el archivo de MediaFire.",
+                }),
+              ],
+            },
+          ]),
           ...global.channelInfo,
         },
         quoted
