@@ -1,5 +1,7 @@
 const TEST_HOST = "https://speed.cloudflare.com";
 const TRACE_HOST = "https://1.1.1.1/cdn-cgi/trace";
+const IPAPI_HOST = "https://ipapi.co/json/";
+const IPWHO_HOST = "https://ipwho.is/";
 
 const PING_SAMPLES = 3;
 const DEFAULT_DOWNLOAD_BYTES = 16_000_000;
@@ -7,6 +9,7 @@ const DEFAULT_UPLOAD_BYTES = 4_000_000;
 
 const REQUEST_TIMEOUT_MS = 45_000;
 const TRACE_TIMEOUT_MS = 8_000;
+const NETWORK_TIMEOUT_MS = 10_000;
 
 const DEFAULT_HEADERS = {
   "user-agent":
@@ -70,6 +73,20 @@ const UPLOAD_FALLBACKS = [
 
 let activeSpeedtest = null;
 
+function cleanText(value, fallback = "") {
+  const text = String(value ?? "").trim();
+  if (!text || text === "null" || text === "undefined") return fallback;
+  return text;
+}
+
+function pickText(...values) {
+  for (const value of values) {
+    const text = cleanText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
 function average(values = []) {
   if (!values.length) return 0;
   return values.reduce((sum, current) => sum + current, 0) / values.length;
@@ -88,8 +105,20 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+function pad2(value) {
+  return String(Math.trunc(Math.abs(Number(value) || 0))).padStart(2, "0");
+}
+
 function formatMs(value) {
   return `${Number(value || 0).toFixed(0)} ms`;
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
 }
 
 function formatMbps(bytes, ms) {
@@ -110,6 +139,41 @@ function buildBar(percent, size = 16) {
   const total = Math.max(8, Math.min(30, Number(size || 16)));
   const filled = Math.round((pct / 100) * total);
   return "█".repeat(filled) + "░".repeat(Math.max(0, total - filled));
+}
+
+function buildGauge(valueMbps, capMbps, size = 18) {
+  const ratio = capMbps > 0 ? clampNumber((valueMbps / capMbps) * 100, 0, 100) : 0;
+  return buildBar(ratio, size);
+}
+
+function formatAsn(value) {
+  const text = cleanText(value);
+  if (!text) return "";
+  if (/^AS/i.test(text)) return text.toUpperCase();
+  if (/^\d+$/.test(text)) return `AS${text}`;
+  return text;
+}
+
+function joinParts(parts, separator = " • ") {
+  return parts.filter(Boolean).join(separator);
+}
+
+function maskIp(ip) {
+  const text = cleanText(ip);
+  if (!text) return "";
+
+  if (text.includes(":")) {
+    const groups = text.split(":").filter(Boolean);
+    if (groups.length <= 2) return `${groups[0] || ""}:…`;
+    return `${groups.slice(0, 3).join(":")}:…`;
+  }
+
+  const parts = text.split(".");
+  if (parts.length === 4) {
+    return `${parts[0]}.***.***.${parts[3]}`;
+  }
+
+  return `${text.slice(0, 4)}…`;
 }
 
 function getFetch() {
@@ -176,6 +240,12 @@ async function readResponseBytesLimited(response, limitBytes) {
   return total;
 }
 
+function withCacheBust(url) {
+  const parsed = new URL(url);
+  parsed.searchParams.set("r", String(Date.now()));
+  return parsed.toString();
+}
+
 async function runTimedFetch(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const doFetch = getFetch();
   const controller = new AbortController();
@@ -204,6 +274,140 @@ async function runTimedFetch(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) 
   }
 }
 
+async function fetchJson(url, timeoutMs = REQUEST_TIMEOUT_MS, options = {}) {
+  const { response } = await runTimedFetch(url, options, timeoutMs);
+  const raw = await response.text();
+  if (!raw.trim()) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchText(url, timeoutMs = REQUEST_TIMEOUT_MS, options = {}) {
+  const { response } = await runTimedFetch(url, options, timeoutMs);
+  return response.text();
+}
+
+function parseTracePayload(text = "") {
+  const payload = {};
+
+  for (const line of String(text).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes("=")) continue;
+
+    const index = trimmed.indexOf("=");
+    const key = trimmed.slice(0, index).trim();
+    const value = trimmed.slice(index + 1).trim();
+    if (key) payload[key] = value;
+  }
+
+  return payload;
+}
+
+async function fetchCloudflareTrace() {
+  try {
+    const text = await fetchText(
+      withCacheBust(TRACE_HOST),
+      TRACE_TIMEOUT_MS,
+      { method: "GET", headers: DEFAULT_HEADERS }
+    );
+    return parseTracePayload(text);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchIpApiProfile() {
+  try {
+    return await fetchJson(withCacheBust(IPAPI_HOST), NETWORK_TIMEOUT_MS, {
+      method: "GET",
+      headers: {
+        ...DEFAULT_HEADERS,
+        accept: "application/json",
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function fetchIpWhoProfile() {
+  try {
+    return await fetchJson(withCacheBust(IPWHO_HOST), NETWORK_TIMEOUT_MS, {
+      method: "GET",
+      headers: {
+        ...DEFAULT_HEADERS,
+        accept: "application/json",
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+function buildNetworkProfile({ trace = null, ipapi = null, ipwho = null } = {}) {
+  const ip = pickText(trace?.ip, ipwho?.ip, ipapi?.ip);
+  const countryCode = pickText(trace?.loc, ipwho?.country_code, ipapi?.country_code);
+  const country = pickText(ipwho?.country, ipapi?.country_name, countryCode);
+  const city = pickText(ipwho?.city, ipapi?.city);
+  const region = pickText(ipwho?.region, ipapi?.region);
+  const timezone = pickText(ipwho?.timezone?.id, ipapi?.timezone);
+  const isp = pickText(
+    ipwho?.connection?.isp,
+    ipwho?.connection?.org,
+    ipapi?.org,
+    trace?.org
+  );
+  const organization = pickText(ipwho?.connection?.org, ipapi?.org, trace?.org, isp);
+  const asn = pickText(
+    formatAsn(ipwho?.connection?.asn),
+    formatAsn(ipapi?.asn),
+    formatAsn(trace?.asn)
+  );
+  const connectionType = pickText(
+    ipwho?.connection?.type,
+    ipapi?.connection?.type,
+    ipwho?.type,
+    trace?.connection
+  );
+  const colo = pickText(trace?.colo);
+  const location = joinParts([city, region, country || countryCode].filter(Boolean), ", ");
+
+  return {
+    available: Boolean(ip || isp || location || colo),
+    ip,
+    maskedIp: maskIp(ip),
+    countryCode,
+    country,
+    city,
+    region,
+    location,
+    timezone,
+    isp,
+    organization,
+    asn,
+    colo,
+    connectionType,
+  };
+}
+
+async function fetchNetworkIdentity() {
+  const [traceResult, ipapiResult, ipwhoResult] = await Promise.allSettled([
+    fetchCloudflareTrace(),
+    fetchIpApiProfile(),
+    fetchIpWhoProfile(),
+  ]);
+
+  const trace = traceResult.status === "fulfilled" ? traceResult.value : null;
+  const ipapi = ipapiResult.status === "fulfilled" ? ipapiResult.value : null;
+  const ipwho = ipwhoResult.status === "fulfilled" ? ipwhoResult.value : null;
+
+  return buildNetworkProfile({ trace, ipapi, ipwho });
+}
+
 async function measurePing() {
   const samples = [];
   let useFallback = false;
@@ -211,10 +415,10 @@ async function measurePing() {
   for (let index = 0; index < PING_SAMPLES; index += 1) {
     try {
       const url = `${TEST_HOST}/__down?bytes=1&r=${Date.now()}-${index}`;
-      const { response, startedAt } = await runTimedFetch(
-        url,
-        { method: "GET", headers: CF_HEADERS }
-      );
+      const { response, startedAt } = await runTimedFetch(url, {
+        method: "GET",
+        headers: CF_HEADERS,
+      });
 
       await readResponseBytesLimited(response, 8192);
 
@@ -253,7 +457,10 @@ async function measurePing() {
 }
 
 async function measureDownload(bytesToDownload) {
-  const bytesWanted = Math.max(1_000_000, Number(bytesToDownload || DEFAULT_DOWNLOAD_BYTES));
+  const bytesWanted = Math.max(
+    1_000_000,
+    Number(bytesToDownload || DEFAULT_DOWNLOAD_BYTES)
+  );
   let lastError = "No pude medir la descarga.";
 
   for (const provider of DOWNLOAD_FALLBACKS) {
@@ -349,9 +556,11 @@ async function executeSpeedtest(options = {}) {
   const downloadBytes = Number(options.downloadBytes || DEFAULT_DOWNLOAD_BYTES);
   const uploadBytes = Number(options.uploadBytes || DEFAULT_UPLOAD_BYTES);
 
+  const networkPromise = fetchNetworkIdentity();
   const ping = await measurePing();
   const download = await measureDownload(downloadBytes);
   const upload = await measureUpload(uploadBytes);
+  const network = await networkPromise;
 
   return {
     startedAt,
@@ -359,11 +568,33 @@ async function executeSpeedtest(options = {}) {
     ping,
     download,
     upload,
+    network,
   };
 }
 
 function buildOwnerContact(settings = {}) {
   return String(settings.ownerName || "DVYER").trim();
+}
+
+function classifyConnection(downloadMbps, uploadMbps, pingMs, jitterMs) {
+  const dl = Number(downloadMbps || 0);
+  const ul = Number(uploadMbps || 0);
+  const ping = Number(pingMs || 0);
+  const jitter = Number(jitterMs || 0);
+
+  if (dl >= 100 && ul >= 25 && ping <= 35 && jitter <= 12) {
+    return { label: "EXCELENTE", emoji: "🟢" };
+  }
+
+  if (dl >= 50 && ul >= 10) {
+    return { label: "MUY BUENA", emoji: "🔵" };
+  }
+
+  if (dl >= 15 && ul >= 5 && ping <= 120) {
+    return { label: "ESTABLE", emoji: "🟡" };
+  }
+
+  return { label: "LIMITADA", emoji: "🟠" };
 }
 
 function buildResultMessage(result, modeLabel = "NORMAL", contactText = "") {
@@ -375,28 +606,50 @@ function buildResultMessage(result, modeLabel = "NORMAL", contactText = "") {
   const ping = Number(result?.ping?.averageMs || 0);
   const jitter = Number(result?.ping?.jitterMs || 0);
   const bestPing = Number(result?.ping?.bestMs || 0);
+  const status = classifyConnection(dl, ul, ping, jitter);
+  const latencyNote = ping > 150 || jitter > 100 ? "⚠️ *Nota:* Latencia alta" : null;
 
-  const dlPct = clampNumber((dl / 300) * 100, 0, 100);
-  const ulPct = clampNumber((ul / 150) * 100, 0, 100);
+  const network = result?.network || {};
+  const location = network.location || joinParts([network.city, network.region, network.country], ", ");
+  const downloadHost = result?.download?.provider || "No disponible";
+  const uploadHost = result?.upload?.provider || "No disponible";
 
   const lines = [
     "╭━━━〔 ⚡ *SPEEDTEST FSOCIETY* 〕━━━⬣",
     "┃",
+    `┃ ${status.emoji} *Calidad:* ${status.label}`,
     `┃ 🧪 *Modo:* ${modeLabel}`,
+    `┃ ⏱️ *Duración:* ${formatDuration(totalTimeMs)}`,
+    "┃",
+    "┣━━〔 VELOCIDAD 〕━━⬣",
     `┃ 📥 *Descarga:* ${result?.download?.speedLabel || "0.00 Mbps"}`,
-    `┃ ${buildBar(dlPct)} ${dlPct.toFixed(0)}%`,
-    "┃",
+    `┃ ${buildGauge(dl, 200)} ${dl.toFixed(2)} Mbps`,
     `┃ 📤 *Subida:* ${result?.upload?.speedLabel || "0.00 Mbps"}`,
-    `┃ ${buildBar(ulPct)} ${ulPct.toFixed(0)}%`,
+    `┃ ${buildGauge(ul, 100)} ${ul.toFixed(2)} Mbps`,
     "┃",
+    "┣━━〔 LATENCIA 〕━━⬣",
     `┃ 📶 *Ping:* ${formatMs(ping)}`,
     `┃ ⚡ *Mejor ping:* ${formatMs(bestPing)}`,
     `┃ 〰️ *Jitter:* ${formatMs(jitter)}`,
+    latencyNote ? `┃ ${latencyNote}` : null,
     "┃",
-    `┃ 🌐 *DL:* ${result?.download?.provider || "?"}`,
-    `┃ 🌐 *UL:* ${result?.upload?.provider || "?"}`,
-    `┃ ⏱️ *Duración:* ${formatMs(totalTimeMs)}`,
-    `┃ 📊 *Muestras:* ${PING_SAMPLES}`,
+    "┣━━〔 RED DETECTADA 〕━━⬣",
+    `┃ 🌐 *ISP:* ${network.isp || "No detectado"}`,
+    `┃ 🏢 *Organización:* ${network.organization || network.isp || "No detectada"}`,
+    `┃ 🛰️ *ASN:* ${network.asn || "No detectado"}`,
+    `┃ 📍 *Ubicación:* ${location || "No detectada"}`,
+    `┃ 🕒 *Zona horaria:* ${network.timezone || "No detectada"}`,
+    `┃ 🧷 *IP pública:* ${network.maskedIp || "No detectada"}`,
+    `┃ 🌍 *Nodo Cloudflare:* ${network.colo || "No detectado"}`,
+    `┃ 🧭 *Tipo de conexión:* ${network.connectionType || "No detectado"}`,
+    "┃",
+    "┣━━〔 HOST DE PRUEBA 〕━━⬣",
+    `┃ 📥 *Host descarga:* ${downloadHost}`,
+    `┃ 📤 *Host subida:* ${uploadHost}`,
+    `┃ 🌐 *Trace:* Cloudflare / 1.1.1.1`,
+    "┃",
+    "┣━━〔 SESIÓN 〕━━⬣",
+    `┃ 📊 *Muestras:* ${result?.ping?.samples?.length || PING_SAMPLES}`,
     contactText ? `┃ 👤 *Owner:* ${contactText}` : null,
     result?.download?.ok === false
       ? `┃ ⚠️ *Error DL:* ${result.download.error || "desconocido"}`
@@ -455,7 +708,7 @@ function resolveMode(args = []) {
 export default {
   command: ["speedtest"],
   categoria: "sistema",
-  description: "Mide ping, descarga y subida del internet del bot",
+  description: "Mide ping, descarga, subida y proveedor de red del bot",
 
   run: async ({ sock, msg, from, args = [], settings = {} }) => {
     if (activeSpeedtest) {
@@ -482,8 +735,11 @@ export default {
             "╭━━━〔 ⚡ *INICIANDO SPEEDTEST* 〕━━━⬣",
             "┃",
             `┃ 🧪 *Modo:* ${modeLabel}`,
+            "┃ 🛰️ *Paso 1:* Detectando proveedor e IP",
+            "┃ 📶 *Paso 2:* Midiendo ping",
+            "┃ 📥 *Paso 3:* Descargando datos",
+            "┃ 📤 *Paso 4:* Subiendo datos",
             `┃ 👤 *Owner:* ${ownerName}`,
-            "┃ ⏳ Espera a que termine la prueba...",
             "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
           ].join("\n"),
           ...global.channelInfo,
