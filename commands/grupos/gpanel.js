@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { getAntiMediaState } from "./_antiMedia.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -100,12 +101,16 @@ export default {
     const botOffOn = readSetFlag(FILES.botoff, from);
     const modeAdmiOn = readSetFlag(FILES.modoadmi, from);
     const antifloodOn = readAntifloodFlag(from);
+    const antiMedia = getAntiMediaState(from);
     const welcome = readWelcomeFlags(from);
 
     const panelText =
       `╭──〔 🛠️ *GPANEL ADMIN* 〕──⬣\n` +
       `│ AntiLink: *${badge(antilinkOn)}*\n` +
       `│ AntiSpam: *${badge(antispamOn)}*\n` +
+      `│ AntiImagen: *${badge(antiMedia.image)}*\n` +
+      `│ AntiSticker: *${badge(antiMedia.sticker)}*\n` +
+      `│ AntiVideo: *${badge(antiMedia.video)}*\n` +
       `│ BotGrupo: *${botOffOn ? "OFF 🔴" : "ON 🟢"}*\n` +
       `│ Welcome: *${badge(welcome.welcomeOn)}*\n` +
       `│ Bye: *${badge(welcome.byeOn)}*\n` +
@@ -135,6 +140,29 @@ export default {
             title: antifloodOn ? "Apagar AntiFlood" : "Prender AntiFlood",
             description: `Estado actual: ${badge(antifloodOn)}`,
             id: `${prefix}antiflood ${antifloodOn ? "off" : "on"}`,
+          },
+        ],
+      },
+      {
+        title: "Contenido multimedia",
+        rows: [
+          {
+            header: "ANTIIMAGEN",
+            title: antiMedia.image ? "Permitir imagenes" : "Bloquear imagenes",
+            description: `Estado actual: ${badge(antiMedia.image)}`,
+            id: `${prefix}antiimagen ${antiMedia.image ? "off" : "on"}`,
+          },
+          {
+            header: "ANTISTICKER",
+            title: antiMedia.sticker ? "Permitir stickers" : "Bloquear stickers",
+            description: `Estado actual: ${badge(antiMedia.sticker)}`,
+            id: `${prefix}antisticker ${antiMedia.sticker ? "off" : "on"}`,
+          },
+          {
+            header: "ANTIVIDEO",
+            title: antiMedia.video ? "Permitir videos" : "Bloquear videos",
+            description: `Estado actual: ${badge(antiMedia.video)}`,
+            id: `${prefix}antivideo ${antiMedia.video ? "off" : "on"}`,
           },
         ],
       },

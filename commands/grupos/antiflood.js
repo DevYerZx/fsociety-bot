@@ -4,6 +4,7 @@ import {
   getParticipantDisplayTag,
   getParticipantMentionJid,
 } from "../../lib/group-compat.js";
+import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
 
 const FILE = path.join(process.cwd(), "database", "antiflood.json");
 const store = createScheduledJsonStore(FILE, () => ({
@@ -77,9 +78,7 @@ export default {
 
     if (fresh.length < Number(config.limit || 6)) return false;
 
-    try {
-      await sock.sendMessage(from, { delete: msg.key, ...global.channelInfo });
-    } catch {}
+    await deleteMessageForModeration(sock, from, msg.key);
 
     const mentionJid = getParticipantMentionJid(groupMetadata || {}, null, sender);
 

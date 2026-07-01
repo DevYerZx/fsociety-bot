@@ -5,6 +5,7 @@ import {
   getParticipantMentionJid,
   runGroupParticipantAction,
 } from "../../lib/group-compat.js";
+import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antilink.json");
@@ -838,9 +839,7 @@ export default {
     if (!sender) return;
     const mentionJid = getParticipantMentionJid(groupMetadata || {}, null, sender);
 
-    try {
-      await sock.sendMessage(from, { delete: msg.key, ...global.channelInfo });
-    } catch {}
+    await deleteMessageForModeration(sock, from, msg.key);
 
     const currentWarns = getWarnCount(from, sender) + 1;
     setWarnCount(from, sender, currentWarns);

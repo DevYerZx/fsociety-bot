@@ -15,7 +15,10 @@ function buildFallbackText(prefix) {
     `- ${prefix}invocar Mensaje\n` +
     `- ${prefix}modoadmi on|off\n` +
     `- ${prefix}antilink on|off\n` +
-    `- ${prefix}antispam on|off\n\n` +
+    `- ${prefix}antispam on|off\n` +
+    `- ${prefix}antiimagen on|off\n` +
+    `- ${prefix}antisticker on|off\n` +
+    `- ${prefix}antivideo on|off\n\n` +
     `Dinamica:\n` +
     `- ${prefix}sorteo crear 10m | Premio\n` +
     `- ${prefix}sorteo unirme\n` +
@@ -82,6 +85,29 @@ export default {
             title: "Ver estado del sorteo",
             description: "Tiempo restante y participantes",
             id: `${prefix}sorteo estado`,
+          },
+        ],
+      },
+      {
+        title: "Filtros multimedia",
+        rows: [
+          {
+            header: "IMAGENES",
+            title: "Configurar AntiImagen",
+            description: "Bloquea imagenes de miembros normales",
+            id: `${prefix}antiimagen`,
+          },
+          {
+            header: "STICKERS",
+            title: "Configurar AntiSticker",
+            description: "Bloquea stickers de miembros normales",
+            id: `${prefix}antisticker`,
+          },
+          {
+            header: "VIDEOS",
+            title: "Configurar AntiVideo",
+            description: "Bloquea videos de miembros normales",
+            id: `${prefix}antivideo`,
           },
         ],
       },

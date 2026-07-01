@@ -6,6 +6,7 @@ import {
   runGroupParticipantAction,
 } from "../../lib/group-compat.js";
 import { isWhitelistedUser } from "../../lib/group-whitelist.js";
+import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -197,9 +198,7 @@ export default {
     if (!bad) return;
 
     // borrar el mensaje (si puede)
-    try {
-      await sock.sendMessage(from, { delete: msg.key, ...global.channelInfo });
-    } catch {}
+    await deleteMessageForModeration(sock, from, msg.key);
 
     // sumar warn (persistente)
     if (!warnsCache[from]) warnsCache[from] = {};

@@ -6,6 +6,7 @@ import {
   runGroupParticipantAction,
 } from "../../lib/group-compat.js";
 import { isWhitelistedUser } from "../../lib/group-whitelist.js";
+import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antibot_groups.json");
@@ -167,9 +168,7 @@ export default {
       const mentionJid = getParticipantMentionJid(groupMetadata || {}, null, sender);
       const tag = getParticipantDisplayTag(null, sender);
 
-      try {
-        await sock.sendMessage(from, { delete: msg.key, ...global.channelInfo });
-      } catch {}
+      await deleteMessageForModeration(sock, from, msg.key);
 
       if (state.strikes > MAX_STRIKES) {
         try {

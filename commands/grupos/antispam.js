@@ -6,6 +6,7 @@ import {
   runGroupParticipantAction,
 } from "../../lib/group-compat.js";
 import { isWhitelistedUser } from "../../lib/group-whitelist.js";
+import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antispam.json");
@@ -127,9 +128,7 @@ export default {
       data.times = [];
 
       // intenta borrar el mensaje que disparó el spam
-      try {
-        await sock.sendMessage(from, { delete: msg.key, ...global.channelInfo });
-      } catch {}
+      await deleteMessageForModeration(sock, from, msg.key);
 
       if (data.strikes > MAX_STRIKES) {
         // intenta expulsar

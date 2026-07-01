@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { getAntiMediaState } from "./_antiMedia.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -78,6 +79,7 @@ export default {
 
     const antispamOn = antispamSet.has(from);
     const antiInsultosOn = antiInsultosSet.has(from);
+    const antiMedia = getAntiMediaState(from);
 
     const caption =
       `🧩 *ESTADO DEL GRUPO*\n\n` +
@@ -86,6 +88,9 @@ export default {
       `• BotOff: ${onOff(botOffOn)}\n` +
       `• Antilink: ${antilinkLabel}\n` +
       `• Antispam: ${onOff(antispamOn)}\n` +
+      `• AntiImagen: ${onOff(antiMedia.image)}\n` +
+      `• AntiSticker: ${onOff(antiMedia.sticker)}\n` +
+      `• AntiVideo: ${onOff(antiMedia.video)}\n` +
       `• Anti-Insultos: ${onOff(antiInsultosOn)}\n\n` +
       `👮 Solo admins pueden usar este comando.`;
 

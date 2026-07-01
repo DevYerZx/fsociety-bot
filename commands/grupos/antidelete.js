@@ -5,6 +5,7 @@ import {
   getParticipantDisplayTag,
   getParticipantMentionJid,
 } from "../../lib/group-compat.js";
+import { consumeModerationDelete } from "../../lib/moderation-delete.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antidelete.json");
@@ -111,7 +112,9 @@ export default {
   },
 
   async onMessageDelete({ sock, from, isGroup, deleteKey, deletedMessage }) {
-    if (!isGroup || !isEnabled(from)) return;
+    if (!isGroup) return;
+    if (consumeModerationDelete(from, deleteKey)) return;
+    if (!isEnabled(from)) return;
     if (!deleteKey || deleteKey.fromMe) return;
 
     const sender =

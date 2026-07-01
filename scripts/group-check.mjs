@@ -191,12 +191,161 @@ async function testWelcomeSkipsBot() {
   assert.equal(sock.sent.length, 0);
 }
 
+async function testAntiMediaFilters() {
+  const commands = [
+    {
+      path: "commands/grupos/antiimagen.js",
+      name: "antiimagen",
+      messageKey: "imageMessage",
+    },
+    {
+      path: "commands/grupos/antisticker.js",
+      name: "antisticker",
+      messageKey: "stickerMessage",
+    },
+    {
+      path: "commands/grupos/antivideo.js",
+      name: "antivideo",
+      messageKey: "videoMessage",
+    },
+  ];
+  const from = "media-test@g.us";
+  const metadata = {
+    id: from,
+    addressingMode: "lid",
+    participants: [
+      {
+        id: "100000000000001@lid",
+        phoneNumber: "51900000000@s.whatsapp.net",
+        admin: "admin",
+      },
+      {
+        id: "100000000000002@lid",
+        phoneNumber: "51911111111@s.whatsapp.net",
+        admin: null,
+      },
+    ],
+  };
+  const sock = createSocket({ metadata });
+
+  for (const item of commands) {
+    const command = (await import(commandUrl(item.path))).default;
+    await command.run({
+      sock,
+      from,
+      args: ["on"],
+      msg: { key: { id: `${item.name}-config` } },
+      settings: { prefix: ["."] },
+    });
+    sock.sent.length = 0;
+
+    const mediaMessage = {
+      key: {
+        id: `${item.name}-media`,
+        remoteJid: from,
+        participant: "100000000000002@lid",
+      },
+      sender: "100000000000002@lid",
+      message: { [item.messageKey]: {} },
+    };
+    const blocked = await command.onMessage({
+      sock,
+      msg: mediaMessage,
+      from,
+      sender: mediaMessage.sender,
+      esGrupo: true,
+      esAdmin: false,
+      esOwner: false,
+      esBotAdmin: true,
+      groupMetadata: metadata,
+    });
+
+    assert.equal(blocked, true);
+    assert.equal(
+      sock.sent.some((entry) => entry.payload?.delete?.id === `${item.name}-media`),
+      true
+    );
+
+    sock.sent.length = 0;
+    await command.onMessage({
+      sock,
+      msg: {
+        ...mediaMessage,
+        key: { ...mediaMessage.key, id: `${item.name}-admin` },
+      },
+      from,
+      sender: "100000000000001@lid",
+      esGrupo: true,
+      esAdmin: true,
+      esOwner: false,
+      esBotAdmin: true,
+      groupMetadata: metadata,
+    });
+    assert.equal(sock.sent.length, 0);
+  }
+
+  const antiImage = (await import(commandUrl("commands/grupos/antiimagen.js"))).default;
+  const { addWhitelistedUser } = await import(commandUrl("lib/group-whitelist.js"));
+  addWhitelistedUser(from, "51911111111@s.whatsapp.net");
+  sock.sent.length = 0;
+  await antiImage.onMessage({
+    sock,
+    msg: {
+      key: {
+        id: "antiimagen-whitelist",
+        remoteJid: from,
+        participant: "100000000000002@lid",
+      },
+      sender: "100000000000002@lid",
+      message: {
+        documentMessage: {
+          mimetype: "image/jpeg",
+        },
+      },
+    },
+    from,
+    sender: "100000000000002@lid",
+    esGrupo: true,
+    esAdmin: false,
+    esOwner: false,
+    esBotAdmin: true,
+    groupMetadata: metadata,
+  });
+  assert.equal(sock.sent.length, 0);
+
+  const antiDelete = (await import(commandUrl("commands/grupos/antidelete.js"))).default;
+  await antiDelete.run({
+    sock,
+    from,
+    args: ["on"],
+    msg: { key: { id: "antidelete-config" } },
+  });
+  sock.sent.length = 0;
+
+  await antiDelete.onMessageDelete({
+    sock,
+    from,
+    isGroup: true,
+    deleteKey: {
+      id: "antiimagen-media",
+      remoteJid: from,
+      participant: "100000000000002@lid",
+    },
+    deletedMessage: {
+      sender: "100000000000002@lid",
+      message: { imageMessage: {} },
+    },
+  });
+  assert.equal(sock.sent.length, 0);
+}
+
 try {
   await testParticipantCompatibility();
   await testDelegatedPermissions();
   await testAntilinkWithoutProtocol();
   await testWelcomeSkipsBot();
-  console.log("[groups] OK. Permisos, AntiLink, LID y eventos de grupo verificados.");
+  await testAntiMediaFilters();
+  console.log("[groups] OK. Permisos, AntiLink, anti-media, LID y eventos verificados.");
 } finally {
   process.chdir(originalCwd);
   fs.rmSync(tempRoot, { recursive: true, force: true });
