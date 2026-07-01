@@ -32,8 +32,10 @@ const APKMOD_MAX_FILE_BYTES = 1500 * 1024 * 1024;
 const MIN_FILE_BYTES = 20_000;
 const TMP_ROOT = path.join(os.tmpdir(), "dvyer-app-downloads");
 const COOLDOWN_TIME = 0;
+const PICKER_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const cooldowns = new Map();
+const pickerCache = new Map();
 
 const COMMAND_CONFIG = {
   apk: {
@@ -78,6 +80,15 @@ const COMMAND_CONFIG = {
     syntheticSearchPicks: 10,
     hidePackageName: true,
     fetchPageImage: true,
+    previewBeforeSend: true,
+    featuredLead: "🔓 Versiones MOD verificadas con datos reales",
+    selectionText: "Selecciona la versión MOD que quieres descargar.",
+    sectionTitle: "Resultados APK MOD verificados",
+    pickerTitle: "📦 Elegir APK MOD",
+    usageSummary: [
+      "Busca MODs Android con selector visual.",
+      "Muestra versión, tamaño, requisitos y fuente antes de descargar.",
+    ],
   },
 
   windows: {
@@ -323,6 +334,68 @@ function humanBytes(bytes) {
   }
 
   return `${value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function parseHumanSizeToBytes(value = "") {
+  const text = cleanText(String(value || "").replace(",", "."));
+  if (!text) return null;
+
+  const match = text.match(/([\d.]+)\s*(B|KB|MB|GB|TB)/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const units = {
+    B: 1,
+    KB: 1024,
+    MB: 1024 ** 2,
+    GB: 1024 ** 3,
+    TB: 1024 ** 4,
+  };
+
+  const multiplier = units[String(match[2]).toUpperCase()] || 1;
+  return Math.round(amount * multiplier);
+}
+
+function uniqueList(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [values]).map((value) => cleanText(value)).filter(Boolean))];
+}
+
+function prunePickerCache() {
+  const now = Date.now();
+
+  for (const [key, entry] of pickerCache.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) {
+      pickerCache.delete(key);
+    }
+  }
+}
+
+function buildPickerCacheKey(userId, config, query) {
+  return `${config.key}:${cleanText(userId).toLowerCase()}:${cleanText(query).toLowerCase()}`;
+}
+
+function storePickerResults(userId, config, query, results = []) {
+  if (!config.resolvePickerFromDownloadPicks) return;
+
+  prunePickerCache();
+  pickerCache.set(buildPickerCacheKey(userId, config, query), {
+    expiresAt: Date.now() + PICKER_CACHE_TTL_MS,
+    results,
+  });
+}
+
+function getCachedPickerResult(userId, config, query, pick) {
+  if (!config.resolvePickerFromDownloadPicks) return null;
+
+  prunePickerCache();
+  const entry = pickerCache.get(buildPickerCacheKey(userId, config, query));
+  if (!entry?.results?.length) return null;
+
+  return (
+    entry.results.find((item) => Number(item?.pick || 0) === Number(pick || 0)) || null
+  );
 }
 
 function extractTextFromMessage(message) {
@@ -589,18 +662,11 @@ async function requestDownloadPickerResults(input, config) {
   for (const item of settled) {
     if (!item?.title) continue;
 
-    const key = cleanText(`${item.title}:${item.sourcePageUrl || ""}`).toLowerCase();
+    const key = cleanText(`${item.title}:${item.version || ""}:${item.format || ""}`).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
 
-    results.push({
-      title: item.title,
-      version: item.version,
-      format: item.format,
-      icon: item.icon,
-      size_bytes: item.sizeBytes,
-      pick: item.pick,
-    });
+    results.push(item);
   }
 
   if (!results.length) {
@@ -640,6 +706,36 @@ async function requestDownloadMeta(input, config, options = {}) {
   const sourcePageUrl = pickSourcePageUrl(data);
   const rawIcon = improveImageUrlQuality(normalizeApiUrl(pickImageUrl(data)));
   const icon = rawIcon || (config.fetchPageImage ? await fetchPageImageUrl(sourcePageUrl) : "");
+  const sizeBytes =
+    Number(data?.size_bytes || data?.content_length || data?.filesize_bytes || 0) ||
+    parseHumanSizeToBytes(data?.filesize || data?.size || data?.filesize_label || "") ||
+    null;
+  const sizeLabel =
+    cleanText(data?.filesize || data?.size || data?.filesize_label || "") ||
+    humanBytes(sizeBytes) ||
+    null;
+  const developer = cleanText(data?.developer || data?.author || data?.publisher || "");
+  const requirements = cleanText(data?.requirements || data?.minimum_requirements || "");
+  const publishedAt = cleanText(data?.published_at || data?.updated_at || data?.update_date || "");
+  const deliveryMode = cleanText(
+    data?.request?.resilience?.delivery_mode ||
+    (data?.mediafire_resolved === true ? "mediafire_api_stream" : "")
+  );
+  const fallbackUsed = data?.request?.resilience?.fallback_used === true;
+  const downloadCandidates = uniqueList([
+    downloadUrl,
+    data?.download_url_full,
+    data?.stream_url_full,
+    data?.download_url,
+    data?.stream_url,
+    ...(Array.isArray(data?.download_options)
+      ? data.download_options.flatMap((option) => [
+          option?.download_url,
+          option?.download_url_full,
+          option?.url,
+        ])
+      : []),
+  ]).map(normalizeApiUrl);
 
   return {
     title: safeFileName(data?.title || data?.package_name || `${config.name} File`),
@@ -652,14 +748,22 @@ async function requestDownloadMeta(input, config, options = {}) {
     format: inferredExt,
     icon: icon || null,
     description: cleanText(data?.description || "") || null,
-    sizeBytes:
-      Number(data?.size_bytes || data?.content_length || data?.filesize_bytes || 0) ||
-      null,
+    sizeBytes,
+    sizeLabel,
     downloadUrl,
+    downloadCandidates,
     packageName: config.hidePackageName
       ? null
       : String(data?.package_name || data?.selected?.slug || "").trim() || null,
     sourcePageUrl,
+    developer: developer || null,
+    requirements: requirements || null,
+    publishedAt: publishedAt || null,
+    category: cleanText(data?.category || "") || null,
+    deliveryMode: deliveryMode || null,
+    fallbackUsed,
+    mediafireResolved: data?.mediafire_resolved === true,
+    pick: Math.max(1, Math.min(10, Number(options?.pick || 1))),
   };
 }
 
@@ -745,15 +849,78 @@ async function downloadAbsoluteFile(downloadUrl, outputPath, maxFileBytes = MAX_
   };
 }
 
+async function downloadAbsoluteFileWithFallbacks(downloadCandidates, outputPath, maxFileBytes) {
+  const candidates = uniqueList(downloadCandidates).map(normalizeApiUrl).filter(Boolean);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      return await downloadAbsoluteFile(candidate, outputPath, maxFileBytes);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("No se pudo descargar el archivo.");
+}
+
+function buildAppMetaLines(info = {}, config = {}, sizeOverride = null) {
+  const lines = [];
+
+  if (info.version) lines.push(`🧩 Versión: *${info.version}*`);
+  if (!config.hidePackageName && info.packageName) lines.push(`📛 Paquete: *${info.packageName}*`);
+  if (info.format) lines.push(`📁 Formato: *${String(info.format).toUpperCase()}*`);
+
+  const sizeText = humanBytes(sizeOverride || info.sizeBytes) || info.sizeLabel || null;
+  if (sizeText) lines.push(`📦 Tamaño: *${sizeText}*`);
+
+  if (config.key === "apkmod") {
+    if (info.requirements) lines.push(`🤖 Requisitos: *${clipText(info.requirements, 44)}*`);
+    if (info.developer) lines.push(`🏷️ Dev: *${clipText(info.developer, 40)}*`);
+    if (info.publishedAt) lines.push(`🗓️ Actualizado: *${clipText(info.publishedAt, 34)}*`);
+
+    const sourceLabel = info.deliveryMode
+      ? clipText(String(info.deliveryMode).replace(/_/g, " "), 34)
+      : info.mediafireResolved
+        ? "mediafire resuelto"
+        : "";
+
+    if (sourceLabel) lines.push(`🚚 Fuente: *${sourceLabel}*`);
+    if (info.fallbackUsed) lines.push("🛟 Respaldo: *Sí*");
+  }
+
+  return lines;
+}
+
+function buildPickerRowDescription(result = {}, config = {}) {
+  if (config.key === "apkmod") {
+    return clipText(
+      [
+        result.version ? `v${result.version}` : null,
+        result.requirements || null,
+        humanBytes(result.sizeBytes) || result.sizeLabel || null,
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      72
+    );
+  }
+
+  return clipText(
+    `${config.rowLabel} | ${String(
+      result.format || config.defaultExtension
+    ).toUpperCase()} | ${result.version || "Sin versión"}${
+      humanBytes(result.filesize_bytes || result.size_bytes || result.sizeBytes)
+        ? ` | ${humanBytes(result.filesize_bytes || result.size_bytes || result.sizeBytes)}`
+        : ""
+    }`,
+    72
+  );
+}
+
 function buildPreviewCaption(info, config) {
   const summaryLines = [`${config.rowLabel} *${info.title || `${config.name} File`}*`];
-
-  if (info.version) summaryLines.push(`🧩 Version: *${info.version}*`);
-  if (!config.hidePackageName && info.packageName) summaryLines.push(`📛 Paquete: *${info.packageName}*`);
-  if (info.format) summaryLines.push(`📁 Formato: *${String(info.format).toUpperCase()}*`);
-
-  const sizeText = humanBytes(info.sizeBytes);
-  if (sizeText) summaryLines.push(`📦 Tamaño: *${sizeText}*`);
+  summaryLines.push(...buildAppMetaLines(info, config));
 
   return buildDownloadCard("📦 *FSOCIETY DOWNLOAD*", [
     { lines: summaryLines },
@@ -804,16 +971,7 @@ async function sendSearchPicker(ctx, query, results, config) {
   const rows = results.map((result, index) => ({
     header: `${index + 1}`,
     title: clipText(result.title || "Sin título", 72),
-    description: clipText(
-      `${config.rowLabel} | ${String(
-        result.format || config.defaultExtension
-      ).toUpperCase()} | ${result.version || "Sin versión"}${
-        humanBytes(result.filesize_bytes || result.size_bytes)
-          ? ` | ${humanBytes(result.filesize_bytes || result.size_bytes)}`
-          : ""
-      }`,
-      72
-    ),
+    description: buildPickerRowDescription(result, config),
     id: `${prefix}${config.primaryCommand} --pick=${Number(result.pick || index + 1)} ${query}`,
   }));
 
@@ -829,14 +987,9 @@ async function sendSearchPicker(ctx, query, results, config) {
     buildSelectorCaption({
       title: `${config.rowLabel} *FSOCIETY DOWNLOAD*`,
       query,
-      lead: `📱 ${config.name} con resultados listos para descargar`,
+      lead: config.featuredLead || `📱 ${config.name} con resultados listos para descargar`,
       featuredTitle: results[0]?.title || "Sin título",
-      featuredLines: [
-        results[0]?.version ? `🧩 ${clipText(results[0].version, 40)}` : null,
-        humanBytes(results[0]?.filesize_bytes || results[0]?.size_bytes)
-          ? `📦 ${humanBytes(results[0]?.filesize_bytes || results[0]?.size_bytes)}`
-          : `📁 ${String(results[0]?.format || config.defaultExtension).toUpperCase()}`,
-      ].filter(Boolean),
+      featuredLines: buildAppMetaLines(results[0], config).slice(0, 4),
       actionLines: [config.selectionText],
     });
 
@@ -895,14 +1048,9 @@ async function sendSearchPicker(ctx, query, results, config) {
 }
 
 async function sendFileDocument(sock, from, quoted, info, filePath, fileName, size, config = {}) {
-  const extra = [];
-
-  if (info.version) extra.push(`🧩 Versión: ${info.version}`);
-  if (!config.hidePackageName && info.packageName) extra.push(`📛 Paquete: ${info.packageName}`);
-  if (info.format) extra.push(`📁 Formato: ${String(info.format).toUpperCase()}`);
-
-  const sizeText = humanBytes(size);
-  if (sizeText) extra.push(`📦 Tamaño: ${sizeText}`);
+  const extra = buildAppMetaLines(info, config, size).map((line) =>
+    String(line).replace(/\*/g, "")
+  );
 
   const caption =
     buildDownloadCard("✅ *DESCARGA LISTA*", [
@@ -1024,10 +1172,12 @@ export function buildDvyerAppCommand(kind) {
             {
               text: buildUsageCard({
                 title: `${config.rowLabel} *${config.name}*`,
-                summary: [
-                  `Selector visual para ${config.name.toLowerCase()}.`,
-                  "Puedes buscar por nombre o pegar un enlace directo.",
-                ],
+                summary: Array.isArray(config.usageSummary) && config.usageSummary.length
+                  ? config.usageSummary
+                  : [
+                      `Selector visual para ${config.name.toLowerCase()}.`,
+                      "Puedes buscar por nombre o pegar un enlace directo.",
+                    ],
                 examples: config.usage.split("\n"),
                 footer: "Si escribes solo el nombre, te mostraré opciones para escoger.",
               }),
@@ -1044,6 +1194,7 @@ export function buildDvyerAppCommand(kind) {
           !isHttpUrl(userInput)
         ) {
           const results = await requestSearchResults(userInput, config);
+          storePickerResults(userId, config, userInput, results);
 
           await sendSearchPicker(
             { sock, from, quoted, settings },
@@ -1070,7 +1221,14 @@ export function buildDvyerAppCommand(kind) {
 
         await reactToMessage(sock, msg, "⏳");
 
-        downloadInfo = await requestDownloadMeta(userInput, config, {
+        const cachedPickerResult = getCachedPickerResult(
+          userId,
+          config,
+          userInput,
+          parsedInput.pick
+        );
+
+        downloadInfo = cachedPickerResult || await requestDownloadMeta(userInput, config, {
           pick: parsedInput.pick,
         });
 
@@ -1093,8 +1251,8 @@ export function buildDvyerAppCommand(kind) {
 
         tempPath = path.join(tmpDir, `${Date.now()}-${downloadInfo.fileName}`);
 
-        const downloaded = await downloadAbsoluteFile(
-          downloadInfo.downloadUrl,
+        const downloaded = await downloadAbsoluteFileWithFallbacks(
+          downloadInfo.downloadCandidates || [downloadInfo.downloadUrl],
           tempPath,
           maxFileBytes
         );
