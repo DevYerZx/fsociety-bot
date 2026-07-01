@@ -156,6 +156,7 @@ export default {
     const key = `${from}|${sender}`;
     const now = Date.now();
     const state = suspectMap.get(key) || { times: [], strikes: 0 };
+    let removed = false;
     state.times = state.times.filter((item) => now - item <= WINDOW_MS);
     state.times.push(now);
 
@@ -185,6 +186,7 @@ export default {
             throw removeResult.error || new Error("No pude expulsar.");
           }
 
+          removed = true;
           await sock.sendMessage(
             from,
             {
@@ -217,6 +219,10 @@ export default {
       }
     }
 
-    suspectMap.set(key, state);
+    if (removed) {
+      suspectMap.delete(key);
+    } else {
+      suspectMap.set(key, state);
+    }
   },
 };

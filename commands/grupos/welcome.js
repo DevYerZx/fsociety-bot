@@ -4,6 +4,7 @@ import {
   findGroupParticipant,
   getParticipantDisplayTag,
   getParticipantMentionJid,
+  getParticipantMatchKeys,
 } from "../../lib/group-compat.js";
 import { createWelcomeCard } from "../../lib/welcome-card.js";
 
@@ -514,9 +515,18 @@ export default {
     const botName = String(settings?.botName || "Bot").trim() || "Bot";
     const prefix = getPrefix(settings);
     const imageUrl = await getGroupImageUrl(sock, update.id, config.image);
+    const botKeys = getParticipantMatchKeys(
+      findGroupParticipant(metadata || {}, [sock?.user?.id]) || { id: sock?.user?.id }
+    );
 
     for (const participant of update.participants || []) {
       const metadataParticipant = findGroupParticipant(metadata || {}, [participant]);
+      const participantKeys = getParticipantMatchKeys(
+        metadataParticipant || { id: participant }
+      );
+      if (Array.from(participantKeys).some((key) => botKeys.has(key))) {
+        continue;
+      }
       const mentionJid = getParticipantMentionJid(metadata || {}, metadataParticipant, participant);
       const userTag = getParticipantDisplayTag(metadataParticipant, participant);
       const profileImageUrl = await getProfileImageUrl(sock, mentionJid || participant);

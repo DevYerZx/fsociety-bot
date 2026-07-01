@@ -147,12 +147,23 @@ function getPrimaryPrefix(settings) {
 }
 
 function extractLinks(text = "") {
-  const matches = String(text || "").match(
-    /((?:https?:\/\/|www\.)[^\s]+|chat\.whatsapp\.com\/[^\s]+|whatsapp\.com\/channel\/[^\s]+|wa\.me\/[^\s]+|youtu\.be\/[^\s]+)/gi
-  );
+  const value = String(text || "");
+  const matches = [
+    ...(value.match(
+      /(?:https?:\/\/|www\.)[^\s<>"']+|(?:chat\.whatsapp\.com|whatsapp\.com\/channel|wa\.me|youtu\.be)\/[^\s<>"']+/gi
+    ) || []),
+    ...Array.from(
+      value.matchAll(
+        /(?:^|[\s([<{])((?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+(?:com|net|org|io|app|dev|me|tv|gg|co|pe|info|link|xyz|online|site|store|cloud|ai)(?:\/[^\s<>"']*)?)/gi
+      ),
+      (match) => match[1]
+    ),
+  ];
 
-  return (matches || []).map((value) => {
-    const raw = String(value || "").trim();
+  return Array.from(new Set(matches)).map((match) => {
+    const raw = String(match || "")
+      .trim()
+      .replace(/[),.;!?}\]]+$/g, "");
     const normalized = normalizeDomain(raw);
     const lowerRaw = raw.toLowerCase();
     const isWhatsappGroup =
@@ -244,6 +255,13 @@ function clearWarnCount(groupId, sender) {
   if (!Object.keys(warnsCache[groupId]).length) {
     delete warnsCache[groupId];
   }
+  saveWarns();
+}
+
+function clearGroupWarns(groupId) {
+  const key = String(groupId || "").trim();
+  if (!key || !warnsCache[key]) return;
+  delete warnsCache[key];
   saveWarns();
 }
 
@@ -420,11 +438,23 @@ export default {
         );
       }
       config.enabled = true;
+      config.mode = "kick";
+      config.allowWhatsapp = false;
+      config.blockWhatsappGroups = true;
+      config.blockWhatsappChannels = true;
+      config.blockYoutubeLinks = true;
+      config.blockOtherLinks = true;
+      clearGroupWarns(from);
       saveStore();
       return sock.sendMessage(
         from,
         {
-          text: "Anti-link activado para este grupo.",
+          text:
+            `✅ *ANTILINK ACTIVADO*\n\n` +
+            `🗑️ Cada mensaje con enlaces sera eliminado.\n` +
+            `⚠️ Advertencias: *0/${MAX_WARNS}*\n` +
+            `🚫 Al tercer enlace, el usuario sera expulsado.\n` +
+            `🔐 El bot debe ser administrador para borrar y expulsar.`,
           ...global.channelInfo,
         },
         quoted
@@ -793,7 +823,8 @@ export default {
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
       msg.message?.imageMessage?.caption ||
-      msg.message?.videoMessage?.caption;
+      msg.message?.videoMessage?.caption ||
+      msg.message?.documentMessage?.caption;
 
     if (!texto) return;
     if (esAdmin || esOwner) return;

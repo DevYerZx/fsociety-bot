@@ -93,6 +93,38 @@ function formatShortJid(jid = "") {
 }
 
 async function runDelegated(commandModule, context, commandName, args = []) {
+  const isGroup = context?.esGrupo === true || context?.isGroup === true;
+  const isOwner = context?.esOwner === true || context?.isOwner === true;
+  const isAdmin = context?.esAdmin === true || context?.isAdmin === true;
+  const quoted = context?.msg?.key ? { quoted: context.msg } : undefined;
+
+  if (commandModule?.ownerOnly && !isOwner) {
+    return context.sock.sendMessage(
+      context.from,
+      { text: "Solo el owner puede usar este comando.", ...global.channelInfo },
+      quoted
+    );
+  }
+
+  if (commandModule?.groupOnly && !isGroup) {
+    return context.sock.sendMessage(
+      context.from,
+      { text: "Este comando solo funciona en grupos.", ...global.channelInfo },
+      quoted
+    );
+  }
+
+  if (commandModule?.adminOnly && !isOwner && !isAdmin) {
+    return context.sock.sendMessage(
+      context.from,
+      {
+        text: "Solo los administradores o el owner pueden usar este comando.",
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  }
+
   return commandModule.run({
     ...context,
     commandName,
@@ -453,7 +485,16 @@ export default {
       return sock.sendMessage(from, { text: "Reset aplicado: protecciones base en OFF.", ...global.channelInfo }, { quoted: msg });
     }
 
-    if (cmd === "linkgp") return handleLinkGp(context);
+    if (cmd === "linkgp") {
+      if (!effectiveAdmin) {
+        return sock.sendMessage(
+          from,
+          { text: "Solo los administradores pueden obtener el enlace del grupo.", ...global.channelInfo },
+          { quoted: msg }
+        );
+      }
+      return handleLinkGp(context);
+    }
     if (cmd === "info" || cmd === "infogp") return handleGroupInfo(context);
     if (cmd === "listamember") return handleListaMember(context);
     if (cmd === "contador") {

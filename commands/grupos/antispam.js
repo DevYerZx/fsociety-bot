@@ -118,6 +118,7 @@ export default {
     const now = Date.now();
 
     const data = spamMap.get(key) || { times: [], strikes: 0 };
+    let removed = false;
     data.times = data.times.filter((t) => now - t <= WINDOW_MS);
     data.times.push(now);
 
@@ -145,6 +146,7 @@ export default {
             throw removeResult.error || new Error("No pude expulsar.");
           }
 
+          removed = true;
           await sock.sendMessage(from, {
             text: `🚫 Antispam: ${getParticipantDisplayTag(null, sender)} expulsado por spam.`,
             mentions: mentionJid ? [mentionJid] : [],
@@ -168,6 +170,10 @@ export default {
       }
     }
 
-    spamMap.set(key, data);
+    if (removed) {
+      spamMap.delete(key);
+    } else {
+      spamMap.set(key, data);
+    }
   }
 };

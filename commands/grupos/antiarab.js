@@ -2,6 +2,8 @@ import path from "path";
 import { createScheduledJsonStore } from "../../lib/json-store.js";
 import {
   findGroupParticipant,
+  getParticipantDisplayTag,
+  getParticipantMentionJid,
   normalizeJidDigits,
   runGroupParticipantAction,
 } from "../../lib/group-compat.js";
@@ -76,20 +78,39 @@ export default {
     } catch {}
 
     for (const participant of update.participants || []) {
+      const metadataParticipant = findGroupParticipant(metadata || {}, [participant]);
       const number = normalizeParticipantNumber(participant);
       if (!number || number === botNumber || ownerNumbers.includes(number)) continue;
       if (!config.prefixes.some((prefix) => number.startsWith(prefix))) continue;
 
+      const mentionJid = getParticipantMentionJid(
+        metadata || {},
+        metadataParticipant,
+        participant
+      );
+      let removed = false;
       try {
-        await runGroupParticipantAction(
+        const removeResult = await runGroupParticipantAction(
           sock,
           update.id,
           metadata || {},
-          findGroupParticipant(metadata || {}, [participant]),
+          metadataParticipant,
           [participant],
           "remove"
         );
+        removed = removeResult.ok;
       } catch {}
+
+      if (!removed) {
+        await sock.sendMessage(update.id, {
+          text:
+            `*ANTIARAB*\n\n` +
+            `${getParticipantDisplayTag(metadataParticipant, participant)} coincide con un prefijo bloqueado, ` +
+            `pero no pude expulsarlo. Verifica que el bot sea administrador.`,
+          mentions: mentionJid ? [mentionJid] : [],
+          ...global.channelInfo,
+        });
+      }
     }
   },
 };

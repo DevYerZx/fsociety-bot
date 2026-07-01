@@ -203,9 +203,10 @@ export default {
         continue;
       }
 
+      let removed = false;
       if (botIsAdmin) {
         try {
-          await runGroupParticipantAction(
+          const removeResult = await runGroupParticipantAction(
             sock,
             update.id,
             metadata || {},
@@ -213,6 +214,10 @@ export default {
             [participant],
             "remove"
           );
+          if (!removeResult.ok) {
+            throw removeResult.error || new Error("No pude expulsar al participante.");
+          }
+          removed = true;
         } catch {}
       }
 
@@ -220,7 +225,8 @@ export default {
         text:
           `*ANTIFAKE*\n\n` +
           `Numero detectado: *+${number}*\n` +
-          `No coincide con los prefijos permitidos del grupo.`,
+          `No coincide con los prefijos permitidos del grupo.\n` +
+          `${removed ? "Fue expulsado automaticamente." : "No pude expulsarlo. Verifica que el bot sea administrador."}`,
         mentions: mentionJid ? [mentionJid] : [],
 
       });
