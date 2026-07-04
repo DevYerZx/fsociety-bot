@@ -5,6 +5,7 @@ import {
   getParticipantMentionJid,
 } from "../../lib/group-compat.js";
 import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
+import { addModerationLog } from "../../lib/group-moderation.js";
 
 const FILE = path.join(process.cwd(), "database", "antiflood.json");
 const store = createScheduledJsonStore(FILE, () => ({
@@ -79,9 +80,21 @@ export default {
     if (fresh.length < Number(config.limit || 6)) return false;
 
     await deleteMessageForModeration(sock, from, msg.key);
+    addModerationLog(from, {
+      action: "antiflood_trigger",
+      source: "antiflood",
+      user: sender,
+      reason: `limite ${config.limit}/${config.windowSeconds}s`,
+    });
 
     const mentionJid = getParticipantMentionJid(groupMetadata || {}, null, sender);
 
+    addModerationLog(from, {
+      action: "antiflood_warn",
+      source: "antiflood",
+      user: sender,
+      reason: `limite ${config.limit}/${config.windowSeconds}s`,
+    });
     await sock.sendMessage(
       from,
       {

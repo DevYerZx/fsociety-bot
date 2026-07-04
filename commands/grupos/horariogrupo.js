@@ -52,6 +52,33 @@ const COUNTRY_PRESETS = {
 };
 
 const COUNTRY_ORDER = ["peru", "argentina", "chile", "colombia", "mexico", "brasil", "usa"];
+const DAY_NAMES = {
+  monday: "Lunes",
+  tuesday: "Martes",
+  wednesday: "Miercoles",
+  thursday: "Jueves",
+  friday: "Viernes",
+  saturday: "Sabado",
+  sunday: "Domingo",
+};
+const DAY_ALIASES = {
+  lunes: "monday",
+  martes: "tuesday",
+  miercoles: "wednesday",
+  miércoles: "wednesday",
+  jueves: "thursday",
+  viernes: "friday",
+  sabado: "saturday",
+  sábado: "saturday",
+  domingo: "sunday",
+  mon: "monday",
+  tue: "tuesday",
+  wed: "wednesday",
+  thu: "thursday",
+  fri: "friday",
+  sat: "saturday",
+  sun: "sunday",
+};
 
 function ensureGroup(groupId) {
   if (!store.state.groups || typeof store.state.groups !== "object") store.state.groups = {};
@@ -64,6 +91,8 @@ function ensureGroup(groupId) {
       timezone: preset.timezone,
       country: "peru",
       label: preset.label,
+      weeklyEnabled: false,
+      weekly: {},
       lastOpenKey: "",
       lastCloseKey: "",
     };
@@ -71,6 +100,7 @@ function ensureGroup(groupId) {
   const config = store.state.groups[groupId];
   if (!config.country) config.country = "peru";
   if (!config.label) config.label = COUNTRY_PRESETS[config.country]?.label || "Peru";
+  if (!config.weekly || typeof config.weekly !== "object") config.weekly = {};
   return store.state.groups[groupId];
 }
 
@@ -91,6 +121,16 @@ function validTimezone(value = "") {
 
 function parseCountryKey(value = "") {
   return String(value || "").trim().toLowerCase();
+}
+
+function resolveDayKey(value = "") {
+  const key = String(value || "").trim().toLowerCase();
+  if (DAY_NAMES[key]) return key;
+  return DAY_ALIASES[key] || "";
+}
+
+function getDayName(dayKey = "") {
+  return DAY_NAMES[dayKey] || dayKey;
 }
 
 function getCountryPreset(value = "") {
@@ -115,6 +155,32 @@ function nowParts(timezone) {
   };
 }
 
+function getWeekdayKey(timezone) {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "long",
+  }).formatToParts(now);
+  const weekday = parts.find((item) => item.type === "weekday")?.value?.toLowerCase() || "";
+  return {
+    monday: "monday",
+    tuesday: "tuesday",
+    wednesday: "wednesday",
+    thursday: "thursday",
+    friday: "friday",
+    saturday: "saturday",
+    sunday: "sunday",
+  }[weekday] || "monday";
+}
+
+function getActiveSchedule(config) {
+  const dayKey = getWeekdayKey(config.timezone || "America/Lima");
+  const weeklyEntry = config.weeklyEnabled ? config.weekly?.[dayKey] : null;
+  const openAt = validTime(weeklyEntry?.openAt) ? weeklyEntry.openAt : config.openAt;
+  const closeAt = validTime(weeklyEntry?.closeAt) ? weeklyEntry.closeAt : config.closeAt;
+  return { dayKey, openAt, closeAt, weeklyEntry };
+}
+
 function buildCountrySummary(activeKey = "peru") {
   return COUNTRY_ORDER.map((countryKey) => {
     const preset = COUNTRY_PRESETS[countryKey];
@@ -124,29 +190,54 @@ function buildCountrySummary(activeKey = "peru") {
   }).join("\n");
 }
 
+function buildWeeklySummary(config) {
+  const timezone = config.timezone || "America/Lima";
+  const nowDayKey = getWeekdayKey(timezone);
+  return Object.keys(DAY_NAMES)
+    .map((dayKey) => {
+      const entry = config.weekly?.[dayKey];
+      const marker = dayKey === nowDayKey ? "•" : " ";
+      const label = getDayName(dayKey);
+      if (!entry) {
+        return `${marker} ${label}: usa horario base (${config.openAt} - ${config.closeAt})`;
+      }
+      return `${marker} ${label}: ${entry.openAt} - ${entry.closeAt}`;
+    })
+    .join("\n");
+}
+
 async function applySchedule(sock, groupId) {
   const config = ensureGroup(groupId);
   if (!config.enabled || !sock?.groupSettingUpdate) return;
   const current = nowParts(config.timezone || "America/Lima");
+  const schedule = getActiveSchedule(config);
 
-  if (current.time === config.closeAt && config.lastCloseKey !== current.date) {
+  if (current.time === schedule.closeAt && config.lastCloseKey !== `${current.date}:${schedule.dayKey}`) {
     await sock.groupSettingUpdate(groupId, "announcement");
-    config.lastCloseKey = current.date;
+    config.lastCloseKey = `${current.date}:${schedule.dayKey}`;
     store.saveNow();
-    addModerationLog(groupId, { action: "scheduled_close", source: "schedule" });
+    addModerationLog(groupId, {
+      action: "scheduled_close",
+      source: "schedule",
+      reason: `${config.label || "Peru"} ${getDayName(schedule.dayKey)} ${schedule.closeAt}`,
+    });
     await sock.sendMessage(groupId, {
-      text: `🔒 Grupo cerrado automaticamente (${config.closeAt}).`,
+      text: `🔒 Grupo cerrado automaticamente (${schedule.closeAt}).`,
       ...global.channelInfo,
     });
   }
 
-  if (current.time === config.openAt && config.lastOpenKey !== current.date) {
+  if (current.time === schedule.openAt && config.lastOpenKey !== `${current.date}:${schedule.dayKey}`) {
     await sock.groupSettingUpdate(groupId, "not_announcement");
-    config.lastOpenKey = current.date;
+    config.lastOpenKey = `${current.date}:${schedule.dayKey}`;
     store.saveNow();
-    addModerationLog(groupId, { action: "scheduled_open", source: "schedule" });
+    addModerationLog(groupId, {
+      action: "scheduled_open",
+      source: "schedule",
+      reason: `${config.label || "Peru"} ${getDayName(schedule.dayKey)} ${schedule.openAt}`,
+    });
     await sock.sendMessage(groupId, {
-      text: `🔓 Grupo abierto automaticamente (${config.openAt}).`,
+      text: `🔓 Grupo abierto automaticamente (${schedule.openAt}).`,
       ...global.channelInfo,
     });
   }
@@ -201,6 +292,62 @@ export default {
       config.openAt = preset.openAt;
       config.closeAt = preset.closeAt;
       store.saveNow();
+    } else if (action === "semana" && ["on", "off"].includes(String(args[1] || "").toLowerCase())) {
+      config.weeklyEnabled = String(args[1]).toLowerCase() === "on";
+      store.saveNow();
+    } else if (action === "dia") {
+      const dayKey = resolveDayKey(args[1]);
+      if (!dayKey) {
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              `Dia invalido. Usa: lunes, martes, miercoles, jueves, viernes, sabado, domingo.\n` +
+              `Ejemplo: ${prefix}horariogrupo dia lunes 08:00 23:00`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+      if (String(args[2] || "").toLowerCase() === "borrar") {
+        delete config.weekly[dayKey];
+        store.saveNow();
+      } else if (validTime(args[2]) && validTime(args[3])) {
+        config.weekly[dayKey] = { openAt: args[2], closeAt: args[3] };
+        config.weeklyEnabled = true;
+        store.saveNow();
+      } else {
+        return sock.sendMessage(
+          from,
+          {
+            text:
+              `Formato invalido. Usa: ${prefix}horariogrupo dia lunes 08:00 23:00\n` +
+              `O para borrar: ${prefix}horariogrupo dia lunes borrar`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+    } else if (action === "dias") {
+      const weeklySummary = buildWeeklySummary(config);
+      const countrySummary = buildCountrySummary(config.country || "peru");
+      return sock.sendMessage(
+        from,
+        {
+          text:
+            `📅 *HORARIO SEMANAL*\n\n` +
+            `Pais activo: *${config.label || "Peru"}*\n` +
+            `Estado semanal: *${config.weeklyEnabled ? "ON" : "OFF"}*\n` +
+            `${weeklySummary}\n\n` +
+            `*Resumen por pais*\n${countrySummary}\n\n` +
+            `Uso:\n` +
+            `${prefix}horariogrupo semana on\n` +
+            `${prefix}horariogrupo dia lunes 08:00 23:00\n` +
+            `${prefix}horariogrupo dia lunes borrar`,
+          ...global.channelInfo,
+        },
+        quoted
+      );
     } else if (["abrir", "open"].includes(action) && validTime(args[1])) {
       config.openAt = args[1];
       store.saveNow();
@@ -236,17 +383,24 @@ export default {
     }
 
     const countrySummary = buildCountrySummary(config.country || "peru");
+    const weeklySummary = buildWeeklySummary(config);
+    const activeSchedule = getActiveSchedule(config);
     return sock.sendMessage(from, {
       text:
         `⏰ *HORARIO DEL GRUPO*\n\n` +
         `Pais activo: *${config.label || "Peru"}*\n` +
         `Estado: *${config.enabled ? "ON" : "OFF"}*\n` +
-        `Abrir: *${config.openAt}*\nCerrar: *${config.closeAt}*\nZona: *${config.timezone}*\n\n` +
+        `Abrir: *${activeSchedule.openAt}*\nCerrar: *${activeSchedule.closeAt}*\nZona: *${config.timezone}*\n` +
+        `Semanal: *${config.weeklyEnabled ? "ON" : "OFF"}*\n\n` +
         `*Resumen rapido por pais*\n${countrySummary}\n\n` +
+        `*Resumen semanal*\n${weeklySummary}\n\n` +
         `*Uso*\n` +
         `${prefix}horariogrupo on|off\n` +
         `${prefix}horariogrupo pais peru\n` +
         `${prefix}horariogrupo pais argentina\n` +
+        `${prefix}horariogrupo semana on\n` +
+        `${prefix}horariogrupo dia lunes 08:00 23:00\n` +
+        `${prefix}horariogrupo dias\n` +
         `${prefix}horariogrupo abrir 07:00\n` +
         `${prefix}horariogrupo cerrar 23:00\n` +
         `${prefix}horariogrupo tz America/Lima\n` +

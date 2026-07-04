@@ -403,6 +403,28 @@ async function testWarningsAndAntiRaid() {
   assert.equal(sock.groupSettings.some((entry) => entry.setting === "announcement"), true);
 }
 
+async function testSchedulePresets() {
+  const scheduleCommand = (await import(commandUrl("commands/grupos/horariogrupo.js"))).default;
+  const sock = createSocket();
+  const from = "schedule-test@g.us";
+  const baseContext = {
+    sock,
+    from,
+    msg: { key: { id: "schedule-config" } },
+    settings: { prefix: ["."] },
+  };
+
+  await scheduleCommand.run({ ...baseContext, args: ["pais", "argentina"] });
+  await scheduleCommand.run({ ...baseContext, args: ["semana", "on"] });
+  await scheduleCommand.run({ ...baseContext, args: ["dia", "lunes", "08:00", "23:00"] });
+  sock.sent.length = 0;
+  await scheduleCommand.run({ ...baseContext, args: ["dias"] });
+  const text = String(sock.sent.at(-1)?.payload?.text || "");
+  assert.match(text, /HORARIO SEMANAL/);
+  assert.match(text, /Argentina/);
+  assert.match(text, /Lunes/);
+}
+
 try {
   await testParticipantCompatibility();
   await testDelegatedPermissions();
@@ -410,7 +432,8 @@ try {
   await testWelcomeSkipsBot();
   await testAntiMediaFilters();
   await testWarningsAndAntiRaid();
-  console.log("[groups] OK. Permisos, AntiLink, anti-media, LID y eventos verificados.");
+  await testSchedulePresets();
+  console.log("[groups] OK. Permisos, AntiLink, anti-media, LID, eventos y horarios verificados.");
 } finally {
   process.chdir(originalCwd);
   fs.rmSync(tempRoot, { recursive: true, force: true });

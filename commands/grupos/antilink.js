@@ -6,6 +6,7 @@ import {
   runGroupParticipantAction,
 } from "../../lib/group-compat.js";
 import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
+import { addModerationLog } from "../../lib/group-moderation.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antilink.json");
@@ -283,6 +284,12 @@ function appendAntilinkLog(groupId, payload = {}) {
     logsCache[key] = logsCache[key].slice(-MAX_LOGS_PER_GROUP);
   }
 
+  addModerationLog(groupId, {
+    action: `antilink_${String(payload.action || "evento")}`,
+    source: "antilink",
+    user: String(payload.sender || ""),
+    reason: String(payload.domain || payload.link || "link bloqueado"),
+  });
   saveLogs();
 }
 

@@ -7,6 +7,7 @@ import {
 } from "../../lib/group-compat.js";
 import { isWhitelistedUser } from "../../lib/group-whitelist.js";
 import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
+import { addModerationLog } from "../../lib/group-moderation.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -199,6 +200,12 @@ export default {
 
     // borrar el mensaje (si puede)
     await deleteMessageForModeration(sock, from, msg.key);
+    addModerationLog(from, {
+      action: "antiinsultos_trigger",
+      source: "antiinsultos",
+      user: sender,
+      reason: bad,
+    });
 
     // sumar warn (persistente)
     if (!warnsCache[from]) warnsCache[from] = {};
@@ -235,6 +242,12 @@ export default {
           if (Object.keys(warnsCache[from]).length === 0) delete warnsCache[from]; // limpia grupo vacío
         }
         saveWarns();
+        addModerationLog(from, {
+          action: "antiinsultos_kick",
+          source: "antiinsultos",
+          user: sender,
+          reason: bad,
+        });
 
         return sock.sendMessage(from, {
           text:
@@ -247,6 +260,12 @@ export default {
       }
 
       // Si NO pudo expulsar, NO borramos: se queda en 3 para intentar de nuevo
+      addModerationLog(from, {
+        action: "antiinsultos_warn",
+        source: "antiinsultos",
+        user: sender,
+        reason: bad,
+      });
       return sock.sendMessage(from, {
         text:
           `🚫 *ANTI-INSULTOS*\n` +
@@ -258,6 +277,12 @@ export default {
     }
 
     // advertencia normal
+    addModerationLog(from, {
+      action: "antiinsultos_warn",
+      source: "antiinsultos",
+      user: sender,
+      reason: bad,
+    });
     return sock.sendMessage(from, {
       text:
         `⚠️ *ANTI-INSULTOS*\n` +

@@ -25,7 +25,8 @@ function buildFallbackText(prefix) {
       `- ${prefix}sanciones\n` +
       `- ${prefix}horariogrupo\n` +
       `- ${prefix}horariogrupo pais peru\n` +
-      `- ${prefix}horariogrupo pais argentina\n\n` +
+      `- ${prefix}horariogrupo pais argentina\n` +
+      `- ${prefix}horariogrupo dias\n\n` +
       `Dinamica:\n` +
     `- ${prefix}sorteo crear 10m | Premio\n` +
     `- ${prefix}sorteo unirme\n` +

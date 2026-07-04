@@ -102,6 +102,7 @@ export default {
       `• AntiRaid: ${onOff(antiRaid.enabled)}\n` +
       `• Sanciones: ${onOff(moderation.enabled)} (${moderation.maxWarnings})\n` +
       `• Horario: ${onOff(schedule.enabled)} (${schedule.label || "Peru"})\n` +
+      `• Horario semanal: ${onOff(schedule.weeklyEnabled)}\n` +
       `• Anti-Insultos: ${onOff(antiInsultosOn)}\n\n` +
       `👮 Solo admins pueden usar este comando.`;
 

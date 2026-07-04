@@ -7,6 +7,7 @@ import {
 } from "../../lib/group-compat.js";
 import { isWhitelistedUser } from "../../lib/group-whitelist.js";
 import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
+import { addModerationLog } from "../../lib/group-moderation.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 const FILE = path.join(DB_DIR, "antispam.json");
@@ -129,6 +130,12 @@ export default {
 
       // intenta borrar el mensaje que disparó el spam
       await deleteMessageForModeration(sock, from, msg.key);
+      addModerationLog(from, {
+        action: "antispam_trigger",
+        source: "antispam",
+        user: sender,
+        reason: `strike ${data.strikes}/${MAX_STRIKES + 1}`,
+      });
 
       if (data.strikes > MAX_STRIKES) {
         // intenta expulsar
@@ -146,12 +153,24 @@ export default {
           }
 
           removed = true;
+          addModerationLog(from, {
+            action: "antispam_kick",
+            source: "antispam",
+            user: sender,
+            reason: `spam ${data.times.length}/${LIMIT}`,
+          });
           await sock.sendMessage(from, {
             text: `🚫 Antispam: ${getParticipantDisplayTag(null, sender)} expulsado por spam.`,
             mentions: mentionJid ? [mentionJid] : [],
 
           });
         } catch {
+          addModerationLog(from, {
+            action: "antispam_warn",
+            source: "antispam",
+            user: sender,
+            reason: `expulsion fallida`,
+          });
           await sock.sendMessage(from, {
             text: `⚠️ Antispam: ${getParticipantDisplayTag(null, sender)} spameando (no pude expulsar).`,
             mentions: mentionJid ? [mentionJid] : [],
@@ -159,6 +178,12 @@ export default {
           });
         }
       } else {
+        addModerationLog(from, {
+          action: "antispam_warn",
+          source: "antispam",
+          user: sender,
+          reason: `strike ${data.strikes}/${MAX_STRIKES + 1}`,
+        });
         await sock.sendMessage(from, {
           text:
             `⚠️ Antispam: ${getParticipantDisplayTag(null, sender)} baja el spam. ` +
