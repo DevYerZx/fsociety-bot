@@ -101,7 +101,7 @@ export default {
       `• AntiDocumento: ${onOff(antiMedia.document)}\n` +
       `• AntiRaid: ${onOff(antiRaid.enabled)}\n` +
       `• Sanciones: ${onOff(moderation.enabled)} (${moderation.maxWarnings})\n` +
-      `• Horario: ${onOff(schedule.enabled)}\n` +
+      `• Horario: ${onOff(schedule.enabled)} (${schedule.label || "Peru"})\n` +
       `• Anti-Insultos: ${onOff(antiInsultosOn)}\n\n` +
       `👮 Solo admins pueden usar este comando.`;
 

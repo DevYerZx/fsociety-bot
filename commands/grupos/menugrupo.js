@@ -19,12 +19,14 @@ function buildFallbackText(prefix) {
     `- ${prefix}antiimagen on|off\n` +
     `- ${prefix}antisticker on|off\n` +
     `- ${prefix}antivideo on|off\n\n` +
-    `- ${prefix}antiaudio on|off\n` +
-    `- ${prefix}antidocumento on|off\n` +
-    `- ${prefix}antiraid on|off\n` +
-    `- ${prefix}sanciones\n` +
-    `- ${prefix}horariogrupo\n\n` +
-    `Dinamica:\n` +
+      `- ${prefix}antiaudio on|off\n` +
+      `- ${prefix}antidocumento on|off\n` +
+      `- ${prefix}antiraid on|off\n` +
+      `- ${prefix}sanciones\n` +
+      `- ${prefix}horariogrupo\n` +
+      `- ${prefix}horariogrupo pais peru\n` +
+      `- ${prefix}horariogrupo pais argentina\n\n` +
+      `Dinamica:\n` +
     `- ${prefix}sorteo crear 10m | Premio\n` +
     `- ${prefix}sorteo unirme\n` +
     `- ${prefix}votacion crear 10m | Pregunta | Opcion 1 | Opcion 2\n` +

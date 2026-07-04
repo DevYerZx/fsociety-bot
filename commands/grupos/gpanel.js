@@ -121,7 +121,7 @@ export default {
       `│ AntiDocumento: *${badge(antiMedia.document)}*\n` +
       `│ AntiRaid: *${badge(antiRaid.enabled)}*\n` +
       `│ Sanciones: *${badge(moderation.enabled)}*\n` +
-      `│ Horario: *${badge(schedule.enabled)}*\n` +
+      `│ Horario: *${badge(schedule.enabled)}* (${schedule.label || "Peru"})\n` +
       `│ BotGrupo: *${botOffOn ? "OFF 🔴" : "ON 🟢"}*\n` +
       `│ Welcome: *${badge(welcome.welcomeOn)}*\n` +
       `│ Bye: *${badge(welcome.byeOn)}*\n` +
@@ -207,7 +207,7 @@ export default {
           {
             header: "HORARIO",
             title: "Configurar horario",
-            description: `${schedule.openAt} - ${schedule.closeAt}`,
+            description: `${schedule.label || "Peru"}: ${schedule.openAt} - ${schedule.closeAt}`,
             id: `${prefix}horariogrupo`,
           },
           {
