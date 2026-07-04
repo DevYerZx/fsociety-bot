@@ -454,17 +454,18 @@ function buildTopPanel({
   const githubLink = getGithubLink(settings);
   return [
     "╔════════════════════════════════════════════╗",
-    `║  ✦ ${stylizeWord("FSOCIETY")} ${stylizeSignature("command hub")} ✦`,
+    `║ ✦ ${stylizeWord("FSOCIETY")} ${stylizeSignature("command hub")} ✦`,
     "╠════════════════════════════════════════════╣",
     `║ ${stylizeWord("Menu")} • ${stylizeSubtitle(menuTitle)}`,
     `║ ${stylizeSubtitle(menuSubtitle)}`,
     "╟────────────────────────────────────────────╢",
-    `║ 🤖 Bot: *${stylizeWord(botLine || settings?.botName || "Fsociety-V1")}*`,
+    `║ 🤖 Bot activo: *${stylizeWord(botLine || settings?.botName || "Fsociety-V1")}*`,
     `║ 👑 Owner: *${stylizeWord(settings?.ownerName || "Owner")}*`,
-    `║ 🧷 Prefix: *${stylizeMono(prefixLabel)}*`,
-    `║ ⏱️ Uptime: *${uptime}*`,
-    `║ 🗂️ Categories: *${stylizeWord(totalCategories)}*`,
-    `║ ⚙️ Real Commands: *${stylizeWord(totalCommands)}*`,
+    `║ 🧷 Prefijos: *${stylizeMono(prefixLabel)}*`,
+    `║ ⏱️ Online: *${uptime}*`,
+    `║ 🗂️ Categorías: *${stylizeWord(totalCategories)}*`,
+    `║ ⚙️ Comandos reales: *${stylizeWord(totalCommands)}*`,
+    `║ 🚀 Atajo: *${stylizeMono(`${getPrimaryPrefix(settings)}speedtest rapido`)}*`,
     `║ 🔗 GitHub: ${githubLink}`,
     "╚════════════════════════════════════════════╝",
   ].join("\n");
@@ -623,6 +624,31 @@ function buildCategorySections(categoryNames, categories, primaryPrefix) {
     });
   }
 
+  sections.push({
+    title: "🚀 ACCESOS RAPIDOS",
+    highlight_label: "FAST",
+    rows: [
+      {
+        header: "⚡",
+        title: "Speedtest visual",
+        description: "Mide la red del host con imagen.",
+        id: `${primaryPrefix}speedtest rapido`,
+      },
+      {
+        header: "📊",
+        title: "Estado del bot",
+        description: "Abre status y recursos del bot.",
+        id: `${primaryPrefix}status`,
+      },
+      {
+        header: "🛡️",
+        title: "Panel de grupos",
+        description: "Moderacion, horarios y protecciones.",
+        id: `${primaryPrefix}menugrupo`,
+      },
+    ],
+  });
+
   const gameRows = [
     pick("juegos"),
     pick("freefire"),
@@ -678,13 +704,13 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
   const flowButton = {
     buttonId: "menu_action_select",
     buttonText: {
-      displayText: "✦ ABRIR MENU",
+      displayText: "✦ ABRIR HUB",
     },
     type: 4,
     nativeFlowInfo: {
       name: "single_select",
       paramsJson: JSON.stringify({
-        title: "✦ FSOCIETY COMMAND SELECTOR",
+        title: "✦ FSOCIETY COMMAND HUB",
         sections,
       }),
     },
@@ -692,13 +718,13 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
 
   const quickButtons = [
     {
-      buttonId: `${primaryPrefix}administradores`,
-      buttonText: { displayText: "✦ STAFF BOT" },
+      buttonId: `${primaryPrefix}speedtest rapido`,
+      buttonText: { displayText: "✦ SPEEDTEST" },
       type: 1,
     },
     {
-      buttonId: `${primaryPrefix}gruposoficiales`,
-      buttonText: { displayText: "✦ COMUNIDAD" },
+      buttonId: `${primaryPrefix}menugrupo`,
+      buttonText: { displayText: "✦ GRUPOS" },
       type: 1,
     },
   ];
@@ -710,10 +736,10 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
   const githubLink = getGithubLink(settings);
   return [
     "╔════════════════════════════════════════════╗",
-    `║      ${stylizeWord("FSOCIETY")} ${stylizeSignature("menu")}      ║`,
+    `║   ${stylizeWord("FSOCIETY")} ${stylizeSignature("command hub")}   ║`,
     "╠════════════════════════════════════════════╣",
     `║ 👋 Hola, *${menuContext.botLine || settings?.botName || "usuario"}*`,
-    "║ Pulsa *ABRIR MENU* para desplegar categorías.",
+    "║ Pulsa *ABRIR HUB* para desplegar categorias.",
     "╠════════════════════════════════════════════╣",
     `║ 👤 Vista: *${menuContext.subtitle}*`,
     `║ 🧷 Prefijos: *${prefixLabel}*`,
@@ -722,6 +748,7 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
     `║ ⏱️ Runtime: *${uptime}*`,
     `║ 🗂️ Categorías: *${totalCategories}*`,
     `║ ⚙️ Comandos: *${totalCommands}*`,
+    `║ ⚡ Red: *${getPrimaryPrefix(settings)}speedtest rapido*`,
     `║ 🔗 GitHub: ${githubLink}`,
     "╠════════════════════════════════════════════╣",
     `║ Tip: ${stylizeMono(`${getPrimaryPrefix(settings)}menu free streaming accounts`)}`,

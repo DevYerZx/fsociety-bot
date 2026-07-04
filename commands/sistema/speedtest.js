@@ -1,3 +1,5 @@
+import { createSpeedtestCard } from "../../lib/speedtest-card.js";
+
 const TEST_HOST = "https://speed.cloudflare.com";
 const TRACE_HOST = "https://1.1.1.1/cdn-cgi/trace";
 const IPWHO_HOST = "https://ipwho.is/";
@@ -628,6 +630,24 @@ function buildResultMessage(result, modeLabel = "NORMAL", contactText = "") {
   return lines;
 }
 
+function buildResultCaption(result, modeLabel = "NORMAL", statusLabel = "ESTABLE") {
+  const downloadHost = result?.download?.provider || "No disponible";
+  const uploadHost = result?.upload?.provider || "No disponible";
+  const network = result?.network || {};
+  const location = network.location || network.country || "No detectada";
+
+  return [
+    "╭━━━〔 ⚡ *SPEEDTEST VISUAL* 〕━━━⬣",
+    `┃ 🧪 Modo: *${modeLabel}*`,
+    `┃ 📶 Calidad: *${statusLabel}*`,
+    `┃ 📍 Zona: *${location}*`,
+    `┃ 📥 Host DL: *${downloadHost}*`,
+    `┃ 📤 Host UL: *${uploadHost}*`,
+    "┃ 🔒 Sin mostrar IP publica ni ISP",
+    "╰━━━━━━━━━━━━━━━━━━━━━━⬣",
+  ].join("\n");
+}
+
 function buildErrorMessage(error, contactText = "") {
   const message = String(error?.message || error || "Error desconocido");
 
@@ -712,6 +732,30 @@ export default {
 
       activeSpeedtest = executeSpeedtest({ downloadBytes, uploadBytes });
       const result = await activeSpeedtest;
+      const status = classifyConnection(
+        parseMbps(result?.download?.speedLabel),
+        parseMbps(result?.upload?.speedLabel),
+        Number(result?.ping?.averageMs || 0),
+        Number(result?.ping?.jitterMs || 0)
+      );
+      const cardBuffer = await createSpeedtestCard({
+        result,
+        modeLabel,
+        statusLabel: status.label,
+        ownerName,
+      });
+
+      if (cardBuffer) {
+        await sock.sendMessage(
+          from,
+          {
+            image: cardBuffer,
+            caption: buildResultCaption(result, modeLabel, status.label),
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
 
       await sock.sendMessage(
         from,
