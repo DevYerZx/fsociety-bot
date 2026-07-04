@@ -1,5 +1,6 @@
 import axios from "axios";
-import { buildDvyerUrl, getDvyerBaseUrl } from "../../lib/api-manager.js";
+import mediafireCmd from "../descargas/mediafire.js";
+import { buildDvyerUrl } from "../../lib/api-manager.js";
 import {
   buildSelectorPayload,
   downloadFirstValidImageBuffer,
@@ -10,9 +11,8 @@ const API_TIMEOUT = 45_000;
 const IMAGE_TIMEOUT = 25_000;
 const DEFAULT_LIMIT = 8;
 
-function decodeHtmlEntities(value = "") {
-  const text = String(value || "");
-  return text
+function cleanText(value = "") {
+  return String(value || "")
     .replace(/&#(\d+);/g, (_, num) => {
       const code = Number(num);
       return Number.isFinite(code) ? String.fromCharCode(code) : _;
@@ -26,11 +26,9 @@ function decodeHtmlEntities(value = "") {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&apos;/g, "'")
-    .replace(/&nbsp;/g, " ");
-}
-
-function cleanText(value = "") {
-  return decodeHtmlEntities(String(value || "").replace(/\s+/g, " ").trim());
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function clipText(value = "", max = 88) {
@@ -46,6 +44,35 @@ function getPrefix(settings) {
   return String(settings?.prefix || ".").trim() || ".";
 }
 
+function slugify(value = "") {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .trim();
+}
+
+function extractSlugFromUrl(value = "") {
+  const text = cleanText(value);
+  if (!text) return "";
+  const mal = text.match(/myanimelist\.net\/anime\/\d+\/([^/?#]+)/i);
+  if (mal?.[1]) return cleanText(mal[1]);
+  const animeSlug = text.match(/\/anime\/subespanol\/([^/?#]+)/i);
+  if (animeSlug?.[1]) return cleanText(animeSlug[1]);
+  return "";
+}
+
+function resolveAnimeTarget(value = "") {
+  const raw = cleanText(value);
+  if (!raw) return "";
+  const fromUrl = extractSlugFromUrl(raw);
+  if (fromUrl) return fromUrl;
+  if (/^https?:\/\//i.test(raw)) return "";
+  return slugify(raw);
+}
+
 function normalizeUrl(value = "") {
   const text = cleanText(value);
   if (!text) return "";
@@ -53,16 +80,12 @@ function normalizeUrl(value = "") {
   return "";
 }
 
-function normalizeMode(value = "") {
-  return String(value || "").trim().toLowerCase();
+function getResultTitle(item = {}) {
+  return cleanText(item?.title || item?.name || "Anime");
 }
 
 function getResultUrl(item = {}) {
   return normalizeUrl(item?.source_url || item?.url || item?.link || "");
-}
-
-function getResultTitle(item = {}) {
-  return cleanText(item?.title || item?.name || "Anime");
 }
 
 function getResultSubtitle(item = {}) {
@@ -88,7 +111,7 @@ async function fetchJson(endpoint, params = {}) {
   });
 
   const data = response.data || {};
-  if (response.status >= 400 || !data.ok) {
+  if (response.status >= 400 || data?.ok === false || data?.status === false) {
     throw new Error(
       cleanText(data.detail || data.error?.message || data.message || `HTTP ${response.status}`)
     );
@@ -97,33 +120,7 @@ async function fetchJson(endpoint, params = {}) {
   return data;
 }
 
-async function fetchCoverFromUrl(url = "") {
-  const source = normalizeUrl(url);
-  if (!source) return "";
-
-  try {
-    const response = await axios.get(source, {
-      timeout: IMAGE_TIMEOUT,
-      headers: { "user-agent": "Mozilla/5.0" },
-      validateStatus: () => true,
-    });
-
-    if (response.status >= 400) return "";
-
-    const html = String(response.data || "");
-    return (
-      extractMeta(html, [
-        /<meta property="og:image" content="([^"]+)"/i,
-        /<meta property="og:image:secure_url" content="([^"]+)"/i,
-        /<meta name="twitter:image" content="([^"]+)"/i,
-      ]) || ""
-    );
-  } catch {
-    return "";
-  }
-}
-
-async function fetchPageTitle(url = "") {
+async function fetchCoverFromPage(url = "") {
   const source = normalizeUrl(url);
   if (!source) return "";
 
@@ -138,25 +135,49 @@ async function fetchPageTitle(url = "") {
 
     return (
       extractMeta(String(response.data || ""), [
-        /<meta property="og:title" content="([^"]+)"/i,
-        /<meta name="twitter:title" content="([^"]+)"/i,
-      ]) ||
-      extractMeta(String(response.data || ""), [/<title>([^<]+)<\/title>/i]) ||
-      ""
+        /<meta property="og:image" content="([^"]+)"/i,
+        /<meta property="og:image:secure_url" content="([^"]+)"/i,
+        /<meta name="twitter:image" content="([^"]+)"/i,
+      ]) || ""
     );
   } catch {
     return "";
   }
 }
 
-async function getImageBufferFromAnimeUrl(url = "") {
-  const coverUrl = await fetchCoverFromUrl(url);
-  if (!coverUrl) return { coverUrl: "", buffer: null };
-  const buffer = await downloadFirstValidImageBuffer([coverUrl], {
+async function getImageBuffer(url = "") {
+  const imageUrl = cleanText(url);
+  if (!imageUrl) return null;
+  return downloadFirstValidImageBuffer([imageUrl], {
     timeout: IMAGE_TIMEOUT,
     minBytes: 2_000,
   });
-  return { coverUrl, buffer };
+}
+
+function collectMediafireLinks(value, results = []) {
+  if (!value || typeof value !== "object") return results;
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectMediafireLinks(item, results);
+    return results;
+  }
+
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string") {
+      const strict = item.match(/https?:\/\/(?:www\.)?(?:[a-z0-9-]+\.)?mediafire\.com\/[^\s"'<>\]]+/i);
+      if (strict?.[0]) results.push(strict[0].trim());
+
+      if (/url|link|download|stream|source/i.test(key)) {
+        const loose = item.match(/https?:\/\/[^\s"'<>\]]+/i);
+        if (loose?.[0]) results.push(loose[0].trim());
+      }
+      continue;
+    }
+
+    collectMediafireLinks(item, results);
+  }
+
+  return [...new Set(results.filter(Boolean))];
 }
 
 function buildRootSections(prefix) {
@@ -167,7 +188,7 @@ function buildRootSections(prefix) {
         {
           header: "TRENDING",
           title: "Anime en tendencia",
-          description: "Abre el panel principal con portada.",
+          description: "Abre el selector principal con portada.",
           id: `${prefix}anime trending`,
         },
         {
@@ -204,17 +225,17 @@ function buildRootSections(prefix) {
   ];
 }
 
-function buildResultsSections(prefix, results = [], mode = "trending") {
+function buildResultsSections(prefix, results = []) {
   const rows = results.slice(0, DEFAULT_LIMIT).map((item, index) => {
+    const title = getResultTitle(item);
     const url = getResultUrl(item);
+    const slug = resolveAnimeTarget(url || title);
+
     return {
       header: String(index + 1),
-      title: clipText(getResultTitle(item), 60),
-      description: clipText(
-        getResultSubtitle(item) || cleanText(url.replace(/^https?:\/\//i, "")),
-        72
-      ),
-      id: url ? `${prefix}anime open ${url}` : `${prefix}anime ${mode}`,
+      title: clipText(title, 60),
+      description: clipText(getResultSubtitle(item) || url.replace(/^https?:\/\//i, ""), 72),
+      id: slug ? `${prefix}anime detail ${slug}` : `${prefix}anime trending`,
     };
   });
 
@@ -233,7 +254,7 @@ function buildResultsSections(prefix, results = [], mode = "trending") {
           id: `${prefix}anime buscar naruto`,
         },
         {
-          header: "TRENDS",
+          header: "TREND",
           title: "Ver tendencias",
           description: "Regresa al panel principal.",
           id: `${prefix}anime trending`,
@@ -244,16 +265,16 @@ function buildResultsSections(prefix, results = [], mode = "trending") {
 }
 
 function buildCaption(title, subtitle, total, extra = []) {
-  const lines = [
+  return [
     `╭━━〔 ✦ ${stylizeWord("ANIME")} ✦ 〕━━⬣`,
     `┃ ${stylizeSignature(title)}`,
     subtitle ? `┃ ${subtitle}` : null,
     `┃ Total: *${total}*`,
     ...extra.map((line) => `┃ ${line}`),
     "╰━━━━━━━━━━━━━━━━━━⬣",
-  ];
-
-  return lines.filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildListText(items = [], total = 0) {
@@ -270,23 +291,36 @@ function buildListText(items = [], total = 0) {
       .join("\n");
   });
 
-  return [
-    `Resultados visibles: *${total}*`,
-    "",
-    ...lines,
-  ].join("\n");
+  return [`Resultados visibles: *${total}*`, "", ...lines].join("\n");
 }
 
-async function sendAnimeFeed({ sock, from, msg, settings, endpoint, title, subtitle, query = "" }) {
+function getPrivateJid(ctx = {}) {
+  const candidates = [
+    ctx?.m?.senderPhone,
+    ctx?.senderPhone,
+    ctx?.m?.sender,
+    ctx?.sender,
+  ];
+
+  for (const candidate of candidates) {
+    const jid = cleanText(candidate);
+    if (jid.endsWith("@s.whatsapp.net")) return jid;
+  }
+
+  return "";
+}
+
+async function sendRootFeed({ sock, from, msg, settings, endpoint, title, subtitle, query = "" }) {
   const quoted = msg?.key ? { quoted: msg } : undefined;
   const prefix = getPrefix(settings);
   const data = await fetchJson(endpoint, query ? { q: query } : {});
   const results = Array.isArray(data.results) ? data.results : [];
   const firstItem = results[0] || {};
   const sourceUrl = getResultUrl(firstItem);
-  const { coverUrl, buffer } = sourceUrl
-    ? await getImageBufferFromAnimeUrl(sourceUrl)
-    : { coverUrl: "", buffer: null };
+  const coverUrl =
+    (sourceUrl ? await fetchCoverFromPage(sourceUrl) : "") ||
+    (results[0]?.anime_info?.imagen_portada || results[0]?.anime_info?.image_portada || "");
+  const buffer = coverUrl ? await getImageBuffer(coverUrl) : null;
 
   const caption = buildCaption(
     title,
@@ -305,7 +339,7 @@ async function sendAnimeFeed({ sock, from, msg, settings, endpoint, title, subti
     subtitle: "Anime Hub",
     footer: "Selecciona una accion",
     selectorTitle: "Anime Hub",
-    sections: buildResultsSections(prefix, results, normalizeMode(title)),
+    sections: buildResultsSections(prefix, results),
   });
 
   if (!buffer) {
@@ -317,13 +351,37 @@ async function sendAnimeFeed({ sock, from, msg, settings, endpoint, title, subti
   return sock.sendMessage(from, payload, quoted);
 }
 
-async function sendAnimeDetail({ sock, from, msg, settings, url, title = "", mode = "open" }) {
+async function fetchDetailData(target = "") {
+  const slug = resolveAnimeTarget(target);
+  if (!slug) return null;
+  return fetchJson(`/anime/subespanol/${encodeURIComponent(slug)}`);
+}
+
+function buildDetailSummary(data = {}) {
+  const animeInfo = data?.anime_info || {};
+  const seasons = Array.isArray(data?.temporadas) ? data.temporadas : [];
+  const chapterCount = seasons.reduce(
+    (sum, season) => sum + (Array.isArray(season?.capitulos) ? season.capitulos.length : 0),
+    0
+  );
+  const mediafireLinks = collectMediafireLinks(data);
+
+  return {
+    title: cleanText(animeInfo?.titulo || data?.title || "Anime"),
+    cover: cleanText(animeInfo?.imagen_portada || animeInfo?.image_portada || ""),
+    seasons,
+    chapterCount,
+    mediafireLinks,
+  };
+}
+
+async function sendDetailToJid({ sock, jid, msg, settings, target, mode = "open" }) {
   const quoted = msg?.key ? { quoted: msg } : undefined;
   const prefix = getPrefix(settings);
-  const sourceUrl = normalizeUrl(url);
-  if (!sourceUrl) {
+  const data = await fetchDetailData(target);
+  if (!data) {
     return sock.sendMessage(
-      from,
+      jid,
       {
         text: `URL invalida. Usa: ${prefix}anime buscar naruto`,
         ...global.channelInfo,
@@ -332,30 +390,64 @@ async function sendAnimeDetail({ sock, from, msg, settings, url, title = "", mod
     );
   }
 
-  const pageTitle = cleanText(title || (await fetchPageTitle(sourceUrl)) || "Anime");
-  const { coverUrl, buffer } = await getImageBufferFromAnimeUrl(sourceUrl);
-  const subtitle = mode === "download"
-    ? "Descarga directa de portada"
-    : "Vista de anime";
+  const detail = buildDetailSummary(data);
+  const imageBuffer = detail.cover ? await getImageBuffer(detail.cover) : null;
+  const subtitle = mode === "download" ? "Detalle y descarga" : "Detalle de anime";
+  const summaryLines = [
+    detail.mediafireLinks.length
+      ? `MediaFire: ${cleanText(detail.mediafireLinks[0])}`
+      : "MediaFire: no detectado",
+    detail.cover ? `Portada: ${cleanText(detail.cover)}` : "Portada: no disponible",
+    `Temporadas: *${detail.seasons.length}*`,
+    `Capitulos: *${detail.chapterCount}*`,
+  ];
+
+  const chapterPreview = [];
+  for (const season of detail.seasons.slice(0, 3)) {
+    const seasonNo = season?.temporada_numero || "?";
+    const chapters = Array.isArray(season?.capitulos) ? season.capitulos : [];
+    const firstChapter = chapters[0];
+    chapterPreview.push(
+      `Temporada ${seasonNo}: ${chapters.length} capitulos${firstChapter?.titulo_capitulo ? ` | ${cleanText(firstChapter.titulo_capitulo)}` : ""}`
+    );
+  }
 
   const caption = buildCaption(
-    pageTitle || "Anime",
+    detail.title,
     subtitle,
-    coverUrl ? 1 : 0,
-    [
-      sourceUrl ? `Fuente: ${cleanText(sourceUrl)}` : "Fuente: no disponible",
-      coverUrl ? `Portada: ${cleanText(coverUrl)}` : "Portada: no disponible",
-      "Si quieres la version descargable, usa el boton de descarga.",
-    ]
+    detail.chapterCount || (detail.cover ? 1 : 0),
+    [...summaryLines, ...chapterPreview]
   );
 
-  if (mode === "download" && buffer) {
-    return sock.sendMessage(
-      from,
+  if (mode === "download" && detail.mediafireLinks.length) {
+    await sock.sendMessage(
+      jid,
       {
-        document: buffer,
+        text: `${caption}\n\n🚀 Descarga interna iniciada con MediaFire.`,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+
+    await mediafireCmd.run({
+      sock,
+      from: jid,
+      msg,
+      m: msg,
+      args: [detail.mediafireLinks[0]],
+      settings,
+      sender: jid,
+    });
+    return;
+  }
+
+  if (mode === "download" && imageBuffer) {
+    return sock.sendMessage(
+      jid,
+      {
+        document: imageBuffer,
         mimetype: "image/jpeg",
-        fileName: `${cleanText(pageTitle || "anime").replace(/[\\/:*?"<>|]/g, "") || "anime"}.jpg`,
+        fileName: `${cleanText(detail.title).replace(/[\\/:*?"<>|]/g, "") || "anime"}.jpg`,
         caption,
         ...global.channelInfo,
       },
@@ -364,7 +456,7 @@ async function sendAnimeDetail({ sock, from, msg, settings, url, title = "", mod
   }
 
   const payload = buildSelectorPayload({
-    imageBuffer: buffer,
+    imageBuffer,
     caption,
     title: "FSOCIETY BOT",
     subtitle: "Anime detalle",
@@ -376,15 +468,17 @@ async function sendAnimeDetail({ sock, from, msg, settings, url, title = "", mod
         rows: [
           {
             header: "DESCARGA",
-            title: "Descargar portada",
-            description: "Envia la miniatura como archivo.",
-            id: `${prefix}anime download ${sourceUrl}`,
+            title: detail.mediafireLinks.length ? "Descargar con MediaFire" : "Descargar portada",
+            description: detail.mediafireLinks.length
+              ? "Usa el enlace descargable de la serie."
+              : "Envia la miniatura como archivo.",
+            id: `${prefix}anime download ${resolveAnimeTarget(target)}`,
           },
           {
             header: "ABRIR",
-            title: "Abrir fuente",
-            description: "Vuelve al detalle del anime.",
-            id: `${prefix}anime open ${sourceUrl}`,
+            title: "Abrir detalle",
+            description: "Muestra la ficha del anime otra vez.",
+            id: `${prefix}anime detail ${resolveAnimeTarget(target)}`,
           },
           {
             header: "ATRAS",
@@ -397,13 +491,27 @@ async function sendAnimeDetail({ sock, from, msg, settings, url, title = "", mod
     ],
   });
 
-  if (!buffer) {
+  if (!imageBuffer) {
     payload.text = payload.caption || payload.text || caption;
     delete payload.image;
     delete payload.caption;
   }
 
-  return sock.sendMessage(from, payload, quoted);
+  return sock.sendMessage(jid, payload, quoted);
+}
+
+async function notifyPrivateDelivery({ sock, from, msg, privateJid }) {
+  const quoted = msg?.key ? { quoted: msg } : undefined;
+  if (!privateJid || privateJid === from) return;
+
+  await sock.sendMessage(
+    from,
+    {
+      text: `📩 Te envie el anime al privado: *${privateJid.replace(/@s\.whatsapp\.net$/i, "")}*`,
+      ...global.channelInfo,
+    },
+    quoted
+  );
 }
 
 export default {
@@ -412,14 +520,16 @@ export default {
   category: "anime",
   description: "Anime en tendencia, noticias, estrenos y busqueda con selector e imagen",
 
-  async run({ sock, from, msg, args = [], settings }) {
+  async run({ sock, from, msg, args = [], settings, m, sender, senderPhone, isGroup, esGrupo }) {
     const quoted = msg?.key ? { quoted: msg } : undefined;
     const prefix = getPrefix(settings);
-    const action = normalizeMode(args[0] || "menu");
+    const action = cleanText(args[0] || "menu").toLowerCase();
     const query = args.slice(1).join(" ").trim();
+    const groupChat = Boolean(isGroup || esGrupo || String(from).endsWith("@g.us"));
+    const privateJid = getPrivateJid({ m, sender, senderPhone }) || from;
 
     if (!args.length || ["menu", "help", "ayuda", "inicio", "panel", "trending", "tendencias"].includes(action)) {
-      return sendAnimeFeed({
+      return sendRootFeed({
         sock,
         from,
         msg,
@@ -431,7 +541,7 @@ export default {
     }
 
     if (["news", "noticias"].includes(action)) {
-      return sendAnimeFeed({
+      return sendRootFeed({
         sock,
         from,
         msg,
@@ -443,7 +553,7 @@ export default {
     }
 
     if (["schedule", "estrenos", "proximos"].includes(action)) {
-      return sendAnimeFeed({
+      return sendRootFeed({
         sock,
         from,
         msg,
@@ -455,7 +565,7 @@ export default {
     }
 
     if (["latest", "hoy", "episodios"].includes(action)) {
-      return sendAnimeFeed({
+      return sendRootFeed({
         sock,
         from,
         msg,
@@ -481,7 +591,7 @@ export default {
         );
       }
 
-      return sendAnimeFeed({
+      return sendRootFeed({
         sock,
         from,
         msg,
@@ -493,19 +603,37 @@ export default {
       });
     }
 
-    if (action === "open" || action === "download") {
-      const url = query || args[1] || "";
-      return sendAnimeDetail({
+    if (["detail", "detalle", "open", "ver", "download"].includes(action)) {
+      const target = query || args[1] || "";
+      const deliveryJid = groupChat ? privateJid : from;
+
+      if (groupChat && privateJid && privateJid !== from) {
+        await notifyPrivateDelivery({ sock, from, msg, privateJid });
+      }
+
+      return sendDetailToJid({
         sock,
-        from,
+        jid: deliveryJid,
         msg,
         settings,
-        url,
-        mode: action,
+        target,
+        mode: action === "download" ? "download" : "open",
       });
     }
 
-    return sendAnimeFeed({
+    if (groupChat && privateJid && privateJid !== from) {
+      await notifyPrivateDelivery({ sock, from, msg, privateJid });
+      return sendDetailToJid({
+        sock,
+        jid: privateJid,
+        msg,
+        settings,
+        target: action || query || "trending",
+        mode: "open",
+      });
+    }
+
+    return sendRootFeed({
       sock,
       from,
       msg,
