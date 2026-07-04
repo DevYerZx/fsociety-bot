@@ -4,9 +4,11 @@ import {
   findGroupParticipant,
   getParticipantDisplayTag,
   getParticipantMentionJid,
+  runGroupParticipantAction,
 } from "../../lib/group-compat.js";
 import { isWhitelistedUser } from "../../lib/group-whitelist.js";
 import { deleteMessageForModeration } from "../../lib/moderation-delete.js";
+import { addWarning, clearWarnings } from "../../lib/group-moderation.js";
 
 const FILE = path.join(process.cwd(), "database", "anti_media.json");
 const store = createScheduledJsonStore(FILE, () => ({ groups: {} }));
@@ -41,6 +43,24 @@ const MEDIA_CONFIG = {
     messageKey: "videoMessage",
     icon: "🎬",
   },
+  audio: {
+    name: "antiaudio",
+    commands: ["antiaudio", "antiaudios"],
+    label: "AntiAudio",
+    itemLabel: "audio",
+    pluralLabel: "audios",
+    messageKey: "audioMessage",
+    icon: "🎧",
+  },
+  document: {
+    name: "antidocumento",
+    commands: ["antidocumento", "antiarchivo", "antidoc"],
+    label: "AntiDocumento",
+    itemLabel: "documento",
+    pluralLabel: "documentos",
+    messageKey: "documentMessage",
+    icon: "📄",
+  },
 };
 
 function ensureGroups() {
@@ -57,6 +77,8 @@ function ensureGroup(groupId) {
       image: false,
       sticker: false,
       video: false,
+      audio: false,
+      document: false,
     };
   }
   return store.state.groups[key];
@@ -91,6 +113,9 @@ function hasMediaType(message = {}, config = {}) {
   ).toLowerCase();
   if (config.name === "antiimagen" && documentMime.startsWith("image/")) return true;
   if (config.name === "antivideo" && documentMime.startsWith("video/")) return true;
+  if (config.name === "antidocumento" && documentMime) {
+    return !documentMime.startsWith("image/") && !documentMime.startsWith("video/");
+  }
   return false;
 }
 
@@ -119,6 +144,8 @@ export function getAntiMediaState(groupId = "") {
     image: config.image === true,
     sticker: config.sticker === true,
     video: config.video === true,
+    audio: config.audio === true,
+    document: config.document === true,
   };
 }
 
@@ -238,10 +265,31 @@ export function buildAntiMediaCommand(kind) {
         participant,
         senderId
       );
+      const warning = addWarning(from, mentionJid || senderId, {
+        reason: `${config.itemLabel} bloqueado`,
+        source: config.name,
+      });
+      let kicked = false;
+
+      if (warning.shouldKick) {
+        const removal = await runGroupParticipantAction(
+          sock,
+          from,
+          groupMetadata || {},
+          participant,
+          [mentionJid || senderId],
+          "remove"
+        );
+        kicked = removal.ok;
+        if (kicked) clearWarnings(from, mentionJid || senderId);
+      }
+
       await sock.sendMessage(from, {
         text:
           `${config.icon} *${config.label.toUpperCase()}*\n` +
-          `${getParticipantDisplayTag(participant, senderId)}, los ${config.pluralLabel} no estan permitidos.`,
+          `${getParticipantDisplayTag(participant, senderId)}, los ${config.pluralLabel} no estan permitidos.\n` +
+          `Advertencia: *${warning.count}/${warning.maxWarnings}*` +
+          (kicked ? "\n🚫 Usuario expulsado al alcanzar el limite." : ""),
         mentions: mentionJid ? [mentionJid] : [],
         ...global.channelInfo,
       });

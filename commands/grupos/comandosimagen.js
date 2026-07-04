@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import kickCmd from "./kick.js";
 import promoteCmd from "./promote.js";
 import demoteCmd from "./demote.js";
@@ -10,6 +8,8 @@ import antifloodCmd from "./antiflood.js";
 import antiimagenCmd from "./antiimagen.js";
 import antistickerCmd from "./antisticker.js";
 import antivideoCmd from "./antivideo.js";
+import antiaudioCmd from "./antiaudio.js";
+import antidocumentoCmd from "./antidocumento.js";
 import tagallCmd from "./tagall.js";
 import modoadmiCmd from "./modoadmi.js";
 import estadogrupoCmd from "./estadogrupo.js";
@@ -19,33 +19,8 @@ import adminsCmd from "../sistema/administradores.js";
 import vipCmd from "../admin/vip.js";
 import banuserCmd from "../admin/banuser.js";
 import reportCmd from "../sistema/report.js";
-
-const DB_DIR = path.join(process.cwd(), "database");
-const WARN_FILE = path.join(DB_DIR, "group-warns.json");
-
-function ensureDbDir() {
-  if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
-}
-
-function safeParse(raw, fallback) {
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === "string" ? JSON.parse(parsed) : parsed;
-  } catch {
-    return fallback;
-  }
-}
-
-function readWarns() {
-  ensureDbDir();
-  if (!fs.existsSync(WARN_FILE)) return {};
-  return safeParse(fs.readFileSync(WARN_FILE, "utf-8"), {});
-}
-
-function writeWarns(data) {
-  ensureDbDir();
-  fs.writeFileSync(WARN_FILE, JSON.stringify(data, null, 2));
-}
+import { addWarning, clearWarnings, getWarnings } from "../../lib/group-moderation.js";
+import { findGroupParticipant, runGroupParticipantAction } from "../../lib/group-compat.js";
 
 function cleanText(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -151,22 +126,37 @@ async function handleWarn(context) {
   }
 
   const reason = cleanText(args.slice(1).join(" ")) || "Sin motivo";
-  const store = readWarns();
-  const groupId = String(from || "").trim();
-  if (!store[groupId]) store[groupId] = {};
-  if (!Array.isArray(store[groupId][targetJid])) store[groupId][targetJid] = [];
-  store[groupId][targetJid].push({
-    at: Date.now(),
+  const result = addWarning(from, targetJid, {
     by: context.sender || "",
     reason,
+    source: "manual",
   });
-  writeWarns(store);
 
-  const total = store[groupId][targetJid].length;
+  let kicked = false;
+  if (result.shouldKick) {
+    try {
+      const metadata = context.groupMetadata || (await sock.groupMetadata(from));
+      const participant = findGroupParticipant(metadata, [targetJid]);
+      const removal = await runGroupParticipantAction(
+        sock,
+        from,
+        metadata,
+        participant,
+        [targetJid],
+        "remove"
+      );
+      kicked = removal.ok;
+      if (kicked) clearWarnings(from, targetJid);
+    } catch {}
+  }
+
   return sock.sendMessage(
     from,
     {
-      text: `Advertencia para ${formatShortJid(targetJid)}: *${reason}*\nTotal warns: *${total}*`,
+      text:
+        `Advertencia para ${formatShortJid(targetJid)}: *${reason}*\n` +
+        `Total: *${result.count}/${result.maxWarnings}*\n` +
+        (kicked ? "🚫 Usuario expulsado al alcanzar el limite." : ""),
       mentions: [targetJid],
 
     },
@@ -189,11 +179,9 @@ async function handleWarnings(context) {
     );
   }
 
-  const store = readWarns();
-  const groupId = String(from || "").trim();
-  const entries = Array.isArray(store?.[groupId]?.[targetJid]) ? store[groupId][targetJid] : [];
+  const entries = getWarnings(from, targetJid);
   const lines = entries.slice(-10).map((item, index) => {
-    const when = new Date(Number(item?.at || Date.now())).toLocaleString("es-PE");
+    const when = new Date(item?.at || Date.now()).toLocaleString("es-PE");
     return `${index + 1}. ${cleanText(item?.reason || "Sin motivo")} (${when})`;
   });
 
@@ -467,7 +455,7 @@ export default {
     }
     if (cmd === "audios") {
       if (!effectiveAdmin) return sock.sendMessage(from, { text: "Solo admin.", ...global.channelInfo }, { quoted: msg });
-      return sock.sendMessage(from, { text: "Comando de compatibilidad activo. Si quieres, te implemento bloqueo real de audios por grupo.", ...global.channelInfo }, { quoted: msg });
+      return runDelegated(antiaudioCmd, context, "antiaudio", args);
     }
     if (cmd === "autosticker") {
       if (!effectiveAdmin) return sock.sendMessage(from, { text: "Solo admin.", ...global.channelInfo }, { quoted: msg });
@@ -484,6 +472,8 @@ export default {
       await runDelegated(antiimagenCmd, context, "antiimagen", ["off"]);
       await runDelegated(antistickerCmd, context, "antisticker", ["off"]);
       await runDelegated(antivideoCmd, context, "antivideo", ["off"]);
+      await runDelegated(antiaudioCmd, context, "antiaudio", ["off"]);
+      await runDelegated(antidocumentoCmd, context, "antidocumento", ["off"]);
       await runDelegated(antilinkCmd, context, "antilink", ["off"]);
       await runDelegated(modoadmiCmd, context, "modoadmi", ["off"]);
       await runDelegated(welcomeCmd, context, "welcome", ["off"]);

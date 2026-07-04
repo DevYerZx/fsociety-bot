@@ -18,10 +18,12 @@ function commandUrl(relativePath) {
 function createSocket({ metadata, participantResult } = {}) {
   const sent = [];
   const participantActions = [];
+  const groupSettings = [];
   const socket = {
     user: { id: "51900000000@s.whatsapp.net" },
     sent,
     participantActions,
+    groupSettings,
     async sendMessage(jid, payload, options) {
       sent.push({ jid, payload, options });
       return { key: { id: `sent-${sent.length}` } };
@@ -50,6 +52,10 @@ function createSocket({ metadata, participantResult } = {}) {
       participantActions.push({ jid, participants, action });
       if (participantResult) return participantResult(jid, participants, action);
       return participants.map((participant) => ({ jid: participant, status: "200" }));
+    },
+    async groupSettingUpdate(jid, setting) {
+      groupSettings.push({ jid, setting });
+      return true;
     },
     async groupInviteCode() {
       throw new Error("A non-admin must not request the invite code.");
@@ -208,6 +214,16 @@ async function testAntiMediaFilters() {
       name: "antivideo",
       messageKey: "videoMessage",
     },
+    {
+      path: "commands/grupos/antiaudio.js",
+      name: "antiaudio",
+      messageKey: "audioMessage",
+    },
+    {
+      path: "commands/grupos/antidocumento.js",
+      name: "antidocumento",
+      messageKey: "documentMessage",
+    },
   ];
   const from = "media-test@g.us";
   const metadata = {
@@ -339,12 +355,61 @@ async function testAntiMediaFilters() {
   assert.equal(sock.sent.length, 0);
 }
 
+async function testWarningsAndAntiRaid() {
+  const moderationCommand = (await import(commandUrl("commands/grupos/comandosimagen.js"))).default;
+  const sock = createSocket();
+  const from = "test@g.us";
+  const context = {
+    sock,
+    from,
+    msg: { key: { id: "warn-command" } },
+    args: ["51911111111", "spam"],
+    commandName: "warn",
+    isGroup: true,
+    esGrupo: true,
+    esAdmin: true,
+    esOwner: false,
+    sender: "51900000000@s.whatsapp.net",
+    groupMetadata: await sock.groupMetadata(from),
+  };
+  await moderationCommand.run(context);
+  await moderationCommand.run(context);
+  await moderationCommand.run(context);
+  assert.equal(sock.participantActions.some((entry) => entry.action === "remove"), true);
+
+  const antiRaid = (await import(commandUrl("commands/grupos/antiraid.js"))).default;
+  await antiRaid.run({
+    sock,
+    from,
+    msg: { key: { id: "raid-config" } },
+    args: ["on"],
+    settings: { prefix: ["."] },
+  });
+  await antiRaid.run({
+    sock,
+    from,
+    msg: { key: { id: "raid-limit" } },
+    args: ["config", "3", "20", "1"],
+    settings: { prefix: ["."] },
+  });
+  await antiRaid.onGroupUpdate({
+    sock,
+    update: {
+      id: from,
+      action: "add",
+      participants: ["1@s.whatsapp.net", "2@s.whatsapp.net", "3@s.whatsapp.net"],
+    },
+  });
+  assert.equal(sock.groupSettings.some((entry) => entry.setting === "announcement"), true);
+}
+
 try {
   await testParticipantCompatibility();
   await testDelegatedPermissions();
   await testAntilinkWithoutProtocol();
   await testWelcomeSkipsBot();
   await testAntiMediaFilters();
+  await testWarningsAndAntiRaid();
   console.log("[groups] OK. Permisos, AntiLink, anti-media, LID y eventos verificados.");
 } finally {
   process.chdir(originalCwd);

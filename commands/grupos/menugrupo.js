@@ -19,6 +19,11 @@ function buildFallbackText(prefix) {
     `- ${prefix}antiimagen on|off\n` +
     `- ${prefix}antisticker on|off\n` +
     `- ${prefix}antivideo on|off\n\n` +
+    `- ${prefix}antiaudio on|off\n` +
+    `- ${prefix}antidocumento on|off\n` +
+    `- ${prefix}antiraid on|off\n` +
+    `- ${prefix}sanciones\n` +
+    `- ${prefix}horariogrupo\n\n` +
     `Dinamica:\n` +
     `- ${prefix}sorteo crear 10m | Premio\n` +
     `- ${prefix}sorteo unirme\n` +
@@ -108,6 +113,18 @@ export default {
             title: "Configurar AntiVideo",
             description: "Bloquea videos de miembros normales",
             id: `${prefix}antivideo`,
+          },
+          {
+            header: "AUDIOS",
+            title: "Configurar AntiAudio",
+            description: "Bloquea audios de miembros normales",
+            id: `${prefix}antiaudio`,
+          },
+          {
+            header: "DOCUMENTOS",
+            title: "Configurar AntiDocumento",
+            description: "Bloquea archivos de miembros normales",
+            id: `${prefix}antidocumento`,
           },
         ],
       },

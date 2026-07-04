@@ -41,6 +41,28 @@ function copyIfExists(source, target) {
   return true;
 }
 
+export function createBotBackup() {
+  ensureDir(BACKUPS_DIR);
+  const backupName = getBackupName();
+  const backupPath = path.join(BACKUPS_DIR, backupName);
+  ensureDir(backupPath);
+
+  const copied = [];
+  if (copyIfExists(path.join(ROOT_DIR, "settings"), path.join(backupPath, "settings"))) copied.push("settings");
+  if (copyIfExists(path.join(ROOT_DIR, "database"), path.join(backupPath, "database"))) copied.push("database");
+  if (copyIfExists(path.join(ROOT_DIR, "videos"), path.join(backupPath, "videos"))) copied.push("videos");
+
+  for (const dirName of collectSessionDirs()) {
+    if (copyIfExists(path.join(ROOT_DIR, dirName), path.join(backupPath, dirName))) copied.push(dirName);
+  }
+
+  fs.writeFileSync(
+    path.join(backupPath, "manifest.json"),
+    JSON.stringify({ name: backupName, createdAt: new Date().toISOString(), copied }, null, 2)
+  );
+  return { backupName, backupPath, copied };
+}
+
 export default {
   name: "backup",
   command: ["backup"],
@@ -56,35 +78,7 @@ export default {
       );
     }
 
-    ensureDir(BACKUPS_DIR);
-    const backupName = getBackupName();
-    const backupPath = path.join(BACKUPS_DIR, backupName);
-    ensureDir(backupPath);
-
-    const copied = [];
-    if (copyIfExists(path.join(ROOT_DIR, "settings"), path.join(backupPath, "settings"))) copied.push("settings");
-    if (copyIfExists(path.join(ROOT_DIR, "database"), path.join(backupPath, "database"))) copied.push("database");
-    if (copyIfExists(path.join(ROOT_DIR, "videos"), path.join(backupPath, "videos"))) copied.push("videos");
-
-    const sessionDirs = collectSessionDirs();
-    for (const dirName of sessionDirs) {
-      if (copyIfExists(path.join(ROOT_DIR, dirName), path.join(backupPath, dirName))) {
-        copied.push(dirName);
-      }
-    }
-
-    fs.writeFileSync(
-      path.join(backupPath, "manifest.json"),
-      JSON.stringify(
-        {
-          name: backupName,
-          createdAt: new Date().toISOString(),
-          copied,
-        },
-        null,
-        2
-      )
-    );
+    const { backupName, copied } = createBotBackup();
 
     await sock.sendMessage(
       from,

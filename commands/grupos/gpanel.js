@@ -1,6 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { getAntiMediaState } from "./_antiMedia.js";
+import { getAntiRaidState } from "./antiraid.js";
+import { getGroupSchedule } from "./horariogrupo.js";
+import { getModerationConfig } from "../../lib/group-moderation.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -102,6 +105,9 @@ export default {
     const modeAdmiOn = readSetFlag(FILES.modoadmi, from);
     const antifloodOn = readAntifloodFlag(from);
     const antiMedia = getAntiMediaState(from);
+    const antiRaid = getAntiRaidState(from);
+    const schedule = getGroupSchedule(from);
+    const moderation = getModerationConfig(from);
     const welcome = readWelcomeFlags(from);
 
     const panelText =
@@ -111,6 +117,11 @@ export default {
       `│ AntiImagen: *${badge(antiMedia.image)}*\n` +
       `│ AntiSticker: *${badge(antiMedia.sticker)}*\n` +
       `│ AntiVideo: *${badge(antiMedia.video)}*\n` +
+      `│ AntiAudio: *${badge(antiMedia.audio)}*\n` +
+      `│ AntiDocumento: *${badge(antiMedia.document)}*\n` +
+      `│ AntiRaid: *${badge(antiRaid.enabled)}*\n` +
+      `│ Sanciones: *${badge(moderation.enabled)}*\n` +
+      `│ Horario: *${badge(schedule.enabled)}*\n` +
       `│ BotGrupo: *${botOffOn ? "OFF 🔴" : "ON 🟢"}*\n` +
       `│ Welcome: *${badge(welcome.welcomeOn)}*\n` +
       `│ Bye: *${badge(welcome.byeOn)}*\n` +
@@ -163,6 +174,47 @@ export default {
             title: antiMedia.video ? "Permitir videos" : "Bloquear videos",
             description: `Estado actual: ${badge(antiMedia.video)}`,
             id: `${prefix}antivideo ${antiMedia.video ? "off" : "on"}`,
+          },
+          {
+            header: "ANTIAUDIO",
+            title: antiMedia.audio ? "Permitir audios" : "Bloquear audios",
+            description: `Estado actual: ${badge(antiMedia.audio)}`,
+            id: `${prefix}antiaudio ${antiMedia.audio ? "off" : "on"}`,
+          },
+          {
+            header: "ANTIDOCUMENTO",
+            title: antiMedia.document ? "Permitir documentos" : "Bloquear documentos",
+            description: `Estado actual: ${badge(antiMedia.document)}`,
+            id: `${prefix}antidocumento ${antiMedia.document ? "off" : "on"}`,
+          },
+        ],
+      },
+      {
+        title: "Seguridad avanzada",
+        rows: [
+          {
+            header: "ANTIRAID",
+            title: antiRaid.enabled ? "Apagar AntiRaid" : "Activar AntiRaid",
+            description: "Protege contra entradas masivas.",
+            id: `${prefix}antiraid ${antiRaid.enabled ? "off" : "on"}`,
+          },
+          {
+            header: "SANCIONES",
+            title: "Configurar sanciones",
+            description: `Limite actual: ${moderation.maxWarnings} advertencias.`,
+            id: `${prefix}sanciones`,
+          },
+          {
+            header: "HORARIO",
+            title: "Configurar horario",
+            description: `${schedule.openAt} - ${schedule.closeAt}`,
+            id: `${prefix}horariogrupo`,
+          },
+          {
+            header: "LOGS",
+            title: "Ver logs de moderacion",
+            description: "Ultimas acciones automaticas y manuales.",
+            id: `${prefix}modlogs`,
           },
         ],
       },

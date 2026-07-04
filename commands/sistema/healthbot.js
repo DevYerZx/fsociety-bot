@@ -1,4 +1,7 @@
 import os from "os";
+import fs from "fs";
+import path from "path";
+import { spawnSync } from "child_process";
 import { buildDvyerUrl, getDvyerBaseUrl } from "../../lib/api-manager.js";
 import { getPrefix, formatBytes, formatDuration } from "./_shared.js";
 
@@ -64,11 +67,11 @@ async function checkApiHealth() {
 
 export default {
   name: "saludbot",
-  command: ["saludbot", "salud", "estadosalud", "healthbot", "health", "bothealth"],
+  command: ["saludbot", "salud", "estadosalud", "healthbot", "health", "bothealth", "diagnostico"],
   category: "sistema",
   description: "Chequea salud del bot, API, latencia, memoria y subbots.",
 
-  run: async ({ sock, msg, from, settings }) => {
+  run: async ({ sock, msg, from, settings, esGrupo, esBotAdmin }) => {
     const prefix = getPrefix(settings);
     const runtime = global.botRuntime;
 
@@ -80,6 +83,18 @@ export default {
     const bots = runtime?.listBots?.({ includeMain: true }) || [];
     const connectedBots = bots.filter((item) => item?.connected).length;
     const totalBots = bots.length;
+    let databaseWritable = true;
+    try {
+      fs.accessSync(path.join(process.cwd(), "database"), fs.constants.W_OK);
+    } catch {
+      databaseWritable = false;
+    }
+    const ffmpegOk = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
+    let diskFree = 0;
+    try {
+      const disk = fs.statfsSync(process.cwd());
+      diskFree = Number(disk.bavail || 0) * Number(disk.bsize || 0);
+    } catch {}
 
     const level = evaluateLevel({
       apiOk: api.ok,
@@ -98,6 +113,10 @@ export default {
       `│ Latencia API: *${api.latencyMs} ms*\n` +
       `│ Memoria RSS: *${formatBytes(mem.rss)} (${rssPercent}%)*\n` +
       `│ Heap usado: *${formatBytes(mem.heapUsed)}*\n` +
+      `│ Base de datos: *${databaseWritable ? "ESCRIBIBLE ✅" : "SIN PERMISO ❌"}*\n` +
+      `│ FFmpeg: *${ffmpegOk ? "INSTALADO ✅" : "NO DISPONIBLE ❌"}*\n` +
+      `│ Disco libre: *${diskFree ? formatBytes(diskFree) : "N/D"}*\n` +
+      (esGrupo ? `│ Admin en grupo: *${esBotAdmin ? "SI ✅" : "NO ❌"}*\n` : "") +
       `│ Subbots conectados: *${connectedBots}/${totalBots}*\n` +
       `│ Base API: *${getDvyerBaseUrl()}*\n` +
       `╰────────────⬣\n\n` +
