@@ -1,3 +1,5 @@
+import { stylizeSignature, stylizeWord } from "../../lib/unicode-style.js";
+
 function getPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
     return settings.prefix.find((value) => String(value || "").trim()) || ".";
@@ -8,7 +10,7 @@ function getPrefix(settings) {
 function buildFallbackText(prefix) {
   return (
     `╔════════════════════════════╗\n` +
-    `║   FSOCIETY-V1 GROUP MENU   ║\n` +
+    `║ ${stylizeWord("FSOCIETY-V1")} ${stylizeSignature("group menu")} ║\n` +
     `╚════════════════════════════╝\n\n` +
     `Admin:\n` +
     `- ${prefix}panelgrupo\n` +

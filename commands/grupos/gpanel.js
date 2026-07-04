@@ -4,6 +4,7 @@ import { getAntiMediaState } from "./_antiMedia.js";
 import { getAntiRaidState } from "./antiraid.js";
 import { getGroupSchedule } from "./horariogrupo.js";
 import { getModerationConfig } from "../../lib/group-moderation.js";
+import { stylizeSignature, stylizeWord } from "../../lib/unicode-style.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
 
@@ -111,7 +112,8 @@ export default {
     const welcome = readWelcomeFlags(from);
 
     const panelText =
-      `╭──〔 🛠️ *GPANEL ADMIN* 〕──⬣\n` +
+      `╭──〔 🛠️ *${stylizeWord("GPANEL ADMIN")}* 〕──⬣\n` +
+      `│ ${stylizeSignature("security")} · ${stylizeSignature("control")} · ${stylizeSignature("style")}\n` +
       `│ AntiLink: *${badge(antilinkOn)}*\n` +
       `│ AntiSpam: *${badge(antispamOn)}*\n` +
       `│ AntiImagen: *${badge(antiMedia.image)}*\n` +

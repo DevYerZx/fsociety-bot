@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { stylizeSignature, stylizeWord } from "../../lib/unicode-style.js";
 
 function normalizeNumber(value = "") {
   return String(value || "").replace(/[^\d]/g, "").trim();
@@ -55,7 +56,7 @@ function buildStaffCaption({
 
   return [
     "╔════════════════════════════════════════════╗",
-    "║            ☠️ FSOCIETY STAFF BOT           ║",
+    `║          ☠️ ${stylizeWord("FSOCIETY")} ${stylizeSignature("staff bot")}          ║`,
     "╠════════════════════════════════════════════╣",
     `║ 👑 Dueño principal: *${ownerName}*`,
     primaryOwner

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { stylizeMono, stylizeSignature, stylizeSubtitle, stylizeWord } from "../../lib/unicode-style.js";
 
 let menuImageCache = null;
 let menuImageCacheKey = "";
@@ -453,17 +454,17 @@ function buildTopPanel({
   const githubLink = getGithubLink(settings);
   return [
     "╔════════════════════════════════════════════╗",
-    "║            ⚡ FSOCIETY COMMAND HUB         ║",
+    `║  ✦ ${stylizeWord("FSOCIETY")} ${stylizeSignature("command hub")} ✦`,
     "╠════════════════════════════════════════════╣",
-    `║ 🛰️  *${menuTitle}*`,
-    `║     _${menuSubtitle}_`,
+    `║ ${stylizeWord("Menu")} • ${stylizeSubtitle(menuTitle)}`,
+    `║ ${stylizeSubtitle(menuSubtitle)}`,
     "╟────────────────────────────────────────────╢",
-    `║ 🤖 Bot: *${botLine || settings?.botName || "Fsociety-V1"}*`,
-    `║ 👑 Owner: *${settings?.ownerName || "Owner"}*`,
-    `║ 🧷 Prefix: *${prefixLabel}*`,
+    `║ 🤖 Bot: *${stylizeWord(botLine || settings?.botName || "Fsociety-V1")}*`,
+    `║ 👑 Owner: *${stylizeWord(settings?.ownerName || "Owner")}*`,
+    `║ 🧷 Prefix: *${stylizeMono(prefixLabel)}*`,
     `║ ⏱️ Uptime: *${uptime}*`,
-    `║ 🗂️ Categories: *${totalCategories}*`,
-    `║ ⚙️ Real Commands: *${totalCommands}*`,
+    `║ 🗂️ Categories: *${stylizeWord(totalCategories)}*`,
+    `║ ⚙️ Real Commands: *${stylizeWord(totalCommands)}*`,
     `║ 🔗 GitHub: ${githubLink}`,
     "╚════════════════════════════════════════════╝",
   ].join("\n");
@@ -488,7 +489,7 @@ function buildCategoryIndex(categoryNames, categories) {
 
   return [
     "╭────────────────────────────────────────────╮",
-    "│ 🧭 *CATEGORY DIRECTORY*",
+    `│ 🧭 *${stylizeWord("CATEGORY DIRECTORY")}*`,
     "├────────────────────────────────────────────┤",
     `│ ${list}`,
     "╰────────────────────────────────────────────╯",
@@ -502,7 +503,7 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
   const maxPreview = 6;
 
   const lines = [
-    `╭──────────────── ${icon} *${title}* ────────────────╮`,
+    `╭──────────────── ${icon} *${stylizeWord(title)}* ────────────────╮`,
     `│ ${getCategoryDescription(category, commands.length)}`,
     `│ Access Mix: PUBLICO ${highlight.accessCounts.PUBLICO} • ADMIN ${highlight.accessCounts.ADMIN} • OWNER ${highlight.accessCounts.OWNER}`,
     `│ Dominant Access: *${highlight.mainAccess}*`,
@@ -534,14 +535,14 @@ function buildCategoryBlock(category, commands, primaryPrefix) {
 function buildFooter(primaryPrefix, settings = {}) {
   return [
     "╔════════════════════════════════════════════╗",
-    "║               🚀 QUICK ACCESS              ║",
+    `║     ${stylizeWord("QUICK ACCESS")} • ${stylizeSignature("fast lane")}     ║`,
     "╠════════════════════════════════════════════╣",
-    `║ • ${primaryPrefix}menu`,
-    `║ • ${primaryPrefix}menu descargas`,
-    `║ • ${primaryPrefix}menu free streaming accounts`,
-    `║ • ${primaryPrefix}menugrupo`,
-    `║ • ${primaryPrefix}status`,
-    `║ • ${primaryPrefix}owner`,
+    `║ • ${stylizeMono(`${primaryPrefix}menu`)}`,
+    `║ • ${stylizeMono(`${primaryPrefix}menu descargas`)}`,
+    `║ • ${stylizeMono(`${primaryPrefix}menu free streaming accounts`)}`,
+    `║ • ${stylizeMono(`${primaryPrefix}menugrupo`)}`,
+    `║ • ${stylizeMono(`${primaryPrefix}status`)}`,
+    `║ • ${stylizeMono(`${primaryPrefix}owner`)}`,
     `║ • Repo: ${getGithubLink(settings)}`,
     "╚════════════════════════════════════════════╝",
   ].join("\n");
@@ -677,13 +678,13 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
   const flowButton = {
     buttonId: "menu_action_select",
     buttonText: {
-      displayText: "☷ ABRIR MENU",
+      displayText: "✦ ABRIR MENU",
     },
     type: 4,
     nativeFlowInfo: {
       name: "single_select",
       paramsJson: JSON.stringify({
-        title: "☠️ FSOCIETY-V1 COMMAND SELECTOR",
+        title: "✦ FSOCIETY COMMAND SELECTOR",
         sections,
       }),
     },
@@ -692,12 +693,12 @@ function buildMenuButtons(primaryPrefix, categoryNames, categories) {
   const quickButtons = [
     {
       buttonId: `${primaryPrefix}administradores`,
-      buttonText: { displayText: "↩ STAFF BOT" },
+      buttonText: { displayText: "✦ STAFF BOT" },
       type: 1,
     },
     {
       buttonId: `${primaryPrefix}gruposoficiales`,
-      buttonText: { displayText: "↩ COMUNIDAD" },
+      buttonText: { displayText: "✦ COMUNIDAD" },
       type: 1,
     },
   ];
@@ -709,7 +710,7 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
   const githubLink = getGithubLink(settings);
   return [
     "╔════════════════════════════════════════════╗",
-    "║            ☠️ FSOCIETY-V1 MENU             ║",
+    `║      ${stylizeWord("FSOCIETY")} ${stylizeSignature("menu")}      ║`,
     "╠════════════════════════════════════════════╣",
     `║ 👋 Hola, *${menuContext.botLine || settings?.botName || "usuario"}*`,
     "║ Pulsa *ABRIR MENU* para desplegar categorías.",
@@ -723,7 +724,7 @@ function buildMenuLandingText(menuContext, settings, uptime, totalCategories, to
     `║ ⚙️ Comandos: *${totalCommands}*`,
     `║ 🔗 GitHub: ${githubLink}`,
     "╠════════════════════════════════════════════╣",
-    `║ Tip: ${getPrimaryPrefix(settings)}menu free streaming accounts`,
+    `║ Tip: ${stylizeMono(`${getPrimaryPrefix(settings)}menu free streaming accounts`)}`,
     "╚════════════════════════════════════════════╝",
   ].join("\n");
 }
