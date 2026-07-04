@@ -7,6 +7,7 @@ import { getModerationConfig } from "../../lib/group-moderation.js";
 import { stylizeSignature, stylizeWord } from "../../lib/unicode-style.js";
 
 const DB_DIR = path.join(process.cwd(), "database");
+const GROUP_MENU_IMAGE = path.join(process.cwd(), "imagenes", "menu-grupo.png");
 
 const FILES = {
   antilink: path.join(DB_DIR, "antilink.json"),
@@ -89,6 +90,14 @@ function badge(value) {
   return value ? "ON ✅" : "OFF ❌";
 }
 
+function getGroupMenuImageBuffer() {
+  try {
+    return fs.existsSync(GROUP_MENU_IMAGE) ? fs.readFileSync(GROUP_MENU_IMAGE) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default {
   name: "panelgrupo",
   command: ["panelgrupo", "paneladmin", "gpanel", "adminpanel"],
@@ -112,30 +121,57 @@ export default {
     const welcome = readWelcomeFlags(from);
 
     const panelText =
-      `╭──〔 🛠️ *${stylizeWord("GPANEL ADMIN")}* 〕──⬣\n` +
-      `│ ${stylizeSignature("security")} · ${stylizeSignature("control")} · ${stylizeSignature("style")}\n` +
-      `│ AntiLink: *${badge(antilinkOn)}*\n` +
-      `│ AntiSpam: *${badge(antispamOn)}*\n` +
-      `│ AntiImagen: *${badge(antiMedia.image)}*\n` +
-      `│ AntiSticker: *${badge(antiMedia.sticker)}*\n` +
-      `│ AntiVideo: *${badge(antiMedia.video)}*\n` +
-      `│ AntiAudio: *${badge(antiMedia.audio)}*\n` +
-      `│ AntiDocumento: *${badge(antiMedia.document)}*\n` +
-      `│ AntiRaid: *${badge(antiRaid.enabled)}*\n` +
-      `│ Sanciones: *${badge(moderation.enabled)}*\n` +
-      `│ Horario: *${badge(schedule.enabled)}* (${schedule.label || "Peru"})\n` +
-      `│ Semanal: *${badge(schedule.weeklyEnabled)}*\n` +
-      `│ BotGrupo: *${botOffOn ? "OFF 🔴" : "ON 🟢"}*\n` +
-      `│ Welcome: *${badge(welcome.welcomeOn)}*\n` +
-      `│ Bye: *${badge(welcome.byeOn)}*\n` +
-      `│ ModoAdmin: *${badge(modeAdmiOn)}*\n` +
-      `│ AntiFlood: *${badge(antifloodOn)}*\n` +
-      `╰────────────⬣\n\n` +
-      `Toca una opcion del panel para cambiar estado rapido.`;
+      `╔══════════════════════════════╗\n` +
+      `║ 🛡️ *${stylizeWord("FSOCIETY GPANEL")}* ║\n` +
+      `╠══════════════════════════════╣\n` +
+      `║ ${stylizeSignature("security")} • ${stylizeSignature("control")} • ${stylizeSignature("automation")}\n` +
+      `╟──────────────────────────────╢\n` +
+      `║ 🔗 AntiLink: *${badge(antilinkOn)}*\n` +
+      `║ 🚫 AntiSpam: *${badge(antispamOn)}*\n` +
+      `║ 🌊 AntiFlood: *${badge(antifloodOn)}*\n` +
+      `║ 🧨 AntiRaid: *${badge(antiRaid.enabled)}*\n` +
+      `║ 📷 Imagen: *${badge(antiMedia.image)}*\n` +
+      `║ 🏷️ Sticker: *${badge(antiMedia.sticker)}*\n` +
+      `║ 🎬 Video: *${badge(antiMedia.video)}*\n` +
+      `║ 🎵 Audio: *${badge(antiMedia.audio)}*\n` +
+      `║ 📄 Documento: *${badge(antiMedia.document)}*\n` +
+      `╟──────────────────────────────╢\n` +
+      `║ 👮 ModoAdmin: *${badge(modeAdmiOn)}*\n` +
+      `║ 🤖 BotGrupo: *${botOffOn ? "OFF 🔴" : "ON 🟢"}*\n` +
+      `║ ⚖️ Sanciones: *${badge(moderation.enabled)}*\n` +
+      `║ 👋 Welcome: *${badge(welcome.welcomeOn)}*\n` +
+      `║ 🚪 Bye: *${badge(welcome.byeOn)}*\n` +
+      `║ 🕒 Horario: *${badge(schedule.enabled)}* (${schedule.label || "Peru"})\n` +
+      `║ 📅 Semanal: *${badge(schedule.weeklyEnabled)}*\n` +
+      `╚══════════════════════════════╝\n\n` +
+      `Selecciona una accion del panel para cambiar ajustes rapido.`;
 
     const sections = [
       {
-        title: "Seguridad",
+        title: "Estado rapido",
+        rows: [
+          {
+            header: "STATUS",
+            title: "Ver estado completo",
+            description: "Resumen del grupo, protecciones y automatizaciones",
+            id: `${prefix}estadogrupo`,
+          },
+          {
+            header: "HORARIO",
+            title: "Abrir horarios",
+            description: `${schedule.label || "Peru"} · ${schedule.openAt} - ${schedule.closeAt}`,
+            id: `${prefix}horariogrupo`,
+          },
+          {
+            header: "SANCIONES",
+            title: "Ajustar sanciones",
+            description: `Limite actual: ${moderation.maxWarnings} advertencias`,
+            id: `${prefix}sanciones`,
+          },
+        ],
+      },
+      {
+        title: "Proteccion principal",
         rows: [
           {
             header: "ANTILINK",
@@ -158,7 +194,7 @@ export default {
         ],
       },
       {
-        title: "Contenido multimedia",
+        title: "Escudos multimedia",
         rows: [
           {
             header: "ANTIIMAGEN",
@@ -202,27 +238,21 @@ export default {
             id: `${prefix}antiraid ${antiRaid.enabled ? "off" : "on"}`,
           },
           {
-            header: "SANCIONES",
-            title: "Configurar sanciones",
-            description: `Limite actual: ${moderation.maxWarnings} advertencias.`,
-            id: `${prefix}sanciones`,
-          },
-          {
             header: "HORARIO",
             title: "Configurar horario",
             description: `${schedule.label || "Peru"}: ${schedule.openAt} - ${schedule.closeAt} / semanal ${badge(schedule.weeklyEnabled)}`,
             id: `${prefix}horariogrupo`,
           },
           {
-            header: "LOGS",
-            title: "Ver logs de moderacion",
-            description: "Ultimas acciones automaticas y manuales.",
-            id: `${prefix}modlogs`,
+            header: "DIAS",
+            title: "Ver horario semanal",
+            description: "Resumen de aperturas por dia del grupo",
+            id: `${prefix}horariogrupo dias`,
           },
         ],
       },
       {
-        title: "Control de bot",
+        title: "Control del bot",
         rows: [
           {
             header: "BOTGRUPO",
@@ -236,16 +266,10 @@ export default {
             description: `Estado actual: ${badge(modeAdmiOn)}`,
             id: `${prefix}modoadmi ${modeAdmiOn ? "off" : "on"}`,
           },
-          {
-            header: "STATUS",
-            title: "Ver estado completo del grupo",
-            description: "Abre panel de configuracion del grupo.",
-            id: `${prefix}estadogrupo`,
-          },
         ],
       },
       {
-        title: "Bienvenida y salida",
+        title: "Mensajes del grupo",
         rows: [
           {
             header: "WELCOME",
@@ -269,25 +293,30 @@ export default {
       },
     ];
 
-    return sock.sendMessage(
-      from,
-      {
-        text: panelText,
-        title: "FSOCIETY BOT",
-        subtitle: "Panel de administracion del grupo",
-        footer: "Selecciona una accion",
-        interactiveButtons: [
-          {
-            name: "single_select",
-            buttonParamsJson: JSON.stringify({
-              title: "Abrir panel de grupo",
-              sections,
-            }),
-          },
-        ],
-        ...global.channelInfo,
-      },
-      { quoted: msg }
-    );
+    const payload = {
+      title: "FSOCIETY BOT",
+      subtitle: "Panel de administracion del grupo",
+      footer: "Selecciona una accion",
+      interactiveButtons: [
+        {
+          name: "single_select",
+          buttonParamsJson: JSON.stringify({
+            title: "Abrir panel de grupo",
+            sections,
+          }),
+        },
+      ],
+      ...global.channelInfo,
+    };
+
+    const imageBuffer = getGroupMenuImageBuffer();
+    if (imageBuffer) {
+      payload.image = imageBuffer;
+      payload.caption = panelText;
+    } else {
+      payload.text = panelText;
+    }
+
+    return sock.sendMessage(from, payload, { quoted: msg });
   },
 };

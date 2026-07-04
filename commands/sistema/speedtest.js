@@ -757,14 +757,16 @@ export default {
         );
       }
 
-      await sock.sendMessage(
-        from,
-        {
-          text: buildResultMessage(result, modeLabel, ownerName),
-          ...global.channelInfo,
-        },
-        { quoted: msg }
-      );
+      if (!cardBuffer) {
+        await sock.sendMessage(
+          from,
+          {
+            text: buildResultMessage(result, modeLabel, ownerName),
+            ...global.channelInfo,
+          },
+          { quoted: msg }
+        );
+      }
 
       await react(sock, msg, "✅");
     } catch (error) {

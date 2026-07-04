@@ -1,4 +1,8 @@
+import fs from "fs";
+import path from "path";
 import { stylizeSignature, stylizeWord } from "../../lib/unicode-style.js";
+
+const GROUP_MENU_IMAGE = path.join(process.cwd(), "imagenes", "menu-grupo.png");
 
 function getPrefix(settings) {
   if (Array.isArray(settings?.prefix)) {
@@ -41,6 +45,14 @@ function buildFallbackText(prefix) {
   );
 }
 
+function getGroupMenuImageBuffer() {
+  try {
+    return fs.existsSync(GROUP_MENU_IMAGE) ? fs.readFileSync(GROUP_MENU_IMAGE) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default {
   name: "menugrupo",
   command: ["menugrupo", "grupomenu", "menuadmin", "menugp"],
@@ -53,7 +65,7 @@ export default {
     const prefix = getPrefix(settings);
     const sections = [
       {
-        title: "Administracion",
+        title: "Panel principal",
         rows: [
           {
             header: "PANEL",
@@ -68,15 +80,61 @@ export default {
             id: `${prefix}invocar Aviso importante`,
           },
           {
-            header: "MODO ADMIN",
-            title: "Activar modo admin",
-            description: "Solo admin/owner usan comandos",
-            id: `${prefix}modoadmi on`,
+            header: "ESTADO",
+            title: "Ver estado del grupo",
+            description: "Resumen de protecciones y automatizaciones",
+            id: `${prefix}estadogrupo`,
           },
         ],
       },
       {
-        title: "Sorteos",
+        title: "Proteccion",
+        rows: [
+          {
+            header: "ANTILINK",
+            title: "Configurar AntiLink",
+            description: "Borra enlaces y aplica sanciones",
+            id: `${prefix}antilink`,
+          },
+          {
+            header: "ANTISPAM",
+            title: "Configurar AntiSpam",
+            description: "Reduce flood y mensajes repetidos",
+            id: `${prefix}antispam`,
+          },
+          {
+            header: "MODO ADMIN",
+            title: "Configurar Modo Admin",
+            description: "Solo admin y owner usan comandos",
+            id: `${prefix}modoadmi`,
+          },
+        ],
+      },
+      {
+        title: "Horarios y control",
+        rows: [
+          {
+            header: "HORARIO",
+            title: "Abrir horario del grupo",
+            description: "Cierre y apertura automatica del grupo",
+            id: `${prefix}horariogrupo`,
+          },
+          {
+            header: "PERU",
+            title: "Horario base Peru",
+            description: "Configurar con hora principal de Peru",
+            id: `${prefix}horariogrupo pais peru`,
+          },
+          {
+            header: "SEMANA",
+            title: "Ver horario semanal",
+            description: "Resumen por dias y paises",
+            id: `${prefix}horariogrupo dias`,
+          },
+        ],
+      },
+      {
+        title: "Dinamicas",
         rows: [
           {
             header: "CREAR",
@@ -99,7 +157,7 @@ export default {
         ],
       },
       {
-        title: "Filtros multimedia",
+        title: "Escudos multimedia",
         rows: [
           {
             header: "IMAGENES",
@@ -157,7 +215,7 @@ export default {
         ],
       },
       {
-        title: "IA Util en grupo",
+        title: "IA util en grupo",
         rows: [
           {
             header: "CHAT",
@@ -179,33 +237,68 @@ export default {
           },
         ],
       },
+      {
+        title: "Accesos rapidos",
+        rows: [
+          {
+            header: "REGLAS",
+            title: "Ver reglas del grupo",
+            description: "Abre el mensaje de reglas actual",
+            id: `${prefix}reglas`,
+          },
+          {
+            header: "ADMINS",
+            title: "Ver administradores",
+            description: "Muestra staff del grupo",
+            id: `${prefix}administradores`,
+          },
+          {
+            header: "TAGALL",
+            title: "Invocar a todos",
+            description: "Mencion general para avisos",
+            id: `${prefix}invocar Aviso importante`,
+          },
+        ],
+      },
     ];
 
+    const imageBuffer = getGroupMenuImageBuffer();
+    const payload = {
+      title: "FSOCIETY-V1",
+      subtitle: "Panel de grupo",
+      footer: "Elige una accion del grupo",
+      interactiveButtons: [
+        {
+          name: "single_select",
+          buttonParamsJson: JSON.stringify({
+            title: "Abrir panel de grupo",
+            sections,
+          }),
+        },
+      ],
+      ...global.channelInfo,
+    };
+
+    const landingText =
+      `╔════════════════════════════╗\n` +
+      `║ ${stylizeWord("FSOCIETY-V1")} ${stylizeSignature("group hub")} ║\n` +
+      `╠════════════════════════════╣\n` +
+      `║ 🛡️ Seguridad, horarios y control.\n` +
+      `║ 🎛️ Usa el selector para abrir cada ajuste.\n` +
+      `║ ⚡ Acceso rapido a panel, estado y horarios.\n` +
+      `╚════════════════════════════╝`;
+
     try {
+      if (imageBuffer) {
+        payload.image = imageBuffer;
+        payload.caption = landingText;
+      } else {
+        payload.text = landingText;
+      }
+
       return await sock.sendMessage(
         from,
-        {
-          text:
-            `╔════════════════════════════╗\n` +
-            `║   FSOCIETY-V1 GROUP MENU   ║\n` +
-            `╚════════════════════════════╝\n` +
-            `┃ 🛡️ Panel de moderacion y dinamicas.\n` +
-            `┃ 📌 Usa la lista para ejecutar rapido.\n` +
-            `╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━⬣`,
-          title: "FSOCIETY-V1",
-          subtitle: "Panel de grupo",
-          footer: "Elige una accion del grupo",
-          interactiveButtons: [
-            {
-              name: "single_select",
-              buttonParamsJson: JSON.stringify({
-                title: "Abrir panel de grupo",
-                sections,
-              }),
-            },
-          ],
-          ...global.channelInfo,
-        },
+        payload,
         { quoted: msg }
       );
     } catch {
