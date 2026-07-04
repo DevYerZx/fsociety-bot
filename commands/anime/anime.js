@@ -180,15 +180,77 @@ function collectMediafireLinks(value, results = []) {
   return [...new Set(results.filter(Boolean))];
 }
 
+function collectChapterMediafireLinks(chapter = {}) {
+  const links = [];
+  const entries = Array.isArray(chapter?.enlaces_reproduccion)
+    ? chapter.enlaces_reproduccion
+    : [];
+
+  for (const entry of entries) {
+    const raw = cleanText(entry?.url || entry?.link || "");
+    if (!raw) continue;
+    const match = raw.match(/https?:\/\/(?:www\.)?(?:[a-z0-9-]+\.)?mediafire\.com\/[^\s"'<>\]]+/i);
+    if (match?.[0]) links.push(match[0].trim());
+  }
+
+  return [...new Set(links)];
+}
+
+function flattenChapters(seasons = [], slug = "") {
+  const rows = [];
+
+  for (const season of seasons) {
+    const seasonNo = Number(season?.temporada_numero || 0) || 0;
+    const chapters = Array.isArray(season?.capitulos) ? season.capitulos : [];
+    for (const chapter of chapters) {
+      const chapterNo = Number(chapter?.capitulo_numero || 0) || 0;
+      rows.push({
+        slug,
+        seasonNo,
+        chapterNo,
+        title: cleanText(chapter?.titulo_capitulo || `Episodio ${chapterNo || "?"}`),
+        mediafireLinks: collectChapterMediafireLinks(chapter),
+        raw: chapter,
+      });
+    }
+  }
+
+  return rows.sort((a, b) => {
+    if (a.seasonNo !== b.seasonNo) return b.seasonNo - a.seasonNo;
+    return b.chapterNo - a.chapterNo;
+  });
+}
+
+function findChapter(seasons = [], seasonNo = 0, chapterNo = 0) {
+  for (const season of seasons) {
+    const currentSeason = Number(season?.temporada_numero || 0) || 0;
+    if (currentSeason !== Number(seasonNo || 0)) continue;
+    const chapters = Array.isArray(season?.capitulos) ? season.capitulos : [];
+    for (const chapter of chapters) {
+      const currentChapter = Number(chapter?.capitulo_numero || 0) || 0;
+      if (currentChapter === Number(chapterNo || 0)) {
+        return { season, chapter, seasonNo: currentSeason, chapterNo: currentChapter };
+      }
+    }
+  }
+  return null;
+}
+
 function buildRootSections(prefix) {
   return [
     {
-      title: "Acciones rapidas",
+      title: "Nuevos capitulos",
       rows: [
+        {
+          header: "LATEST",
+          title: "Capitulos nuevos",
+          description: "Abre los episodios recien publicados.",
+          id: `${prefix}anime latest`,
+        },
         {
           header: "TRENDING",
           title: "Anime en tendencia",
-          description: "Abre el selector principal con portada.",
+          description: "Muestra lo mas destacado ahora mismo.",
           id: `${prefix}anime trending`,
         },
         {
@@ -203,17 +265,6 @@ function buildRootSections(prefix) {
           description: "Calendario de episodios por salir.",
           id: `${prefix}anime schedule`,
         },
-        {
-          header: "LATEST",
-          title: "Episodios de hoy",
-          description: "Publicaciones recientes del dia.",
-          id: `${prefix}anime latest`,
-        },
-      ],
-    },
-    {
-      title: "Busqueda",
-      rows: [
         {
           header: "SEARCH",
           title: "Buscar anime",
@@ -258,6 +309,44 @@ function buildResultsSections(prefix, results = []) {
           title: "Ver tendencias",
           description: "Regresa al panel principal.",
           id: `${prefix}anime trending`,
+        },
+      ],
+    },
+  ];
+}
+
+function buildChapterSections(prefix, slug, chapters = []) {
+  const rows = chapters.slice(0, 12).map((item, index) => ({
+    header: `${index + 1}`,
+    title: clipText(`T${item.seasonNo || "?"} · EP${item.chapterNo || "?"} · ${item.title}`, 64),
+    description: clipText(
+      item.mediafireLinks.length
+        ? "Descarga disponible por MediaFire"
+        : "Sin MediaFire para este capitulo",
+      72
+    ),
+    id: `${prefix}anime chapter ${slug} ${item.seasonNo} ${item.chapterNo}`,
+  }));
+
+  return [
+    {
+      title: "Capitulos recientes",
+      rows,
+    },
+    {
+      title: "Acciones",
+      rows: [
+        {
+          header: "DESCARGA",
+          title: "Intentar descarga del anime",
+          description: "Usa el capitulo que tenga MediaFire disponible.",
+          id: `${prefix}anime download ${slug}`,
+        },
+        {
+          header: "MENU",
+          title: "Volver al menu anime",
+          description: "Regresa a los capitulos nuevos.",
+          id: `${prefix}anime`,
         },
       ],
     },
@@ -364,14 +453,18 @@ function buildDetailSummary(data = {}) {
     (sum, season) => sum + (Array.isArray(season?.capitulos) ? season.capitulos.length : 0),
     0
   );
-  const mediafireLinks = collectMediafireLinks(data);
+  const slug = resolveAnimeTarget(animeInfo?.titulo || data?.title || "");
+  const chapters = flattenChapters(seasons, slug);
+  const mediafireLinks = [...new Set(chapters.flatMap((item) => item.mediafireLinks))];
 
   return {
     title: cleanText(animeInfo?.titulo || data?.title || "Anime"),
     cover: cleanText(animeInfo?.imagen_portada || animeInfo?.image_portada || ""),
     seasons,
     chapterCount,
+    chapters,
     mediafireLinks,
+    slug,
   };
 }
 
@@ -395,8 +488,8 @@ async function sendDetailToJid({ sock, jid, msg, settings, target, mode = "open"
   const subtitle = mode === "download" ? "Detalle y descarga" : "Detalle de anime";
   const summaryLines = [
     detail.mediafireLinks.length
-      ? `MediaFire: ${cleanText(detail.mediafireLinks[0])}`
-      : "MediaFire: no detectado",
+      ? `MediaFire disponible en ${detail.mediafireLinks.length} capitulo(s)`
+      : "MediaFire: no detectado en capitulos",
     detail.cover ? `Portada: ${cleanText(detail.cover)}` : "Portada: no disponible",
     `Temporadas: *${detail.seasons.length}*`,
     `Capitulos: *${detail.chapterCount}*`,
@@ -462,33 +555,7 @@ async function sendDetailToJid({ sock, jid, msg, settings, target, mode = "open"
     subtitle: "Anime detalle",
     footer: "Abrir, descargar o volver al selector",
     selectorTitle: "Anime detalle",
-    sections: [
-      {
-        title: "Acciones",
-        rows: [
-          {
-            header: "DESCARGA",
-            title: detail.mediafireLinks.length ? "Descargar con MediaFire" : "Descargar portada",
-            description: detail.mediafireLinks.length
-              ? "Usa el enlace descargable de la serie."
-              : "Envia la miniatura como archivo.",
-            id: `${prefix}anime download ${resolveAnimeTarget(target)}`,
-          },
-          {
-            header: "ABRIR",
-            title: "Abrir detalle",
-            description: "Muestra la ficha del anime otra vez.",
-            id: `${prefix}anime detail ${resolveAnimeTarget(target)}`,
-          },
-          {
-            header: "ATRAS",
-            title: "Volver al menu",
-            description: "Regresa al selector principal.",
-            id: `${prefix}anime`,
-          },
-        ],
-      },
-    ],
+    sections: buildChapterSections(prefix, detail.slug || resolveAnimeTarget(target), detail.chapters),
   });
 
   if (!imageBuffer) {
@@ -514,6 +581,131 @@ async function notifyPrivateDelivery({ sock, from, msg, privateJid }) {
   );
 }
 
+async function sendChapterToJid({
+  sock,
+  jid,
+  msg,
+  settings,
+  target,
+  seasonNo,
+  chapterNo,
+  mode = "open",
+}) {
+  const quoted = msg?.key ? { quoted: msg } : undefined;
+  const data = await fetchDetailData(target);
+  if (!data) {
+    return sock.sendMessage(
+      jid,
+      {
+        text: "No pude cargar el anime solicitado.",
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  }
+
+  const detail = buildDetailSummary(data);
+  const found = findChapter(detail.seasons, seasonNo, chapterNo);
+  if (!found) {
+    return sock.sendMessage(
+      jid,
+      {
+        text: `No encontre el capitulo T${seasonNo} EP${chapterNo}.`,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  }
+
+  const chapterTitle = cleanText(found.chapter?.titulo_capitulo || `Episodio ${chapterNo}`);
+  const mediafireLinks = collectChapterMediafireLinks(found.chapter);
+  const imageBuffer = detail.cover ? await getImageBuffer(detail.cover) : null;
+  const caption = buildCaption(
+    detail.title,
+    `T${found.seasonNo} · EP${found.chapterNo}`,
+    1,
+    [
+      `Capitulo: ${chapterTitle}`,
+      mediafireLinks.length
+        ? `MediaFire: ${cleanText(mediafireLinks[0])}`
+        : "MediaFire: no disponible en este capitulo",
+      detail.cover ? `Portada: ${cleanText(detail.cover)}` : "Portada: no disponible",
+    ]
+  );
+
+  if (mode === "download" && mediafireLinks.length) {
+    await sock.sendMessage(
+      jid,
+      {
+        text: `${caption}\n\n🚀 Descarga interna iniciada para este capitulo.`,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+
+    await mediafireCmd.run({
+      sock,
+      from: jid,
+      msg,
+      m: msg,
+      args: [mediafireLinks[0]],
+      settings,
+      sender: jid,
+    });
+    return;
+  }
+
+  if (mode === "download") {
+    return sock.sendMessage(
+      jid,
+      {
+        text: `${caption}\n\n❌ Este capitulo no tiene enlace MediaFire disponible.`,
+        ...global.channelInfo,
+      },
+      quoted
+    );
+  }
+
+  const prefix = getPrefix(settings);
+  const payload = buildSelectorPayload({
+    imageBuffer,
+    caption,
+    title: "FSOCIETY BOT",
+    subtitle: "Anime capitulo",
+    footer: "Detalle del capitulo",
+    selectorTitle: "Capitulo anime",
+    sections: [
+      {
+        title: "Acciones",
+        rows: [
+          {
+            header: "DESCARGA",
+            title: "Descargar este capitulo",
+            description: mediafireLinks.length
+              ? "Usa el MediaFire detectado para este capitulo."
+              : "No hay MediaFire para este capitulo.",
+            id: `${prefix}anime chapterdl ${resolveAnimeTarget(target)} ${found.seasonNo} ${found.chapterNo}`,
+          },
+          {
+            header: "ATRAS",
+            title: "Volver al anime",
+            description: "Regresa al selector de capitulos.",
+            id: `${prefix}anime detail ${resolveAnimeTarget(target)}`,
+          },
+        ],
+      },
+    ],
+  });
+
+  if (!imageBuffer) {
+    payload.text = payload.caption || payload.text || caption;
+    delete payload.image;
+    delete payload.caption;
+  }
+
+  return sock.sendMessage(jid, payload, quoted);
+}
+
 export default {
   name: "anime",
   command: ["anime", "animes", "otaku", "animeinfo"],
@@ -528,7 +720,19 @@ export default {
     const groupChat = Boolean(isGroup || esGrupo || String(from).endsWith("@g.us"));
     const privateJid = getPrivateJid({ m, sender, senderPhone }) || from;
 
-    if (!args.length || ["menu", "help", "ayuda", "inicio", "panel", "trending", "tendencias"].includes(action)) {
+    if (!args.length || ["menu", "help", "ayuda", "inicio", "panel", "latest", "hoy", "episodios"].includes(action)) {
+      return sendRootFeed({
+        sock,
+        from,
+        msg,
+        settings,
+        endpoint: "/anime/subespanollatam/latest",
+        title: "Capitulos nuevos",
+        subtitle: "Recien publicados en SubEspañol LATAM",
+      });
+    }
+
+    if (["trending", "tendencias"].includes(action)) {
       return sendRootFeed({
         sock,
         from,
@@ -561,6 +765,72 @@ export default {
         endpoint: "/anime/livechart/schedule",
         title: "Proximos estrenos",
         subtitle: "Calendario de episodios",
+      });
+    }
+
+    if (["chapter", "capitulo", "episodio", "ep"].includes(action)) {
+      const target = cleanText(args[1] || "");
+      const seasonNo = Number(args[2] || 0);
+      const chapterNo = Number(args[3] || 0);
+      const deliveryJid = groupChat ? privateJid : from;
+
+      if (!target || !seasonNo || !chapterNo) {
+        return sock.sendMessage(
+          from,
+          {
+            text: `Uso: ${prefix}anime chapter <slug> <temporada> <capitulo>`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+
+      if (groupChat && privateJid && privateJid !== from) {
+        await notifyPrivateDelivery({ sock, from, msg, privateJid });
+      }
+
+      return sendChapterToJid({
+        sock,
+        jid: deliveryJid,
+        msg,
+        settings,
+        target,
+        seasonNo,
+        chapterNo,
+        mode: "open",
+      });
+    }
+
+    if (["chapterdl", "capitulodl", "episodiodl", "epdl"].includes(action)) {
+      const target = cleanText(args[1] || "");
+      const seasonNo = Number(args[2] || 0);
+      const chapterNo = Number(args[3] || 0);
+      const deliveryJid = groupChat ? privateJid : from;
+
+      if (!target || !seasonNo || !chapterNo) {
+        return sock.sendMessage(
+          from,
+          {
+            text: `Uso: ${prefix}anime chapterdl <slug> <temporada> <capitulo>`,
+            ...global.channelInfo,
+          },
+          quoted
+        );
+      }
+
+      if (groupChat && privateJid && privateJid !== from) {
+        await notifyPrivateDelivery({ sock, from, msg, privateJid });
+      }
+
+      return sendChapterToJid({
+        sock,
+        jid: deliveryJid,
+        msg,
+        settings,
+        target,
+        seasonNo,
+        chapterNo,
+        mode: "download",
       });
     }
 
@@ -638,9 +908,9 @@ export default {
       from,
       msg,
       settings,
-      endpoint: "/anime/trending",
-      title: "Anime en tendencia",
-      subtitle: "Lo mas destacado ahora mismo",
+      endpoint: "/anime/subespanollatam/latest",
+      title: "Capitulos nuevos",
+      subtitle: "Recien publicados en SubEspañol LATAM",
     });
   },
 };
