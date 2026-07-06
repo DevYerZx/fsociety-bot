@@ -989,6 +989,9 @@ async function sendAudioDocument(sock, from, quoted, data) {
       title: meta.title,
       caption: buildAudioFileCaption(data),
       ...thumbnailFields,
+      contextInfo: {
+        externalAdReply: buildExternalAdReply(data, thumbBuffer),
+      },
     },
     quoted
   );
@@ -997,51 +1000,21 @@ async function sendAudioDocument(sock, from, quoted, data) {
 }
 
 async function sendPreparedAudio(sock, from, quoted, data) {
-  const format = String(data.format || "MP3").toUpperCase();
-  const size = Number(data.size || 0);
+  // SIEMPRE se envía como ARCHIVO/DOCUMENTO con imagen.
+  // La VPS/API ya entrega MP3 o M4A listo; el bot no procesa el audio localmente.
   const thumbBuffer = data.thumbBuffer || (await getBuffer(data.thumbnail));
 
-  const shouldSendAsDocument =
-    format === "M4A" ||
-    size >= AUDIO_AS_DOCUMENT_THRESHOLD;
-
-  if (shouldSendAsDocument) {
-    return await sendAudioDocument(sock, from, quoted, {
-      ...data,
-      thumbBuffer,
-    });
-  }
-
-  try {
-    await sock.sendMessage(
-      from,
-      {
-        audio: { url: data.tempPath },
-        mimetype: data.contentType || "audio/mpeg",
-        ptt: false,
-        fileName: data.fileName || "audio.mp3",
-        contextInfo: {
-          externalAdReply: buildExternalAdReply(data, thumbBuffer),
-        },
-      },
-      quoted
-    );
-
-    return "audio";
-  } catch (error) {
-    console.warn("YTMP3: envío como audio falló, reintentando como documento:", error?.message || error);
-    return await sendAudioDocument(sock, from, quoted, {
-      ...data,
-      thumbBuffer,
-    });
-  }
+  return await sendAudioDocument(sock, from, quoted, {
+    ...data,
+    thumbBuffer,
+  });
 }
 
 export default {
   command: ["ytmp3", "yta", "ytaudio"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio de YouTube usando DVYER API sin FFmpeg local",
+  description: "Descarga audio de YouTube como archivo con imagen usando DVYER API",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
