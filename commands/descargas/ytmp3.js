@@ -1044,6 +1044,55 @@ function buildAudioFileCaption(data = {}) {
     .join("\n");
 }
 
+function buildPreviewCaption(data = {}) {
+  const title = clipText(data.title || data.fileName || "YouTube MP3", 78);
+  const duration = formatDuration(data.duration);
+  const author = clipText(data.author || "", 46);
+  const videoUrl = cleanText(data.videoUrl || "");
+  const sourceUrl = cleanText(data.sourceUrl || "");
+
+  return [
+    "╭━━━〔 *ＦＳＯＣＩＥＴＹ ＹＴＭＰ３* 〕━━━⬣",
+    `┃ *Título:* ${title}`,
+    duration ? `┃ ⌛ *Duración:* ${duration}` : null,
+    author ? `┃ 🎤 *Artista/Canal:* ${author}` : null,
+    videoUrl ? `┃ 🔗 *Video:* ${videoUrl}` : null,
+    sourceUrl ? `┃ 🌐 *API/Página:* ${sourceUrl}` : null,
+    "╰━━━〔 *Descargando MP3* 〕━━━⬣",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function sendPreviewCard(sock, from, quoted, data = {}) {
+  const thumbBuffer = data.thumbBuffer || (await getBuffer(data.thumbnail));
+  const caption = buildPreviewCaption(data);
+
+  if (thumbBuffer?.length) {
+    await sock.sendMessage(
+      from,
+      {
+        image: thumbBuffer,
+        caption,
+        ...getChannelInfo(),
+      },
+      quoted
+    );
+    return "image";
+  }
+
+  await sock.sendMessage(
+    from,
+    {
+      text: caption,
+      ...getChannelInfo(),
+    },
+    quoted
+  );
+
+  return "text";
+}
+
 async function sendLocalMp3(sock, from, quoted, data) {
   const thumbBuffer = data.thumbBuffer || (await getBuffer(data.thumbnail));
   const meta = resolveAudioCardMetadata(data);
@@ -1058,16 +1107,18 @@ async function sendLocalMp3(sock, from, quoted, data) {
   await sock.sendMessage(
     from,
     {
-      document: { url: data.tempPath },
-      mimetype: data.contentType || "audio/mpeg",
+      audio: { url: data.tempPath },
+      mimetype: "audio/mpeg",
       fileName: meta.fileName,
       title: meta.title,
+      ptt: false,
       ...thumbnailFields,
+      ...getChannelInfo(),
     },
     quoted
   );
 
-  return "document";
+  return "audio";
 }
 
 export default {
@@ -1202,6 +1253,13 @@ export default {
       const thumbBuffer = await attachThumbnailToMp3(tempPath, {
         ...finalData,
         fileName: downloaded.fileName,
+      });
+
+      await sendPreviewCard(sock, from, quoted, {
+        ...finalData,
+        fileName: downloaded.fileName,
+        thumbBuffer,
+        videoUrl: resolved.url,
       });
 
       await sendLocalMp3(sock, from, quoted, {
