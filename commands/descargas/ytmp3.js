@@ -199,23 +199,24 @@ function safeFileName(name) {
   );
 }
 
-function normalizeMp3Name(name) {
+function normalizeM4aName(name) {
   const parsed = path.parse(String(name || "").trim());
   const base = safeFileName(parsed.name || name || "youtube-audio");
-  return `${base || "youtube-audio"}.mp3`;
+  return `${base || "youtube-audio"}.m4a`;
 }
 
 function normalizeTrackTitle(value = "") {
   return cleanText(
     String(value || "")
       .replace(/\.mp3$/i, "")
+      .replace(/\.m4a$/i, "")
       .replace(/\((official|video|lyric|lyrics|audio|4k remaster|remaster)[^)]*\)/gi, "")
       .replace(/\[(official|video|lyric|lyrics|audio|4k remaster|remaster)[^\]]*\]/gi, "")
   );
 }
 
 function resolveAudioCardMetadata(data = {}) {
-  const rawTitle = normalizeTrackTitle(data.title || data.fileName || "YouTube MP3") || "YouTube MP3";
+  const rawTitle = normalizeTrackTitle(data.title || data.fileName || "YouTube M4A") || "YouTube M4A";
   const parts = rawTitle.split(/\s[-\u2013\u2014]\s/).map((item) => cleanText(item)).filter(Boolean);
 
   let artist = cleanText(data.author || "");
@@ -232,7 +233,7 @@ function resolveAudioCardMetadata(data = {}) {
   return {
     artist,
     title: trackTitle,
-    fileName: normalizeMp3Name(trackTitle || rawTitle),
+    fileName: normalizeM4aName(trackTitle || rawTitle),
   };
 }
 
@@ -448,7 +449,7 @@ async function callYtmp3Api({
 }
 
 function cleanErrorText(error) {
-  let text = String(error?.message || error || "No se pudo preparar el MP3.");
+  let text = String(error?.message || error || "No se pudo preparar el audio M4A.");
 
   try {
     const parsed = JSON.parse(text);
@@ -475,6 +476,7 @@ function cleanErrorText(error) {
     normalized.includes("internal ytmp3 error") ||
     normalized.includes("no devolvio formatos mp3") ||
     normalized.includes("no devolvió formatos mp3") ||
+    normalized.includes("no genero el archivo m4a") ||
     normalized.includes("youtube esta protegiendo este audio") ||
     normalized.includes("youtube está protegiendo este audio") ||
     normalized.includes("protected") ||
@@ -516,7 +518,7 @@ function cleanErrorText(error) {
     return text;
   }
 
-  return "No se pudo preparar el MP3.\nIntenta nuevamente más tarde.";
+  return "No se pudo preparar el audio M4A.\nIntenta nuevamente más tarde.";
 }
 
 function resolveAbsoluteUrl(value, baseUrl) {
@@ -567,7 +569,7 @@ async function resolveInputToUrl(input) {
   if (directUrl) {
     return {
       url: directUrl,
-      title: "YouTube MP3",
+      title: "YouTube M4A",
       thumbnail: "",
       duration: 0,
       author: "",
@@ -589,7 +591,7 @@ async function resolveInputToUrl(input) {
 
   return {
     url: video.url,
-    title: cleanText(video.title || "YouTube MP3"),
+    title: cleanText(video.title || "YouTube M4A"),
     thumbnail: cleanText(video.thumbnail || ""),
     duration: Number(video.seconds || 0),
     author: cleanText(video.author?.name || ""),
@@ -625,12 +627,14 @@ async function getYtmp3Data(videoUrl) {
 
   return {
     remoteUrl,
-    title: cleanText(data.title || "YouTube MP3"),
-    fileName: normalizeMp3Name(data.filename || data.title || "youtube-audio.mp3"),
+    title: cleanText(data.title || "YouTube M4A"),
+    fileName: normalizeM4aName(data.filename || data.title || "youtube-audio.m4a"),
     provider: data.provider || "ytmp3",
-    duration: Number(data.duration || 0),
+    duration: Number(data.duration_seconds || data.duration || 0),
     thumbnail: cleanText(data.thumbnail || data.thumb || ""),
     author: cleanText(data.author || data.channel || data.uploader || ""),
+    format: cleanText(data.format || "M4A").toUpperCase(),
+    contentType: cleanText(data.mime_type || data.content_type || "audio/mp4"),
     cached: Boolean(data.cached),
     sourceUrl: endpoint,
   };
@@ -690,7 +694,7 @@ async function saveResponseToFile(response, outputPath, fallbackName, options = 
 
   if (contentLength > maxAudioBytes) {
     throw new Error(
-      `El MP3 pesa ${humanBytes(contentLength)} y supera el límite permitido (${humanBytes(maxAudioBytes)}).`
+      `El audio pesa ${humanBytes(contentLength)} y supera el límite permitido (${humanBytes(maxAudioBytes)}).`
     );
   }
 
@@ -701,7 +705,7 @@ async function saveResponseToFile(response, outputPath, fallbackName, options = 
 
     if (downloaded > maxAudioBytes) {
       response.data.destroy(
-        new Error("El MP3 es demasiado grande para enviarlo por WhatsApp.")
+        new Error("El audio es demasiado grande para enviarlo por WhatsApp.")
       );
     }
   });
@@ -717,7 +721,7 @@ async function saveResponseToFile(response, outputPath, fallbackName, options = 
 
   if (!stat?.size || stat.size < MIN_AUDIO_BYTES) {
     await deleteFileSafe(outputPath);
-    throw new Error("El archivo MP3 descargado es inválido.");
+    throw new Error("El archivo M4A descargado es inválido.");
   }
 
   assertDownloadWithinPolicy(options?.ctx || {}, stat.size, "audios");
@@ -726,13 +730,13 @@ async function saveResponseToFile(response, outputPath, fallbackName, options = 
     response.headers?.["content-disposition"]
   );
 
-  const fileName = normalizeMp3Name(headerName || fallbackName || "youtube-audio.mp3");
+  const fileName = normalizeM4aName(headerName || fallbackName || "youtube-audio.m4a");
 
   return {
     tempPath: outputPath,
     fileName,
     size: stat.size,
-    contentType: response.headers?.["content-type"] || "audio/mpeg",
+    contentType: response.headers?.["content-type"] || "audio/mp4",
   };
 }
 
@@ -750,7 +754,7 @@ async function downloadYtmp3File(videoUrl, preferredName, knownLinkData = null, 
       const response = await requestRemoteYtmp3Stream(knownLinkData.remoteUrl);
       return await saveResponseToFile(
         response,
-        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`),
+        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.m4a`),
         knownLinkData.fileName || preferredName,
         options
       );
@@ -759,7 +763,7 @@ async function downloadYtmp3File(videoUrl, preferredName, knownLinkData = null, 
       const response = await requestYtmp3Stream(videoUrl);
       return await saveResponseToFile(
         response,
-        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`),
+        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.m4a`),
         preferredName,
         options
       );
@@ -769,7 +773,7 @@ async function downloadYtmp3File(videoUrl, preferredName, knownLinkData = null, 
       const response = await requestRemoteYtmp3Stream(linkData.remoteUrl);
       return await saveResponseToFile(
         response,
-        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.mp3`),
+        path.join(TMP_DIR, `${Date.now()}-${randomUUID()}-ytmp3.m4a`),
         linkData.fileName || preferredName,
         options
       );
@@ -788,7 +792,7 @@ async function downloadYtmp3File(videoUrl, preferredName, knownLinkData = null, 
     }
   }
 
-  throw new Error(errors.filter(Boolean).join(" | ") || "No se pudo descargar el MP3.");
+  throw new Error(errors.filter(Boolean).join(" | ") || "No se pudo descargar el audio M4A.");
 }
 
 async function react(sock, msg, emoji) {
@@ -845,7 +849,7 @@ function buildErrorMessage(errorText) {
   return [
     "╭━━━〔 ❌ ✦ *ＹＴＭＰ３ ＥＲＲＯＲ* ✦ ❌ 〕━━━⬣",
     "┃",
-    ...String(errorText || "No se pudo preparar el MP3.")
+    ...String(errorText || "No se pudo preparar el audio M4A.")
       .split("\n")
       .map((line) => `┃ ${line}`),
     "┃",
@@ -881,7 +885,7 @@ async function getBuffer(url = "", timeout = 12_000) {
 }
 
 function buildPreviewCaption(data = {}) {
-  const title = clipText(data.title || data.fileName || "YouTube MP3", 78);
+  const title = clipText(data.title || data.fileName || "YouTube M4A", 78);
   const duration = formatDuration(data.duration);
   const author = clipText(data.author || "", 46);
   const videoUrl = cleanText(data.videoUrl || "");
@@ -894,7 +898,7 @@ function buildPreviewCaption(data = {}) {
     author ? `┃ 🎤 *Artista/Canal:* ${author}` : null,
     videoUrl ? `┃ 🔗 *Video:* ${videoUrl}` : null,
     sourceUrl ? `┃ 🌐 *API/Página:* ${sourceUrl}` : null,
-    "╰━━━〔 *Descargando MP3* 〕━━━⬣",
+    "╰━━━〔 *Descargando M4A* 〕━━━⬣",
   ]
     .filter(Boolean)
     .join("\n");
@@ -929,31 +933,52 @@ async function sendPreviewCard(sock, from, quoted, data = {}) {
   return "text";
 }
 
-async function sendLocalMp3(sock, from, quoted, data) {
+async function sendLocalAudio(sock, from, quoted, data) {
   const meta = resolveAudioCardMetadata(data);
   const audioBuffer = await fsp.readFile(data.tempPath);
+  const contentType =
+    cleanText(data.contentType || data.mimetype || "audio/mp4")
+      .split(";")[0]
+      .trim()
+      .toLowerCase() || "audio/mp4";
 
-  await sock.sendMessage(
-    from,
-    {
-      audio: audioBuffer,
-      mimetype: "audio/mpeg",
-      fileName: meta.fileName,
-      waveform: [100, 82, 94, 71, 88, 63, 79, 68, 91, 76, 84, 66],
-      ptt: false,
-      ...getChannelInfo(),
-    },
-    quoted
-  );
+  try {
+    await sock.sendMessage(
+      from,
+      {
+        audio: audioBuffer,
+        mimetype: contentType,
+        fileName: meta.fileName,
+        waveform: [100, 82, 94, 71, 88, 63, 79, 68, 91, 76, 84, 66],
+        ptt: false,
+        ...getChannelInfo(),
+      },
+      quoted
+    );
 
-  return "audio";
+    return "audio";
+  } catch (error) {
+    await sock.sendMessage(
+      from,
+      {
+        document: audioBuffer,
+        mimetype: contentType,
+        fileName: meta.fileName,
+        caption: `Audio: ${meta.title}`,
+        ...getChannelInfo(),
+      },
+      quoted
+    );
+
+    return "document";
+  }
 }
 
 export default {
   command: ["ytmp3", "yta", "ytaudio"],
   categoria: "descarga",
   category: "descarga",
-  description: "Descarga audio MP3 de YouTube con portada previa",
+  description: "Descarga audio M4A de YouTube con portada previa",
 
   run: async (ctx) => {
     const { sock, from } = ctx;
@@ -1087,7 +1112,7 @@ export default {
         videoUrl: resolved.url,
       });
 
-      await sendLocalMp3(sock, from, quoted, {
+      await sendLocalAudio(sock, from, quoted, {
         ...downloaded,
         title: finalData.title || resolved.title,
         duration: finalData.duration || 0,
