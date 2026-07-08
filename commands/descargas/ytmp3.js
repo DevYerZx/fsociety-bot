@@ -56,12 +56,6 @@ const HTTPS_AGENT = new https.Agent({
   maxFreeSockets: 20,
 });
 
-function getChannelInfo() {
-  return global.channelInfo && typeof global.channelInfo === "object"
-    ? global.channelInfo
-    : {};
-}
-
 function resolvePrefix(ctx = {}) {
   const candidates = [
     ctx.prefix,
@@ -885,20 +879,26 @@ async function getBuffer(url = "", timeout = 12_000) {
 }
 
 function buildPreviewCaption(data = {}) {
-  const title = clipText(data.title || data.fileName || "YouTube M4A", 78);
+  const audioMeta = resolveAudioCardMetadata(data);
+  const title = clipText(audioMeta.title || data.title || data.fileName || "YouTube M4A", 92);
   const duration = formatDuration(data.duration);
-  const author = clipText(data.author || "", 46);
-  const videoUrl = cleanText(data.videoUrl || "");
-  const sourceUrl = cleanText(data.sourceUrl || "");
+  const author =
+    audioMeta.artist && audioMeta.artist !== "Unknown Artist"
+      ? clipText(audioMeta.artist, 58)
+      : clipText(data.author || "", 58);
+  const format = clipText(cleanText(data.format || "M4A").toUpperCase(), 16);
+  const size = Number(data.size || 0) > 0 ? humanBytes(data.size) : "";
+  const fileName = clipText(data.fileName || audioMeta.fileName || "", 86);
+  const audioLine = [format || "M4A", "audio/mp4", size].filter(Boolean).join(" · ");
 
   return [
-    "╭━━━〔 *ＦＳＯＣＩＥＴＹ ＹＴＭＰ３* 〕━━━⬣",
-    `┃ *Título:* ${title}`,
-    duration ? `┃ ⌛ *Duración:* ${duration}` : null,
-    author ? `┃ 🎤 *Artista/Canal:* ${author}` : null,
-    videoUrl ? `┃ 🔗 *Video:* ${videoUrl}` : null,
-    sourceUrl ? `┃ 🌐 *API/Página:* ${sourceUrl}` : null,
-    "╰━━━〔 *Descargando M4A* 〕━━━⬣",
+    "╭━━━〔 🎧 *MÚSICA LISTA* 〕━━━⬣",
+    `┃ 🎵 *${title}*`,
+    author ? `┃ 👤 ${author}` : null,
+    duration ? `┃ ⏱️ ${duration}` : null,
+    audioLine ? `┃ 💿 ${audioLine}` : null,
+    fileName ? `┃ 📁 ${fileName}` : null,
+    "╰━━━〔 Enviando audio limpio 〕━━━⬣",
   ]
     .filter(Boolean)
     .join("\n");
@@ -914,7 +914,6 @@ async function sendPreviewCard(sock, from, quoted, data = {}) {
       {
         image: thumbBuffer,
         caption,
-        ...getChannelInfo(),
       },
       quoted
     );
@@ -925,7 +924,6 @@ async function sendPreviewCard(sock, from, quoted, data = {}) {
     from,
     {
       text: caption,
-      ...getChannelInfo(),
     },
     quoted
   );
@@ -951,7 +949,6 @@ async function sendLocalAudio(sock, from, quoted, data) {
         fileName: meta.fileName,
         waveform: [100, 82, 94, 71, 88, 63, 79, 68, 91, 76, 84, 66],
         ptt: false,
-        ...getChannelInfo(),
       },
       quoted
     );
@@ -964,8 +961,13 @@ async function sendLocalAudio(sock, from, quoted, data) {
         document: audioBuffer,
         mimetype: contentType,
         fileName: meta.fileName,
-        caption: `Audio: ${meta.title}`,
-        ...getChannelInfo(),
+        caption: [
+          `🎵 *${meta.title}*`,
+          meta.artist && meta.artist !== "Unknown Artist" ? `👤 ${meta.artist}` : null,
+          "💿 M4A · audio/mp4",
+        ]
+          .filter(Boolean)
+          .join("\n"),
       },
       quoted
     );
@@ -1003,7 +1005,6 @@ export default {
           from,
           {
             text: buildUsageMessage(prefix),
-            ...getChannelInfo(),
           },
           quoted
         );
@@ -1032,7 +1033,6 @@ export default {
           from,
           {
             text: buildLimitMessage(limitState.retryAfterMs),
-            ...getChannelInfo(),
           },
           quoted
         );
@@ -1046,7 +1046,6 @@ export default {
           from,
           {
             text: buildUsageMessage(prefix),
-            ...getChannelInfo(),
           },
           quoted
         );
@@ -1108,6 +1107,8 @@ export default {
       await sendPreviewCard(sock, from, quoted, {
         ...finalData,
         fileName: downloaded.fileName,
+        size: downloaded.size,
+        contentType: downloaded.contentType,
         thumbBuffer,
         videoUrl: resolved.url,
       });
@@ -1144,7 +1145,6 @@ export default {
         from,
         {
           text: buildErrorMessage(errorText),
-          ...getChannelInfo(),
         },
         quoted
       );
