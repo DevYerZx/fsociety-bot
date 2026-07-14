@@ -9,6 +9,7 @@ const baileys = baileysModule?.default?.fetchLatestBaileysVersion
 
 const {
   fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
 } = baileys;
 
 const cwd = process.cwd();
@@ -82,9 +83,13 @@ async function main() {
   const pkg = readJson(baileysPkgFile, {});
   const runtime = readJson(runtimeStateFile, null);
   const auth = inspectAuthFolder();
-  const latest = await fetchLatestBaileysVersion().catch((error) => ({
-    error: error?.message || String(error),
-  }));
+  const latest =
+    (typeof fetchLatestWaWebVersion === "function"
+      ? await fetchLatestWaWebVersion().catch(() => null)
+      : null) ||
+    (await fetchLatestBaileysVersion().catch((error) => ({
+      error: error?.message || String(error),
+    })));
   const publicIp = await getPublicIp();
   const webWhatsapp = await lookupHost("web.whatsapp.com");
   const staticWhatsapp = await lookupHost("static.whatsapp.net");

@@ -74,6 +74,7 @@ const {
   makeInMemoryStore,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   DEFAULT_CONNECTION_CONFIG,
 } = baileys;
 
@@ -2436,7 +2437,10 @@ async function getVersionSafe() {
   }
 
   try {
-    const data = await fetchLatestBaileysVersion();
+    const data =
+      typeof fetchLatestWaWebVersion === "function"
+        ? await fetchLatestWaWebVersion()
+        : await fetchLatestBaileysVersion();
     if (
       Array.isArray(data?.version) &&
       data.version.length >= 3 &&
@@ -10476,7 +10480,11 @@ async function iniciarInstanciaBot(config) {
     const { state: authState, saveCreds } = await useMultiFileAuthState(
       config.authFolder
     );
-    const version = await getVersionSafe();
+    const waWebVersion =
+      typeof fetchLatestWaWebVersion === "function"
+        ? await fetchLatestWaWebVersion().catch(() => null)
+        : null;
+    const version = waWebVersion?.version || (await getVersionSafe());
 
     const socketConfig = {
       logger,
