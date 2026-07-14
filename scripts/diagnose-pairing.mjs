@@ -83,13 +83,24 @@ async function main() {
   const pkg = readJson(baileysPkgFile, {});
   const runtime = readJson(runtimeStateFile, null);
   const auth = inspectAuthFolder();
+  const waWebResult =
+    typeof fetchLatestWaWebVersion === "function"
+      ? await fetchLatestWaWebVersion().catch((error) => ({
+          error: error?.message || String(error),
+        }))
+      : null;
+  const baileysResult = await fetchLatestBaileysVersion().catch((error) => ({
+    error: error?.message || String(error),
+  }));
   const latest =
-    (typeof fetchLatestWaWebVersion === "function"
-      ? await fetchLatestWaWebVersion().catch(() => null)
-      : null) ||
-    (await fetchLatestBaileysVersion().catch((error) => ({
-      error: error?.message || String(error),
-    })));
+    (Array.isArray(waWebResult?.version) && waWebResult.version.length >= 3 ? waWebResult : null) ||
+    baileysResult;
+  const versionSource =
+    latest === waWebResult
+      ? "waweb"
+      : Array.isArray(baileysResult?.version)
+        ? "baileys-fallback"
+        : "sin_version";
   const publicIp = await getPublicIp();
   const webWhatsapp = await lookupHost("web.whatsapp.com");
   const staticWhatsapp = await lookupHost("static.whatsapp.net");
@@ -105,6 +116,7 @@ async function main() {
       `WA version ${Array.isArray(latest?.version) ? latest.version.join(".") : latest?.error || "no disponible"}`
     )
   );
+  console.log(`INFO Version source ${versionSource}`);
   console.log(status(Boolean(browser), `Browser ${browser}`));
   console.log(status(Boolean(publicIp), `IP publica ${publicIp || "no detectada"}`));
   console.log(status(Boolean(webWhatsapp), `DNS web.whatsapp.com ${webWhatsapp || "fallo"}`));
@@ -115,6 +127,8 @@ async function main() {
   console.log(status(auth.hasCreds, `Creds ${auth.hasCreds ? "presentes" : "no presentes"}`));
   console.log(status(auth.registered, `Sesion registrada ${auth.registered ? "si" : "no"}`));
   if (auth.me) console.log(`INFO Cuenta auth ${auth.me}`);
+  if (!auth.exists) console.log("WARN No existe la carpeta de sesion configurada para este bot.");
+  if (auth.exists && !auth.hasCreds) console.log("WARN Existe la carpeta auth pero no hay creds.json valido.");
   console.log("");
 
   if (runtime) {
